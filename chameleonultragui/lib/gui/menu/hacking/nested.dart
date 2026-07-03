@@ -9,10 +9,14 @@ import 'package:flutter/material.dart';
 // Localizations
 import 'package:chameleonultragui/generated/i18n/app_localizations.dart';
 
-// Standalone weak-PRNG Nested attack: recover a target sector key from a known
-// key. Reuses MifareClassicRecovery.recoverNestedSingle.
+enum NestedVariant { weak, staticNonce, hard }
+
+// Standalone Nested-family attack: recover a target sector key from a known key.
+// Variant selects weak-PRNG Nested, Static Nested, or Hardnested. Reuses the
+// matching MifareClassicRecovery.recover*Single helper.
 class NestedPage extends StatefulWidget {
-  const NestedPage({super.key});
+  final NestedVariant variant;
+  const NestedPage({super.key, this.variant = NestedVariant.weak});
 
   @override
   NestedPageState createState() => NestedPageState();
@@ -67,8 +71,17 @@ class NestedPageState extends State<NestedPage> {
         return;
       }
       setState(() => mfcInfo = mfc);
-      await mfc.recovery!.recoverNestedSingle(
-          key, knownSector, _knownKeyType, targetSector, _targetKeyType);
+      switch (widget.variant) {
+        case NestedVariant.weak:
+          await mfc.recovery!.recoverNestedSingle(
+              key, knownSector, _knownKeyType, targetSector, _targetKeyType);
+        case NestedVariant.staticNonce:
+          await mfc.recovery!.recoverStaticNestedSingle(
+              key, knownSector, _knownKeyType, targetSector, _targetKeyType);
+        case NestedVariant.hard:
+          await mfc.recovery!.recoverHardnestedSingle(
+              key, knownSector, _knownKeyType, targetSector, _targetKeyType);
+      }
       _refresh();
     } on FormatException {
       setState(() => message = localizations.invalid_hex_input);
@@ -92,12 +105,18 @@ class NestedPageState extends State<NestedPage> {
         onSelectionChanged: (s) => onChanged(s.first),
       );
 
+  String get _title => switch (widget.variant) {
+        NestedVariant.weak => "Nested",
+        NestedVariant.staticNonce => "Static Nested",
+        NestedVariant.hard => "Hardnested",
+      };
+
   @override
   Widget build(BuildContext context) {
     var localizations = AppLocalizations.of(context)!;
     final recovery = mfcInfo?.recovery;
     return Scaffold(
-      appBar: AppBar(title: const Text("Nested")),
+      appBar: AppBar(title: Text(_title)),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(16.0),
         child: Column(
@@ -174,6 +193,10 @@ class NestedPageState extends State<NestedPage> {
               if (recovery.state.isNotEmpty) ...[
                 const SizedBox(height: 8),
                 Text(recovery.state, textAlign: TextAlign.center),
+              ],
+              if (recovery.hardnestedProgress != null) ...[
+                const SizedBox(height: 8),
+                LinearProgressIndicator(value: recovery.hardnestedProgress),
               ],
               if (_hasAnyKey) ...[
                 const SizedBox(height: 12),

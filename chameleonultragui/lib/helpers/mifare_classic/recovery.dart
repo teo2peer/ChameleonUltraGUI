@@ -305,6 +305,92 @@ class MifareClassicRecovery {
     return false;
   }
 
+  // Standalone Static-Nested: recover a target key from a known key on a
+  // static-nonce card. Returns true if a key was found.
+  Future<bool> recoverStaticNestedSingle(Uint8List knownKey, int knownSector,
+      int knownKeyType, int targetSector, int targetKeyType) async {
+    int knownBlock = mfClassicGetSectorTrailerBlockBySector(knownSector);
+    int targetBlock = mfClassicGetSectorTrailerBlockBySector(targetSector);
+    state = localizations.collecting_nonces("Static Nested");
+    setCheckingSector(targetSector, targetKeyType);
+    update();
+    try {
+      NTDistance distance = await appState.communicator!
+          .getMf1NTDistance(knownBlock, 0x60 + knownKeyType, knownKey);
+      NestedNonces nonces = await appState.communicator!.getMf1NestedNonces(
+          knownBlock, 0x60 + knownKeyType, knownKey, targetBlock,
+          0x60 + targetKeyType,
+          level: NTLevel.static);
+      var nested = StaticNestedDart(
+        uid: distance.uid,
+        keyType: 0x60 + knownKeyType,
+        nt0: nonces.nonces[0].nt,
+        nt0Enc: nonces.nonces[0].ntEnc,
+        nt1: nonces.nonces[1].nt,
+        nt1Enc: nonces.nonces[1].ntEnc,
+      );
+      var keys = await recovery.staticNested(nested);
+      if (keys.isNotEmpty &&
+          await checkKeysOnSector(
+              mfClassicConvertKeys(keys), targetKeyType, targetSector)) {
+        state = "";
+        update();
+        return true;
+      }
+    } catch (e) {
+      error = e.toString();
+    }
+    setMissingSector(targetSector, targetKeyType);
+    state = "";
+    update();
+    return false;
+  }
+
+  // Standalone Hardnested: recover a target key from a known key on a
+  // hard-PRNG card (e.g. EV1). Returns true if a key was found.
+  Future<bool> recoverHardnestedSingle(Uint8List knownKey, int knownSector,
+      int knownKeyType, int targetSector, int targetKeyType) async {
+    int knownBlock = mfClassicGetSectorTrailerBlockBySector(knownSector);
+    int targetBlock = mfClassicGetSectorTrailerBlockBySector(targetSector);
+    state = localizations.collecting_nonces("Hard Nested");
+    setCheckingSector(targetSector, targetKeyType);
+    hardnestedProgress = 0;
+    update();
+    try {
+      NTDistance distance = await appState.communicator!
+          .getMf1NTDistance(knownBlock, 0x60 + knownKeyType, knownKey);
+      var result = await collectHardnestedNonces(
+          knownBlock, 0x60 + knownKeyType, knownKey, targetBlock,
+          0x60 + targetKeyType);
+      if (result is String) {
+        error = result;
+        setMissingSector(targetSector, targetKeyType);
+        hardnestedProgress = null;
+        state = "";
+        update();
+        return false;
+      }
+      NestedNonces nonces = result as NestedNonces;
+      var nested = HardNestedDart(nonces: nonces.getHardNested(distance.uid));
+      var keys = await recovery.hardNested(nested);
+      hardnestedProgress = null;
+      if (keys.isNotEmpty &&
+          await checkKeysOnSector(
+              mfClassicConvertKeys(keys), targetKeyType, targetSector)) {
+        state = "";
+        update();
+        return true;
+      }
+    } catch (e) {
+      error = e.toString();
+    }
+    hardnestedProgress = null;
+    setMissingSector(targetSector, targetKeyType);
+    state = "";
+    update();
+    return false;
+  }
+
   Future<void> recoverKeys() async {
     state = localizations.checking_card_info;
     update();

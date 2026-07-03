@@ -5,6 +5,7 @@ import 'package:chameleonultragui/gui/menu/hacking/mfkey_manual.dart';
 import 'package:chameleonultragui/gui/menu/hacking/nested.dart';
 import 'package:chameleonultragui/gui/menu/hacking/ntag_password_capture.dart';
 import 'package:chameleonultragui/gui/menu/hacking/value_block.dart';
+import 'package:chameleonultragui/gui/menu/hacking/wiegand.dart';
 import 'package:chameleonultragui/gui/menu/pages/mfkey32.dart';
 import 'package:chameleonultragui/gui/menu/tools/hf_sniffing.dart';
 import 'package:chameleonultragui/gui/page/read_card.dart';
@@ -170,6 +171,13 @@ class EthicalHackingPageState extends State<EthicalHackingPage> {
       _Attack("Nested", localizations.nested_description, Icons.layers,
           (c) => _push(c, const NestedPage()),
           deviceRequired: true),
+      _Attack("Static Nested", localizations.static_nested_description,
+          Icons.lock_clock,
+          (c) => _push(c, const NestedPage(variant: NestedVariant.staticNonce)),
+          deviceRequired: true),
+      _Attack("Hardnested", localizations.hardnested_description, Icons.memory,
+          (c) => _push(c, const NestedPage(variant: NestedVariant.hard)),
+          deviceRequired: true),
       _Attack(localizations.read_card, localizations.recover_keys,
           Icons.sensors, (c) => _push(c, const ReadCardPage()),
           deviceRequired: true),
@@ -204,6 +212,9 @@ class EthicalHackingPageState extends State<EthicalHackingPage> {
       _Attack(localizations.write_card, localizations.write_card,
           Icons.system_update_alt, (c) => _push(c, const WriteCardPage()),
           deviceRequired: true),
+      _Attack(localizations.wiegand_decoder,
+          localizations.wiegand_decoder_description, Icons.numbers,
+          (c) => _dialog(c, const WiegandMenu())),
     ];
 
     return Scaffold(
