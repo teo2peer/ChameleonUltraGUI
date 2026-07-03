@@ -1,3 +1,4 @@
+import 'package:chameleonultragui/helpers/emv.dart';
 import 'package:chameleonultragui/helpers/general.dart';
 import 'package:chameleonultragui/main.dart';
 import 'package:flutter/material.dart';
@@ -19,12 +20,14 @@ class _EmvResult {
   final String atqa;
   final String ats;
   final List<_EmvApdu> apdus;
-  final Map<String, String> fields; // human-readable extracted fields
-  _EmvResult(this.uid, this.sak, this.atqa, this.ats, this.apdus, this.fields);
+  final Map<String, String> fields;
+  final List<EmvTlv> tlvs;
+  _EmvResult(this.uid, this.sak, this.atqa, this.ats, this.apdus, this.fields,
+      this.tlvs);
 }
 
-// Read an EMV contactless card in one shot (PPSE -> AID -> GPO -> READ RECORDs)
-// and extract PAN / expiry / cardholder / AID from the BER-TLV responses.
+// Read an EMV contactless card (PPSE -> AID -> GPO -> READ RECORDs) and extract
+// as many fields as possible via a full BER-TLV parse (see helpers/emv.dart).
 class EmvReaderPage extends StatefulWidget {
   const EmvReaderPage({super.key});
 
@@ -40,80 +43,6 @@ class EmvReaderPageState extends State<EmvReaderPage> {
   ChameleonGUIState get _app => context.read<ChameleonGUIState>();
   bool get _connected => _app.connector?.connected ?? false;
 
-  // Flatten BER-TLV into a leaf tag -> value map (recurses constructed tags).
-  void _walkTlv(Uint8List d, Map<String, Uint8List> out) {
-    int i = 0;
-    while (i < d.length) {
-      if (d[i] == 0x00 || d[i] == 0xFF) {
-        i++;
-        continue;
-      }
-      final tagStart = i;
-      final first = d[i];
-      i++;
-      final constructed = (first & 0x20) != 0;
-      if ((first & 0x1F) == 0x1F) {
-        while (i < d.length && (d[i] & 0x80) != 0) {
-          i++;
-        }
-        if (i < d.length) i++;
-      }
-      final tag = bytesToHex(d.sublist(tagStart, i)).toUpperCase();
-      if (i >= d.length) break;
-      int len = d[i];
-      i++;
-      if ((len & 0x80) != 0) {
-        final n = len & 0x7F;
-        len = 0;
-        for (int k = 0; k < n && i < d.length; k++) {
-          len = (len << 8) | d[i];
-          i++;
-        }
-      }
-      if (i + len > d.length) len = d.length - i;
-      final value = d.sublist(i, i + len);
-      if (constructed) {
-        _walkTlv(value, out);
-      } else {
-        out[tag] = value;
-      }
-      i += len;
-    }
-  }
-
-  String _asciiOf(Uint8List b) =>
-      String.fromCharCodes(b.where((c) => c >= 0x20 && c < 0x7F)).trim();
-
-  Map<String, String> _extractFields(Map<String, Uint8List> tlv) {
-    final f = <String, String>{};
-    // Track 2 equivalent (57): PAN 'D' YYMM service ...
-    if (tlv.containsKey('57')) {
-      final t2 = bytesToHex(tlv['57']!).toUpperCase();
-      final sep = t2.indexOf('D');
-      if (sep > 0) {
-        f['PAN'] = t2.substring(0, sep);
-        final rest = t2.substring(sep + 1);
-        if (rest.length >= 4) {
-          f['Expiry'] = "${rest.substring(2, 4)}/${rest.substring(0, 2)}"; // MM/YY
-        }
-      }
-    }
-    if (!f.containsKey('PAN') && tlv.containsKey('5A')) {
-      f['PAN'] = bytesToHex(tlv['5A']!).toUpperCase().replaceAll('F', '');
-    }
-    if (!f.containsKey('Expiry') && tlv.containsKey('5F24')) {
-      final e = bytesToHex(tlv['5F24']!); // YYMMDD
-      if (e.length >= 4) f['Expiry'] = "${e.substring(2, 4)}/${e.substring(0, 2)}";
-    }
-    if (tlv.containsKey('5F20')) f['Cardholder'] = _asciiOf(tlv['5F20']!);
-    if (tlv.containsKey('50')) f['Application'] = _asciiOf(tlv['50']!);
-    if (tlv.containsKey('4F')) f['AID'] = bytesToHex(tlv['4F']!).toUpperCase();
-    if (tlv.containsKey('5F28')) {
-      f['Country'] = bytesToHex(tlv['5F28']!); // country code (numeric)
-    }
-    return f;
-  }
-
   _EmvResult _parse(Uint8List d) {
     int i = 0;
     final uidLen = d[i++];
@@ -127,7 +56,7 @@ class EmvReaderPageState extends State<EmvReaderPage> {
     i += atsLen;
     final num = d[i++];
     final apdus = <_EmvApdu>[];
-    final tlv = <String, Uint8List>{};
+    final tlvs = <EmvTlv>[];
     for (int k = 0; k < num; k++) {
       final cmdLen = d[i++];
       final cmd = d.sublist(i, i + cmdLen);
@@ -137,8 +66,9 @@ class EmvReaderPageState extends State<EmvReaderPage> {
       final resp = d.sublist(i, i + respLen);
       i += respLen;
       apdus.add(_EmvApdu(cmd, resp));
-      // Drop the trailing SW1SW2 (2 bytes) before TLV parsing.
-      if (resp.length > 2) _walkTlv(resp.sublist(0, resp.length - 2), tlv);
+      if (resp.length > 2) {
+        tlvs.addAll(parseEmvTlv(resp.sublist(0, resp.length - 2)));
+      }
     }
     return _EmvResult(
       bytesToHexSpace(uid).toUpperCase(),
@@ -146,7 +76,8 @@ class EmvReaderPageState extends State<EmvReaderPage> {
       bytesToHexSpace(atqa).toUpperCase(),
       ats.isEmpty ? '-' : bytesToHexSpace(ats).toUpperCase(),
       apdus,
-      _extractFields(tlv),
+      emvExtractFields(tlvs),
+      tlvs,
     );
   }
 
@@ -177,6 +108,7 @@ class EmvReaderPageState extends State<EmvReaderPage> {
   Widget _field(String k, String v) => Padding(
         padding: const EdgeInsets.symmetric(vertical: 3.0),
         child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
             Text(k, style: const TextStyle(fontWeight: FontWeight.bold)),
@@ -190,9 +122,9 @@ class EmvReaderPageState extends State<EmvReaderPage> {
                         style: const TextStyle(fontFamily: 'RobotoMono')),
                   ),
                   IconButton(
+                    visualDensity: VisualDensity.compact,
                     icon: const Icon(Icons.copy, size: 16),
-                    onPressed: () =>
-                        Clipboard.setData(ClipboardData(text: v)),
+                    onPressed: () => Clipboard.setData(ClipboardData(text: v)),
                   ),
                 ],
               ),
@@ -200,6 +132,32 @@ class EmvReaderPageState extends State<EmvReaderPage> {
           ],
         ),
       );
+
+  Widget _tlvRow(EmvTlv t) {
+    final printable =
+        !t.constructed && t.value.every((c) => c >= 0x20 && c < 0x7F);
+    final ascii = printable ? String.fromCharCodes(t.value) : null;
+    return Padding(
+      padding: EdgeInsets.only(left: 8.0 + t.depth * 14.0, top: 3, bottom: 3),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text("${t.tag}  ${emvTagName(t.tag)}",
+              style: TextStyle(
+                  fontWeight:
+                      t.constructed ? FontWeight.bold : FontWeight.w600,
+                  fontSize: 12,
+                  color: t.constructed
+                      ? Theme.of(context).colorScheme.primary
+                      : null)),
+          if (!t.constructed)
+            SelectableText(
+                "${bytesToHexSpace(t.value).toUpperCase()}${ascii != null && ascii.trim().isNotEmpty ? '   "$ascii"' : ''}",
+                style: const TextStyle(fontFamily: 'RobotoMono', fontSize: 12)),
+        ],
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -243,7 +201,12 @@ class EmvReaderPageState extends State<EmvReaderPage> {
                               color: Theme.of(context).colorScheme.outline))
                     else
                       ...r.fields.entries.map((e) => _field(e.key, e.value)),
-                    const SizedBox(height: 12),
+                    const SizedBox(height: 8),
+                    ExpansionTile(
+                      title: Text("EMV TLV (${r.tlvs.length})"),
+                      childrenPadding: const EdgeInsets.only(bottom: 8),
+                      children: r.tlvs.map(_tlvRow).toList(),
+                    ),
                     ExpansionTile(
                       title: Text("APDU (${r.apdus.length})"),
                       children: r.apdus
