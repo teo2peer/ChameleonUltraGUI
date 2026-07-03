@@ -92,6 +92,7 @@ String emvTagName(String tag) => emvTagNames[tag] ?? 'Unknown ($tag)';
 // Recursively parse BER-TLV into an ordered, depth-tagged list.
 List<EmvTlv> parseEmvTlv(Uint8List data, {int depth = 0}) {
   final out = <EmvTlv>[];
+  if (depth > 24) return out; // guard against pathologically nested TLV (DoS)
   int i = 0;
   while (i < data.length) {
     if (data[i] == 0x00 || data[i] == 0xFF) {
@@ -129,6 +130,80 @@ List<EmvTlv> parseEmvTlv(Uint8List data, {int depth = 0}) {
     i += len;
   }
   return out;
+}
+
+// Result of parsing the firmware's packed scan buffer (EMV/DESFire scans).
+class EmvScan {
+  final Uint8List uid;
+  final Uint8List atqa;
+  final int sak;
+  final Uint8List ats;
+  final List<(Uint8List, Uint8List)> apdus; // (command, response)
+  EmvScan(this.uid, this.atqa, this.sak, this.ats, this.apdus);
+}
+
+// Parse the packed scan buffer with full bounds checking. Layout:
+// uid_len,uid,atqa[2],sak,ats_len,ats,num,{cmd_len,cmd,resp_len_LE[2],resp}*
+// Throws FormatException on a truncated/garbled buffer instead of RangeError.
+EmvScan parseEmvScanBuffer(Uint8List d) {
+  int i = 0;
+  void need(int n) {
+    if (n < 0 || i + n > d.length) {
+      throw const FormatException('truncated scan buffer');
+    }
+  }
+
+  need(1);
+  final uidLen = d[i++];
+  need(uidLen);
+  final uid = d.sublist(i, i + uidLen);
+  i += uidLen;
+  need(2);
+  final atqa = d.sublist(i, i + 2);
+  i += 2;
+  need(1);
+  final sak = d[i++];
+  need(1);
+  final atsLen = d[i++];
+  need(atsLen);
+  final ats = d.sublist(i, i + atsLen);
+  i += atsLen;
+  need(1);
+  final num = d[i++];
+  final apdus = <(Uint8List, Uint8List)>[];
+  for (var k = 0; k < num; k++) {
+    need(1);
+    final cl = d[i++];
+    need(cl);
+    final cmd = d.sublist(i, i + cl);
+    i += cl;
+    need(2);
+    final rl = d[i] | (d[i + 1] << 8);
+    i += 2;
+    need(rl);
+    final resp = d.sublist(i, i + rl);
+    i += rl;
+    apdus.add((cmd, resp));
+  }
+  return EmvScan(uid, atqa, sak, ats, apdus);
+}
+
+// Build the primitive-tag -> value map once (last occurrence wins). Callers
+// that need fields + cryptogram + AIP share this instead of rescanning 3x.
+Map<String, Uint8List> emvLeafMap(List<EmvTlv> tlvs) {
+  final leaf = <String, Uint8List>{};
+  for (final t in tlvs) {
+    if (!t.constructed) leaf[t.tag] = t.value;
+  }
+  return leaf;
+}
+
+int _bytesToInt(Uint8List b) {
+  var v = 0;
+  for (final x in b) {
+    v = (v << 8) | x;
+  }
+  return v;
 }
 
 String _ascii(Uint8List b) =>
@@ -201,12 +276,8 @@ String? emvScheme(String? aid, String? pan) {
   return null;
 }
 
-// Extract the human-friendly card fields from the parsed TLVs (leaf-last wins).
-Map<String, String> emvExtractFields(List<EmvTlv> tlvs) {
-  final leaf = <String, Uint8List>{};
-  for (final t in tlvs) {
-    if (!t.constructed) leaf[t.tag] = t.value;
-  }
+// Extract the human-friendly card fields from a prebuilt leaf map.
+Map<String, String> emvExtractFields(Map<String, Uint8List> leaf) {
   final f = <String, String>{};
   String? pan;
   String? expiry;
@@ -238,7 +309,7 @@ Map<String, String> emvExtractFields(List<EmvTlv> tlvs) {
   if (leaf.containsKey('5F20')) f['Cardholder'] = _ascii(leaf['5F20']!);
   if (leaf.containsKey('9F12')) f['Preferred name'] = _ascii(leaf['9F12']!);
   if (leaf.containsKey('50')) f['Application'] = _ascii(leaf['50']!);
-  if (leaf.containsKey('5F34')) {
+  if (leaf.containsKey('5F34') && leaf['5F34']!.isNotEmpty) {
     f['PAN sequence'] = leaf['5F34']![0].toString();
   }
   String? aid;
@@ -262,22 +333,55 @@ Map<String, String> emvExtractFields(List<EmvTlv> tlvs) {
   if (leaf.containsKey('9F08')) {
     f['App version'] = bytesToHex(leaf['9F08']!).toUpperCase();
   }
-  if (leaf.containsKey('9F36')) {
-    f['ATC'] = int.parse(bytesToHex(leaf['9F36']!), radix: 16).toString();
+  if (leaf.containsKey('9F36') && leaf['9F36']!.isNotEmpty) {
+    f['ATC'] = _bytesToInt(leaf['9F36']!).toString();
   }
-  if (leaf.containsKey('9F17')) {
+  if (leaf.containsKey('9F17') && leaf['9F17']!.isNotEmpty) {
     f['PIN try counter'] = leaf['9F17']![0].toString();
   }
   if (leaf.containsKey('5F50')) f['Issuer URL'] = _ascii(leaf['5F50']!);
   return f;
 }
 
-// Extract the transaction/GENERATE-AC result (offline purchase simulation).
-Map<String, String> emvExtractCryptogram(List<EmvTlv> tlvs) {
-  final leaf = <String, Uint8List>{};
-  for (final t in tlvs) {
-    if (!t.constructed) leaf[t.tag] = t.value;
-  }
+// Decoded Application Interchange Profile (tag 82) — the card's security
+// posture. Relevant to a relay-resistance assessment:
+//   - RRP (Relay Resistance Protocol): if supported, the terminal times the
+//     ISO-DEP round-trip and rejects the latency a relay adds => relay blocked.
+//   - DDA/CDA: dynamic authentication => the card can't be trivially cloned.
+class EmvAip {
+  final List<String> features; // human-readable enabled capabilities
+  final bool rrp; // Relay Resistance Protocol supported
+  final bool dda; // Dynamic Data Authentication
+  final bool cda; // Combined DDA / Application Cryptogram generation
+  final String raw; // AIP hex
+  EmvAip(this.features, this.rrp, this.dda, this.cda, this.raw);
+}
+
+// Decode the AIP (tag 82) from the parsed TLVs. Bit assignments per EMV Book 3
+// (byte 1) and EMV Contactless Book C-2 (byte 2, incl. RRP). Returns null if
+// the card exposed no AIP.
+EmvAip? emvDecodeAip(Map<String, Uint8List> leaf) {
+  final aip = leaf['82'];
+  if (aip == null || aip.length < 2) return null;
+  final b1 = aip[0];
+  final b2 = aip[1];
+  final f = <String>[];
+  if (b1 & 0x40 != 0) f.add('SDA (static data authentication)');
+  if (b1 & 0x20 != 0) f.add('DDA (dynamic data authentication)');
+  if (b1 & 0x10 != 0) f.add('Cardholder verification supported');
+  if (b1 & 0x08 != 0) f.add('Terminal risk management');
+  if (b1 & 0x04 != 0) f.add('Issuer authentication');
+  if (b1 & 0x02 != 0) f.add('On-device cardholder verification (CDCVM)');
+  if (b1 & 0x01 != 0) f.add('CDA (combined DDA/AC generation)');
+  if (b2 & 0x80 != 0) f.add('EMV mode supported');
+  final rrp = (b2 & 0x01) != 0;
+  if (rrp) f.add('Relay Resistance Protocol (RRP) supported');
+  return EmvAip(
+      f, rrp, b1 & 0x20 != 0, b1 & 0x01 != 0, bytesToHex(aip).toUpperCase());
+}
+
+// Extract the transaction/GENERATE-AC result from a prebuilt leaf map.
+Map<String, String> emvExtractCryptogram(Map<String, Uint8List> leaf) {
   final f = <String, String>{};
   if (leaf.containsKey('9F26')) {
     f['Application Cryptogram'] = bytesToHex(leaf['9F26']!).toUpperCase();
@@ -290,8 +394,8 @@ Map<String, String> emvExtractCryptogram(List<EmvTlv> tlvs) {
             ? 'TC — offline approved'
             : 'AAC — declined';
   }
-  if (leaf.containsKey('9F36')) {
-    f['ATC'] = int.parse(bytesToHex(leaf['9F36']!), radix: 16).toString();
+  if (leaf.containsKey('9F36') && leaf['9F36']!.isNotEmpty) {
+    f['ATC'] = _bytesToInt(leaf['9F36']!).toString();
   }
   if (leaf.containsKey('9F10')) {
     f['Issuer Application Data'] = bytesToHex(leaf['9F10']!).toUpperCase();

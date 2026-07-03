@@ -58,7 +58,7 @@ class ReaderKeysPageState extends State<ReaderKeysPage>
   int detectionCount = 0;
   final List<Uint8List> keys = [];
   final List<Widget> displayKeys = [];
-  final Set<int> seenKeyHashes = {};
+  final Set<String> seenKeys = {}; // dedup by hex (value), not hash
   String outputUid = "";
   int progress = -1;
   Timer? _pollTimer;
@@ -323,70 +323,87 @@ class ReaderKeysPageState extends State<ReaderKeysPage>
     setState(() {
       recovering = true;
       displayKeys.clear();
-      seenKeyHashes.clear();
+      seenKeys.clear();
       keys.clear();
     });
     try {
       final count = await _app.communicator!.getMf1DetectionCount();
       final detections =
           await _app.communicator!.getMf1DetectionResult(count);
+      if (!mounted) return;
+      // Count (uid,block,keyType) groups up front for a monotonic progress bar.
+      var total = 0;
+      for (final u in detections.entries) {
+        for (final b in u.value.entries) {
+          total += b.value.length;
+        }
+      }
+      var done = 0;
       for (var uidEntry in detections.entries) {
-        var uid = uidEntry.key;
+        final uid = uidEntry.key;
+        final uidHex =
+            bytesToHex(u64ToBytes(uid).sublist(4, 8)).toUpperCase();
         for (var blockEntry in uidEntry.value.entries) {
-          var block = blockEntry.key;
+          final block = blockEntry.key;
           for (var keyEntry in blockEntry.value.entries) {
-            var keyType = keyEntry.key;
-            var records = keyEntry.value;
+            final keyType = keyEntry.key;
+            final records = keyEntry.value;
+            // Every record in this group authenticates the SAME sector key, so
+            // one recovered nonce pair suffices — stop after the first success
+            // instead of computing all n(n-1)/2 pairs (huge speedup).
+            Uint8List? keyBytes;
+            outer:
             for (var i = 0; i < records.length; i++) {
               for (var j = i + 1; j < records.length; j++) {
-                var mfkey = Mfkey32Dart(
-                  uid: uid,
-                  nt0: records[i].nt,
-                  nt1: records[j].nt,
-                  nr0Enc: records[i].nr,
-                  ar0Enc: records[i].ar,
-                  nr1Enc: records[j].nr,
-                  ar1Enc: records[j].ar,
-                );
-                var recovered = await recovery.mfkey32(mfkey);
-                var keyBytes = u64ToBytes(recovered[0]).sublist(2, 8);
-                var hash = Object.hashAll(keyBytes);
-                outputUid =
-                    bytesToHex(u64ToBytes(uid).sublist(4, 8)).toUpperCase();
-                if (!seenKeyHashes.contains(hash)) {
-                  seenKeyHashes.add(hash);
-                  keys.add(keyBytes);
-                  var keyHex = bytesToHex(keyBytes).toUpperCase();
-                  displayKeys.add(Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 2.0),
-                    child: Row(
-                      children: [
-                        Text("$outputUid  ",
-                            style: const TextStyle(
-                                fontSize: 16, fontWeight: FontWeight.bold)),
-                        Expanded(
-                          child: TextButton(
-                            onPressed: () async {
-                              await Clipboard.setData(
-                                  ClipboardData(text: keyHex));
-                            },
-                            child: Text("block $block key $keyType: $keyHex",
-                                style: const TextStyle(
-                                    fontSize: 16,
-                                    fontWeight: FontWeight.bold)),
-                          ),
-                        ),
-                      ],
-                    ),
+                // Identical nonces (static-nonce card / replay) give a garbage
+                // key — skip them.
+                if (records[i].nt == records[j].nt) continue;
+                try {
+                  final recovered = await recovery.mfkey32(Mfkey32Dart(
+                    uid: uid,
+                    nt0: records[i].nt,
+                    nt1: records[j].nt,
+                    nr0Enc: records[i].nr,
+                    ar0Enc: records[i].ar,
+                    nr1Enc: records[j].nr,
+                    ar1Enc: records[j].ar,
                   ));
-                }
-                if (mounted) {
-                  setState(() {
-                    progress = ((i + 1) * 100 / records.length).round();
-                  });
+                  keyBytes = u64ToBytes(recovered[0]).sublist(2, 8);
+                  break outer;
+                } catch (_) {
+                  continue; // bad pair — try the next one
                 }
               }
             }
+            done++;
+            if (!mounted) return; // user left the page mid-recovery
+            if (keyBytes != null) {
+              outputUid = uidHex;
+              final keyHex = bytesToHex(keyBytes).toUpperCase();
+              if (seenKeys.add(keyHex)) {
+                keys.add(keyBytes);
+                displayKeys.add(Card(
+                  clipBehavior: Clip.antiAlias,
+                  child: ListTile(
+                    dense: true,
+                    leading: const Icon(Icons.vpn_key),
+                    title: Text(keyHex,
+                        style: const TextStyle(
+                            fontFamily: 'RobotoMono',
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold)),
+                    subtitle: Text("UID $uidHex · block $block · key $keyType"),
+                    trailing: const Icon(Icons.copy, size: 18),
+                    onTap: () {
+                      Clipboard.setData(ClipboardData(text: keyHex));
+                      _showMessage("$keyHex ✓");
+                    },
+                  ),
+                ));
+              }
+            }
+            setState(() =>
+                progress = total == 0 ? 100 : (done * 100 / total).round());
           }
         }
       }
@@ -400,6 +417,79 @@ class ReaderKeysPageState extends State<ReaderKeysPage>
         });
       }
     }
+  }
+
+  // Save the recovered keys straight into the app's dictionary storage, with a
+  // name. This is the simple path; DictionaryExportMenu still offers file export
+  // and adding to an existing dictionary.
+  Future<void> _saveRecoveredKeysDialog() async {
+    final localizations = AppLocalizations.of(context)!;
+    final appState = context.read<ChameleonGUIState>();
+    final deduped = <int, Uint8List>{
+      for (var k in keys.where((k) => k.isNotEmpty)) Object.hashAll(k): k
+    }.values.toList();
+    final nameCtl = TextEditingController(
+        text: outputUid.isEmpty ? 'reader-keys' : 'reader-$outputUid');
+    await showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(localizations.save_recovered_keys),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            TextField(
+              controller: nameCtl,
+              autofocus: true,
+              decoration: InputDecoration(
+                  labelText: localizations.enter_name_of_dictionary,
+                  border: const OutlineInputBorder()),
+            ),
+            const SizedBox(height: 8),
+            Text("${deduped.length} keys"),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: Text(localizations.cancel),
+          ),
+          TextButton(
+            onPressed: () {
+              Navigator.pop(ctx);
+              showDialog<String>(
+                context: context,
+                builder: (_) =>
+                    DictionaryExportMenu(defaultName: outputUid, keys: keys),
+              );
+            },
+            child: Text(localizations.save_recovered_keys_to_file),
+          ),
+          ElevatedButton.icon(
+            icon: const Icon(Icons.save),
+            onPressed: () {
+              final name = nameCtl.text.trim();
+              if (name.isEmpty) return;
+              final dicts = appState.sharedPreferencesProvider.getDictionaries();
+              // MFKey32 keys are 6 bytes -> keyLength 12 (hex chars), so the
+              // dictionary shows up in the MIFARE Classic pickers that filter
+              // by keyLength; without it the keys save but stay invisible.
+              dicts.add(Dictionary(
+                  name: name,
+                  color: Colors.blue,
+                  keys: deduped,
+                  keyLength: deduped.isNotEmpty ? deduped.first.length * 2 : 12));
+              appState.sharedPreferencesProvider.setDictionaries(dicts);
+              appState.changesMade();
+              Navigator.pop(ctx);
+              _showMessage('✓ $name (${deduped.length} keys)');
+            },
+            label: Text(localizations.save_recovered_keys),
+          ),
+        ],
+      ),
+    );
+    nameCtl.dispose();
   }
 
   // ---- Per-mode configuration widgets ----
@@ -578,13 +668,7 @@ class ReaderKeysPageState extends State<ReaderKeysPage>
           Padding(
             padding: const EdgeInsets.only(top: 8.0),
             child: ElevatedButton.icon(
-              onPressed: () {
-                showDialog<String>(
-                  context: context,
-                  builder: (context) =>
-                      DictionaryExportMenu(defaultName: outputUid, keys: keys),
-                );
-              },
+              onPressed: _saveRecoveredKeysDialog,
               icon: const Icon(Icons.save),
               label: Text(localizations.save_recovered_keys),
             ),

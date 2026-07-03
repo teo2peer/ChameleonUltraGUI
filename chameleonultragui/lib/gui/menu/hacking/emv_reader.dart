@@ -22,8 +22,9 @@ class _EmvResult {
   final List<_EmvApdu> apdus;
   final Map<String, String> fields;
   final List<EmvTlv> tlvs;
+  final EmvAip? aip;
   _EmvResult(this.uid, this.sak, this.atqa, this.ats, this.apdus, this.fields,
-      this.tlvs);
+      this.tlvs, this.aip);
 }
 
 // Read an EMV contactless card (PPSE -> AID -> GPO -> READ RECORDs) and extract
@@ -44,40 +45,25 @@ class EmvReaderPageState extends State<EmvReaderPage> {
   bool get _connected => _app.connector?.connected ?? false;
 
   _EmvResult _parse(Uint8List d) {
-    int i = 0;
-    final uidLen = d[i++];
-    final uid = d.sublist(i, i + uidLen);
-    i += uidLen;
-    final atqa = d.sublist(i, i + 2);
-    i += 2;
-    final sak = d[i++];
-    final atsLen = d[i++];
-    final ats = d.sublist(i, i + atsLen);
-    i += atsLen;
-    final num = d[i++];
+    final scan = parseEmvScanBuffer(d); // bounds-checked; throws on truncation
     final apdus = <_EmvApdu>[];
     final tlvs = <EmvTlv>[];
-    for (int k = 0; k < num; k++) {
-      final cmdLen = d[i++];
-      final cmd = d.sublist(i, i + cmdLen);
-      i += cmdLen;
-      final respLen = d[i] | (d[i + 1] << 8);
-      i += 2;
-      final resp = d.sublist(i, i + respLen);
-      i += respLen;
+    for (final (cmd, resp) in scan.apdus) {
       apdus.add(_EmvApdu(cmd, resp));
       if (resp.length > 2) {
         tlvs.addAll(parseEmvTlv(resp.sublist(0, resp.length - 2)));
       }
     }
+    final leaf = emvLeafMap(tlvs); // single pass, shared by fields + AIP
     return _EmvResult(
-      bytesToHexSpace(uid).toUpperCase(),
-      sak.toRadixString(16).padLeft(2, '0').toUpperCase(),
-      bytesToHexSpace(atqa).toUpperCase(),
-      ats.isEmpty ? '-' : bytesToHexSpace(ats).toUpperCase(),
+      bytesToHexSpace(scan.uid).toUpperCase(),
+      scan.sak.toRadixString(16).padLeft(2, '0').toUpperCase(),
+      bytesToHexSpace(scan.atqa).toUpperCase(),
+      scan.ats.isEmpty ? '-' : bytesToHexSpace(scan.ats).toUpperCase(),
       apdus,
-      emvExtractFields(tlvs),
+      emvExtractFields(leaf),
       tlvs,
+      emvDecodeAip(leaf),
     );
   }
 
@@ -93,6 +79,7 @@ class EmvReaderPageState extends State<EmvReaderPage> {
         await _app.communicator!.setReaderDeviceMode(true);
       }
       final data = await _app.communicator!.hf14a4EmvScan();
+      if (!mounted) return;
       if (data.isEmpty) {
         setState(() => _error = localizations.no_card_found);
         return;
@@ -103,6 +90,36 @@ class EmvReaderPageState extends State<EmvReaderPage> {
     } finally {
       if (mounted) setState(() => _busy = false);
     }
+  }
+
+  void _toast(String m) {
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(m)));
+    }
+  }
+
+  void _copy(String v) {
+    Clipboard.setData(ClipboardData(text: v));
+    _toast(AppLocalizations.of(context)!.copied);
+  }
+
+  // Copy the whole parsed card (tag info + fields + relay verdict) as text —
+  // handy for a report / CTF writeup.
+  void _copyAll() {
+    final r = _result;
+    if (r == null) return;
+    final b = StringBuffer()
+      ..writeln('UID: ${r.uid}')
+      ..writeln('ATQA: ${r.atqa}  SAK: ${r.sak}  ATS: ${r.ats}');
+    for (final e in r.fields.entries) {
+      b.writeln('${e.key}: ${e.value}');
+    }
+    if (r.aip != null) {
+      b.writeln('AIP: ${r.aip!.raw} (${r.aip!.features.join(", ")})');
+      b.writeln('Relay resistance (RRP): ${r.aip!.rrp ? "yes" : "no"}');
+    }
+    Clipboard.setData(ClipboardData(text: b.toString()));
+    _toast(AppLocalizations.of(context)!.copied);
   }
 
   Widget _field(String k, String v) => Padding(
@@ -123,8 +140,9 @@ class EmvReaderPageState extends State<EmvReaderPage> {
                   ),
                   IconButton(
                     visualDensity: VisualDensity.compact,
+                    tooltip: MaterialLocalizations.of(context).copyButtonLabel,
                     icon: const Icon(Icons.copy, size: 16),
-                    onPressed: () => Clipboard.setData(ClipboardData(text: v)),
+                    onPressed: () => _copy(v),
                   ),
                 ],
               ),
@@ -159,12 +177,73 @@ class EmvReaderPageState extends State<EmvReaderPage> {
     );
   }
 
+  // Relay-resistance assessment from the AIP (tag 82): tells you, defensively,
+  // whether this card would block a relay attack (RRP) and whether it resists
+  // cloning (DDA/CDA) — plus remediation guidance.
+  Widget _relaySection(BuildContext context, EmvAip? aip) {
+    final l = AppLocalizations.of(context)!;
+    if (aip == null) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 8),
+        child: Text(l.relay_no_aip,
+            style: TextStyle(color: Theme.of(context).colorScheme.outline)),
+      );
+    }
+    final scheme = Theme.of(context).colorScheme;
+    final protected = aip.rrp;
+    final bg = protected ? scheme.primaryContainer : scheme.errorContainer;
+    final fg = protected ? scheme.onPrimaryContainer : scheme.onErrorContainer;
+    return Container(
+      margin: const EdgeInsets.symmetric(vertical: 10),
+      padding: const EdgeInsets.all(12),
+      decoration:
+          BoxDecoration(color: bg, borderRadius: BorderRadius.circular(10)),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(children: [
+            Icon(protected ? Icons.verified_user : Icons.gpp_bad, color: fg),
+            const SizedBox(width: 8),
+            Expanded(
+                child: Text(l.relay_assessment,
+                    style:
+                        TextStyle(fontWeight: FontWeight.bold, color: fg))),
+          ]),
+          const SizedBox(height: 6),
+          Text(protected ? l.relay_protected : l.relay_exposed,
+              style: TextStyle(color: fg)),
+          const SizedBox(height: 6),
+          Text(aip.dda || aip.cda ? l.relay_clone_ok : l.relay_clone_weak,
+              style: TextStyle(color: fg, fontSize: 12)),
+          const SizedBox(height: 8),
+          SelectableText("AIP ${aip.raw}: ${aip.features.join(', ')}",
+              style: TextStyle(
+                  color: fg, fontSize: 11, fontFamily: 'RobotoMono')),
+          const SizedBox(height: 8),
+          Text(l.relay_remediation,
+              style: TextStyle(
+                  color: fg, fontSize: 12, fontStyle: FontStyle.italic)),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     var localizations = AppLocalizations.of(context)!;
     final r = _result;
     return Scaffold(
-      appBar: AppBar(title: Text(localizations.emv_reader)),
+      appBar: AppBar(
+        title: Text(localizations.emv_reader),
+        actions: [
+          if (r != null)
+            IconButton(
+              tooltip: MaterialLocalizations.of(context).copyButtonLabel,
+              icon: const Icon(Icons.copy_all),
+              onPressed: _copyAll,
+            ),
+        ],
+      ),
       body: !_connected
           ? Center(child: Text(localizations.no_device))
           : SingleChildScrollView(
@@ -201,6 +280,7 @@ class EmvReaderPageState extends State<EmvReaderPage> {
                               color: Theme.of(context).colorScheme.outline))
                     else
                       ...r.fields.entries.map((e) => _field(e.key, e.value)),
+                    _relaySection(context, r.aip),
                     const SizedBox(height: 8),
                     ExpansionTile(
                       title: Text("EMV TLV (${r.tlvs.length})"),

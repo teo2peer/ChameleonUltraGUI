@@ -1,3 +1,4 @@
+import 'package:chameleonultragui/helpers/emv.dart';
 import 'package:chameleonultragui/helpers/general.dart';
 import 'package:chameleonultragui/main.dart';
 import 'package:flutter/material.dart';
@@ -40,43 +41,33 @@ class DesfireReaderPageState extends State<DesfireReaderPage> {
 
   String _storageLabel(int code) {
     // DESFire storage size is 2^(n>>1); an odd LSB means "between this and the
-    // next size".
-    final bytes = 1 << (code >> 1);
+    // next size". Bound the shift so a bogus byte can't overflow.
+    final shift = (code >> 1) & 0x1F;
+    final bytes = 1 << shift;
     final approx = (code & 1) != 0 ? "> " : "";
     return "0x${code.toRadixString(16).padLeft(2, '0').toUpperCase()} ($approx$bytes B)";
   }
 
   _DesfireResult _parse(Uint8List d) {
-    int i = 0;
-    final uidLen = d[i++];
-    final tagUid = d.sublist(i, i + uidLen);
-    i += uidLen;
-    i += 2; // atqa
-    i += 1; // sak
-    final atsLen = d[i++];
-    i += atsLen;
-    final num = d[i++];
+    final scan = parseEmvScanBuffer(d); // bounds-checked; throws on truncation
+    final tagUid = scan.uid;
 
     final apdus = <(Uint8List, Uint8List)>[];
     final version = <int>[];
     final apps = <_DesfireApp>[];
     List<int> aids = [];
+    List<int> freeMemory = [];
     String? currentAid;
 
-    for (int k = 0; k < num; k++) {
-      final cmdLen = d[i++];
-      final cmd = d.sublist(i, i + cmdLen);
-      i += cmdLen;
-      final respLen = d[i] | (d[i + 1] << 8);
-      i += 2;
-      final resp = d.sublist(i, i + respLen);
-      i += respLen;
+    for (final (cmd, resp) in scan.apdus) {
       apdus.add((cmd, resp));
 
       final ins = cmd.length > 1 ? cmd[1] : 0;
       final body = resp.length >= 2 ? resp.sublist(0, resp.length - 2) : resp;
       if (ins == 0x60 || ins == 0xAF) {
         version.addAll(body);
+      } else if (ins == 0x6E) {
+        freeMemory = body; // 3-byte little-endian free EEPROM
       } else if (ins == 0x6A) {
         aids = body; // N * 3 bytes
       } else if (ins == 0x5A) {
@@ -112,6 +103,10 @@ class DesfireReaderPageState extends State<DesfireReaderPage> {
       uid = bytesToHexSpace(Uint8List.fromList(version.sublist(14, 21)))
           .toUpperCase();
     }
+    if (freeMemory.length >= 3) {
+      info['Free memory'] =
+          '${freeMemory[0] | (freeMemory[1] << 8) | (freeMemory[2] << 16)} B';
+    }
     return _DesfireResult(uid, info, apps, apdus);
   }
 
@@ -127,6 +122,7 @@ class DesfireReaderPageState extends State<DesfireReaderPage> {
         await _app.communicator!.setReaderDeviceMode(true);
       }
       final data = await _app.communicator!.hf14a4DesfireScan();
+      if (!mounted) return;
       if (data.isEmpty) {
         setState(() => _error = localizations.no_card_found);
         return;

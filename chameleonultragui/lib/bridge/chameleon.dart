@@ -769,6 +769,9 @@ class ChameleonCommunicator {
   // Read-only EMV scan when amount is null; with a 6-byte n12 BCD amount the
   // firmware also runs GENERATE AC (offline purchase simulation — no bank).
   Future<Uint8List> hf14a4EmvScan({Uint8List? amount}) async {
+    if (amount != null && amount.length != 6) {
+      throw ArgumentError('EMV amount must be 6 bytes (n12 BCD)');
+    }
     final resp = await sendCmd(ChameleonCommand.hf14a4EmvScan,
         data: amount ?? Uint8List(0), timeout: const Duration(seconds: 12));
     if (resp == null) {
@@ -792,12 +795,18 @@ class ChameleonCommunicator {
   // Set the emulated card's anti-collision data (UID/ATQA/SAK/ATS).
   Future<void> hf14a4SetAntiColl(
       Uint8List uid, Uint8List atqa, int sak, Uint8List ats) async {
+    if (![4, 7, 10].contains(uid.length) ||
+        atqa.length != 2 ||
+        ats.length > 255) {
+      throw ArgumentError('invalid anti-collision parameters');
+    }
+    // ATQA reversed to wire order, matching setMf1AntiCollision.
     await sendCmd(ChameleonCommand.hf14a4SetAntiColl,
         data: Uint8List.fromList([
           uid.length,
           ...uid,
-          ...atqa,
-          sak,
+          ...atqa.reversed,
+          sak & 0xFF,
           ats.length,
           ...ats,
         ]));
@@ -812,6 +821,9 @@ class ChameleonCommunicator {
   // Add a static command-prefix -> response rule for the emulated card.
   Future<void> hf14a4AddStaticResponse(
       Uint8List command, Uint8List response) async {
+    if (command.isEmpty || command.length > 255 || response.length > 0xFFFF) {
+      throw ArgumentError('invalid static response (cmd 1..255, resp <=65535)');
+    }
     await sendCmd(ChameleonCommand.hf14a4StaticResp,
         data: Uint8List.fromList([
           command.length,

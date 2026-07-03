@@ -39,7 +39,8 @@ class EmvTransactionPageState extends State<EmvTransactionPage> {
 
   // Amount (e.g. "12.34") -> 12-digit n12 BCD, 6 bytes.
   Uint8List _amountBcd(String s) {
-    final cents = (double.parse(s.replaceAll(',', '.')) * 100).round();
+    // Non-negative; reject empty/garbage (double.parse throws -> invalid_amount).
+    final cents = ((double.parse(s.replaceAll(',', '.')) * 100).round()).abs();
     final digits = cents.toString().padLeft(12, '0');
     final safe = digits.length > 12 ? digits.substring(digits.length - 12) : digits;
     final out = Uint8List(6);
@@ -65,38 +66,28 @@ class EmvTransactionPageState extends State<EmvTransactionPage> {
         await _app.communicator!.setReaderDeviceMode(true);
       }
       final data = await _app.communicator!.hf14a4EmvScan(amount: amount);
+      if (!mounted) return;
       if (data.isEmpty) {
         setState(() => _error = localizations.no_card_found);
         return;
       }
-      // Parse packed buffer -> APDU pairs -> TLV.
-      int i = 0;
-      final uidLen = data[i++];
-      i += uidLen + 2 + 1; // uid + atqa + sak
-      final atsLen = data[i++];
-      i += atsLen;
-      final num = data[i++];
-      final apdus = <(Uint8List, Uint8List)>[];
+      // Bounds-checked parse -> TLV (shared helper).
+      final scan = parseEmvScanBuffer(data);
       final tlvs = <EmvTlv>[];
-      for (int k = 0; k < num; k++) {
-        final cl = data[i++];
-        final cmd = data.sublist(i, i + cl);
-        i += cl;
-        final rl = data[i] | (data[i + 1] << 8);
-        i += 2;
-        final resp = data.sublist(i, i + rl);
-        i += rl;
-        apdus.add((cmd, resp));
-        if (resp.length > 2) tlvs.addAll(parseEmvTlv(resp.sublist(0, resp.length - 2)));
+      for (final (_, resp) in scan.apdus) {
+        if (resp.length > 2) {
+          tlvs.addAll(parseEmvTlv(resp.sublist(0, resp.length - 2)));
+        }
       }
+      final leaf = emvLeafMap(tlvs); // single pass, shared by both extractors
       setState(() {
-        _card = emvExtractFields(tlvs);
-        _crypto = emvExtractCryptogram(tlvs);
+        _card = emvExtractFields(leaf);
+        _crypto = emvExtractCryptogram(leaf);
         _tlvs = tlvs;
-        _apdus = apdus;
+        _apdus = scan.apdus;
       });
     } on FormatException {
-      setState(() => _error = localizations.invalid_hex_input);
+      setState(() => _error = localizations.invalid_amount);
     } catch (e) {
       setState(() => _error = e.toString());
     } finally {

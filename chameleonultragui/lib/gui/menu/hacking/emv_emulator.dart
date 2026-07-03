@@ -70,6 +70,9 @@ class EmvEmulatorPageState extends State<EmvEmulatorPage> {
     }
   }
 
+  bool _isHex(String s) =>
+      s.isNotEmpty && s.length.isEven && RegExp(r'^[0-9A-Fa-f]+$').hasMatch(s);
+
   Future<void> _arm() async {
     var localizations = AppLocalizations.of(context)!;
     if (_rules.isEmpty) {
@@ -88,9 +91,11 @@ class EmvEmulatorPageState extends State<EmvEmulatorPage> {
       await _app.communicator!.setReaderDeviceMode(false);
       await _app.communicator!.setSlotType(slot, TagType.hf14a4);
       // SAK 0x20 => ISO14443-4; a small generic ATS.
+      // ATQA in display order; the wrapper reverses to wire order like the
+      // rest of the codebase (setMf1AntiCollision).
       await _app.communicator!.hf14a4SetAntiColl(
           uid,
-          Uint8List.fromList([0x04, 0x00]),
+          Uint8List.fromList([0x00, 0x04]),
           0x20,
           Uint8List.fromList([0x78, 0x77, 0x80, 0x02]));
       await _app.communicator!.hf14a4ClearStaticResponses();
@@ -100,9 +105,12 @@ class EmvEmulatorPageState extends State<EmvEmulatorPage> {
             hexToBytes(r.resp.replaceAll(' ', '')));
       }
       await _app.communicator!.activateSlot(slot);
+      if (!mounted) return;
       setState(() => _armed = true);
       _show(localizations.emv_emulator_armed);
     } on FormatException {
+      _show(localizations.invalid_hex_input);
+    } on RangeError {
       _show(localizations.invalid_hex_input);
     } catch (e) {
       _show(e.toString());
@@ -207,18 +215,22 @@ class EmvEmulatorPageState extends State<EmvEmulatorPage> {
                       ),
                       const SizedBox(width: 8),
                       IconButton.filled(
-                        onPressed: () {
-                          if (_cmd.text.trim().isEmpty ||
-                              _resp.text.trim().isEmpty) {
-                            return;
-                          }
-                          setState(() {
-                            _rules.add(_Rule('custom', _cmd.text.trim(),
-                                _resp.text.trim()));
-                            _cmd.clear();
-                            _resp.clear();
-                          });
-                        },
+                        onPressed: _busy
+                            ? null
+                            : () {
+                                final c = _cmd.text.trim().replaceAll(' ', '');
+                                final r = _resp.text.trim().replaceAll(' ', '');
+                                if (c.isEmpty || r.isEmpty) return;
+                                if (!_isHex(c) || !_isHex(r)) {
+                                  _show(localizations.invalid_hex_input);
+                                  return;
+                                }
+                                setState(() {
+                                  _rules.add(_Rule('custom', c, r));
+                                  _cmd.clear();
+                                  _resp.clear();
+                                });
+                              },
                         icon: const Icon(Icons.add),
                       ),
                     ],

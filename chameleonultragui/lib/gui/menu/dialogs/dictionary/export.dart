@@ -24,9 +24,10 @@ class DictionaryExportMenu extends StatefulWidget {
 
 class DictionaryExportMenuState extends State<DictionaryExportMenu> {
   List<Uint8List> deduplicateKeys(List<Uint8List> keys) {
-    return <int, Uint8List>{
-      for (var key in keys.where((key) => key.isNotEmpty).toList())
-        Object.hashAll(key): key
+    // Key by hex (value), not Object.hashAll — an int-hash collision would
+    // silently drop a distinct key.
+    return <String, Uint8List>{
+      for (var key in keys.where((key) => key.isNotEmpty)) bytesToHex(key): key
     }.values.toList();
   }
 
@@ -88,7 +89,9 @@ class DictionaryExportMenuState extends State<DictionaryExportMenu> {
       },
     );
 
-    return dictionary.text;
+    final name = dictionary.text;
+    dictionary.dispose();
+    return name;
   }
 
   @override
@@ -142,10 +145,13 @@ class DictionaryExportMenuState extends State<DictionaryExportMenu> {
               return;
             }
 
+            List<Uint8List> deduped = deduplicateKeys(widget.keys);
             Dictionary dictionary = Dictionary(
               name: name,
               color: Colors.blue,
-              keys: deduplicateKeys(widget.keys),
+              keys: deduped,
+              // keyLength (hex chars) so keyLength-filtered pickers list it.
+              keyLength: deduped.isNotEmpty ? deduped.first.length * 2 : 12,
             );
 
             if (context.mounted) {
@@ -173,6 +179,19 @@ class DictSearchDelegate extends SearchDelegate<String> {
   final List<Uint8List> keys;
 
   DictSearchDelegate(this.dicts, this.keys);
+
+  // Merge the recovered keys into the chosen dictionary, deduping against its
+  // existing keys, persist, and close the search returning the dict name.
+  void _mergeInto(BuildContext context, Dictionary dict) {
+    var appState = context.read<ChameleonGUIState>();
+    final existing = dict.keys.map(bytesToHex).toSet();
+    for (final k in keys) {
+      if (existing.add(bytesToHex(k))) dict.keys.add(k);
+    }
+    appState.sharedPreferencesProvider.setDictionaries(dicts);
+    appState.changesMade();
+    close(context, dict.name);
+  }
 
   @override
   List<Widget> buildActions(BuildContext context) {
@@ -209,7 +228,7 @@ class DictSearchDelegate extends SearchDelegate<String> {
           leading: Icon(Icons.key, color: dict.color),
           title: Text(dict.name),
           subtitle: Text("${dict.keys.length.toString()} keys"),
-          onTap: () async {},
+          onTap: () => _mergeInto(context, dict),
         );
       },
     );
@@ -220,7 +239,6 @@ class DictSearchDelegate extends SearchDelegate<String> {
     final results = dicts
         .where((dict) => dict.name.toLowerCase().contains(query.toLowerCase()));
 
-    var appState = context.read<ChameleonGUIState>();
     return ListView.builder(
       itemCount: results.length,
       itemBuilder: (BuildContext context, int index) {
@@ -229,12 +247,7 @@ class DictSearchDelegate extends SearchDelegate<String> {
           leading: Icon(Icons.key, color: dict.color),
           title: Text(dict.name),
           subtitle: Text("${dict.keys.length.toString()} keys"),
-          onTap: () async {
-            dict.keys.addAll(keys);
-            appState.sharedPreferencesProvider.setDictionaries(dicts);
-            appState.changesMade();
-            Navigator.pop(context);
-          },
+          onTap: () => _mergeInto(context, dict),
         );
       },
     );

@@ -399,6 +399,8 @@ class MifareClassicRecovery {
   // is still confirmed on-card by checkKeysOnSector, so it can only be faster,
   // never wrong. Returns true if any key was found.
   Future<bool> recoverBackdoor() async {
+    error = ""; // clear any stale error from a previous run
+    final keyKnownAtEntry = validKeys.map((k) => k.isNotEmpty).toList();
     state = localizations.checking_card_info;
     update();
     if (!await mfClassicHasBackdoor(appState.communicator!)) {
@@ -449,8 +451,8 @@ class MifareClassicRecovery {
             possibleAKeys, possibleBKeys, aN.nt, bN.nt);
         candA[sector] = mfClassicConvertKeys(filtered.$1.reversed.toList());
         candB[sector] = mfClassicConvertKeys(filtered.$2.reversed.toList());
-      } catch (e) {
-        error = e.toString();
+      } catch (_) {
+        // Non-fatal: skip this sector, keep going (don't surface as error).
         candA[sector] = [];
         candB[sector] = [];
         rawA[sector] = [];
@@ -517,15 +519,19 @@ class MifareClassicRecovery {
             await checkKeysOnSector(mfClassicConvertKeys(matching), 0, sector);
           }
         }
-      } catch (e) {
-        error = e.toString();
+      } catch (_) {
+        // Non-fatal: this sector failed to confirm; continue with the rest.
       }
       setMissingSector(sector, 0);
       setMissingSector(sector, 1);
     }
     state = "";
     update();
-    return validKeys.any((k) => k.isNotEmpty);
+    // Success = a key recovered THIS call (ignore pre-seeded EV1 keys).
+    for (var idx = 0; idx < validKeys.length; idx++) {
+      if (validKeys[idx].isNotEmpty && !keyKnownAtEntry[idx]) return true;
+    }
+    return false;
   }
 
   Future<void> recoverKeys() async {
