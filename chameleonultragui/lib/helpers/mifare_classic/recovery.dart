@@ -392,8 +392,12 @@ class MifareClassicRecovery {
   }
 
   // Standalone Static-Encrypted Nested (Fudan FM11RF08S backdoor, eprint
-  // 2024/1275): recover every A/B key using the factory backdoor. Mirrors the
-  // backdoor branch of recoverKeys(). Returns true if any key was found.
+  // 2024/1275). Reuses the FFI staticEncryptedNested + StaticEncryptedKeysFilter
+  // like recoverKeys(), but adds the Proxmark3 staticnested orchestration
+  // speedups: cross-sector key-reuse prioritisation, default-key prioritisation
+  // and the nt(A)==nt(B) => keyA==keyB shortcut. Ordering-only: every candidate
+  // is still confirmed on-card by checkKeysOnSector, so it can only be faster,
+  // never wrong. Returns true if any key was found.
   Future<bool> recoverBackdoor() async {
     state = localizations.checking_card_info;
     update();
@@ -413,49 +417,103 @@ class MifareClassicRecovery {
       update();
       return false;
     }
+
+    // ---- Phase 1: collect filtered A/B candidate lists for every sector ----
+    final candA = <int, List<Uint8List>>{};
+    final candB = <int, List<Uint8List>>{};
+    final rawA = <int, List<int>>{}; // unfiltered A candidates for findMatchingKeys
+    final sameNt = <int, bool>{};
     for (var sector = 0; sector < sectors; sector++) {
       state = localizations.collecting_nonces("Backdoor");
       setCheckingSector(sector, 0);
       setCheckingSector(sector, 1);
       update();
+      final aN = backdoorInfo.$2.nonces[sector];
+      final bN = backdoorInfo.$3.nonces[sector];
+      sameNt[sector] = aN.nt == bN.nt;
       try {
-        var possibleAKeys = await recovery.staticEncryptedNested(
+        final possibleAKeys = await recovery.staticEncryptedNested(
             StaticEncryptedNestedDart(
                 uid: backdoorInfo.$1,
-                nt: backdoorInfo.$2.nonces[sector].nt,
-                ntEnc: backdoorInfo.$2.nonces[sector].ntEnc,
-                ntParEnc: backdoorInfo.$2.nonces[sector].parity));
-        var possibleBKeys = await recovery.staticEncryptedNested(
+                nt: aN.nt,
+                ntEnc: aN.ntEnc,
+                ntParEnc: aN.parity));
+        final possibleBKeys = await recovery.staticEncryptedNested(
             StaticEncryptedNestedDart(
                 uid: backdoorInfo.$1,
-                nt: backdoorInfo.$3.nonces[sector].nt,
-                ntEnc: backdoorInfo.$3.nonces[sector].ntEnc,
-                ntParEnc: backdoorInfo.$3.nonces[sector].parity));
-        var filtered = await StaticEncryptedKeysFilterAsync.filterKeys(
-            possibleAKeys,
-            possibleBKeys,
-            backdoorInfo.$2.nonces[sector].nt,
-            backdoorInfo.$3.nonces[sector].nt);
+                nt: bN.nt,
+                ntEnc: bN.ntEnc,
+                ntParEnc: bN.parity));
+        rawA[sector] = possibleAKeys;
+        final filtered = await StaticEncryptedKeysFilterAsync.filterKeys(
+            possibleAKeys, possibleBKeys, aN.nt, bN.nt);
+        candA[sector] = mfClassicConvertKeys(filtered.$1.reversed.toList());
+        candB[sector] = mfClassicConvertKeys(filtered.$2.reversed.toList());
+      } catch (e) {
+        error = e.toString();
+        candA[sector] = [];
+        candB[sector] = [];
+        rawA[sector] = [];
+      }
+    }
+
+    // ---- Phase 2: build priority set (cross-sector duplicates + defaults) ---
+    final counts = <String, int>{};
+    void tally(List<Uint8List> l) {
+      for (final k in l) {
+        final h = bytesToHex(k);
+        counts[h] = (counts[h] ?? 0) + 1;
+      }
+    }
+    for (var s = 0; s < sectors; s++) {
+      tally(candA[s]!);
+      tally(candB[s]!);
+    }
+    final defaultSet = gMifareClassicKeys.map(bytesToHex).toSet();
+    List<Uint8List> prioritise(List<Uint8List> list) {
+      final pri = <Uint8List>[];
+      final rest = <Uint8List>[];
+      for (final k in list) {
+        final h = bytesToHex(k);
+        if ((counts[h] ?? 0) >= 2 || defaultSet.contains(h)) {
+          pri.add(k);
+        } else {
+          rest.add(k);
+        }
+      }
+      return [...pri, ...rest];
+    }
+
+    // ---- Phase 3: confirm keys on card, priority candidates first ----------
+    for (var sector = 0; sector < sectors; sector++) {
+      final aN = backdoorInfo.$2.nonces[sector];
+      final bN = backdoorInfo.$3.nonces[sector];
+      try {
         // Key B
         if (getSectorState(sector, 1) != ChameleonKeyCheckmark.found &&
             getSectorState(sector, 1) != ChameleonKeyCheckmark.disabled) {
-          await checkKeysOnSector(
-              mfClassicConvertKeys(filtered.$2.reversed.toList()), 1, sector);
+          await checkKeysOnSector(prioritise(candB[sector]!), 1, sector);
+        }
+        // nt(A)==nt(B) => same key: reuse the recovered B key for A
+        if (sameNt[sector]! &&
+            getSectorState(sector, 1) == ChameleonKeyCheckmark.found &&
+            getSectorState(sector, 0) != ChameleonKeyCheckmark.found) {
+          await checkKeysOnSector([getSectorKey(sector, 1)], 0, sector);
         }
         // Key A (direct candidates, then derived from the recovered B key)
         if (getSectorState(sector, 0) != ChameleonKeyCheckmark.found &&
             getSectorState(sector, 0) != ChameleonKeyCheckmark.disabled) {
-          final aFound = await checkKeysOnSector(
-              mfClassicConvertKeys(filtered.$1.reversed.toList()), 0, sector);
+          final aFound =
+              await checkKeysOnSector(prioritise(candA[sector]!), 0, sector);
           if (!aFound &&
               getSectorState(sector, 1) == ChameleonKeyCheckmark.found) {
             final matching =
                 await StaticEncryptedKeysFilterAsync.findMatchingKeys(
-                    backdoorInfo.$3.nonces[sector].nt,
+                    bN.nt,
                     bytesToU64(
                         Uint8List.fromList([0, 0, ...validKeys[sector + 40]])),
-                    backdoorInfo.$2.nonces[sector].nt,
-                    possibleAKeys);
+                    aN.nt,
+                    rawA[sector]!);
             await checkKeysOnSector(mfClassicConvertKeys(matching), 0, sector);
           }
         }
