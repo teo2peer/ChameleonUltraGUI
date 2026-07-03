@@ -263,6 +263,8 @@
   "apdu_terminal_description": "Send raw ISO14443-4 APDUs to a card and view the response",
   "send": "Send",
   "response": "Response",
+  "emv_reader": "EMV reader",
+  "emv_reader_description": "Read a contactless payment card: PAN, expiry, cardholder, AID + raw APDUs",
   "card_number": "Card number",
   "format": "Format",
   "dictionary_check": "Dictionary check",

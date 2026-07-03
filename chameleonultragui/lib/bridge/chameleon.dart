@@ -762,6 +762,19 @@ class ChameleonCommunicator {
     return resp.data;
   }
 
+  // Full EMV contactless scan in one firmware call (field cycle, select, RATS,
+  // PPSE, SELECT AID, GPO, READ RECORDs). Returns the raw buffer:
+  //   uid_len(1) uid(n) atqa(2) sak(1) ats_len(1) ats(m) num_apdus(1)
+  //   then per APDU: cmd_len(1) cmd(n) resp_len_le(2) resp(m)
+  Future<Uint8List> hf14a4EmvScan() async {
+    final resp = await sendCmd(ChameleonCommand.hf14a4EmvScan,
+        data: Uint8List(0), timeout: const Duration(seconds: 12));
+    if (resp == null) {
+      throw ('No response from EMV scan command');
+    }
+    return resp.data;
+  }
+
   Future<Uint8List> hf14aSniff({int timeoutMs = 5000}) async {
     timeoutMs = timeoutMs.clamp(1, 30000);
     final resp = await sendCmd(ChameleonCommand.hf14aSniff,

@@ -79,6 +79,7 @@ enum ChameleonCommand {
   hf14aAuthTrace(2017),
   hf14aSniff(2020),
   hf14a4ReaderApdu(6004),
+  hf14a4EmvScan(6005),
 
   // lf commands
   scanEM410Xtag(3000),

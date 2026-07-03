@@ -257,6 +257,8 @@
   "apdu_terminal_description": "Envía APDUs ISO14443-4 crudas a una tarjeta y ve la respuesta",
   "send": "Enviar",
   "response": "Respuesta",
+  "emv_reader": "Lector EMV",
+  "emv_reader_description": "Lee una tarjeta de pago contactless: PAN, caducidad, titular, AID + APDUs",
   "card_number": "Número de tarjeta",
   "format": "Formato",
   "dictionary_check": "Chequeo de diccionario",
