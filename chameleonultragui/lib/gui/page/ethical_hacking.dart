@@ -4,6 +4,7 @@ import 'package:chameleonultragui/gui/menu/hacking/auth_trace.dart';
 import 'package:chameleonultragui/gui/menu/hacking/autopwn.dart';
 import 'package:chameleonultragui/gui/menu/hacking/backdoor.dart';
 import 'package:chameleonultragui/gui/menu/hacking/darkside.dart';
+import 'package:chameleonultragui/gui/menu/hacking/desfire_reader.dart';
 import 'package:chameleonultragui/gui/menu/hacking/emv_reader.dart';
 import 'package:chameleonultragui/gui/menu/hacking/mfkey_manual.dart';
 import 'package:chameleonultragui/gui/menu/hacking/nested.dart';
@@ -233,6 +234,9 @@ class EthicalHackingPageState extends State<EthicalHackingPage> {
           deviceRequired: true),
       _Attack(localizations.emv_reader, localizations.emv_reader_description,
           Icons.contactless, (c) => _push(c, const EmvReaderPage()),
+          deviceRequired: true),
+      _Attack(localizations.desfire_reader, localizations.desfire_reader_description,
+          Icons.storage, (c) => _push(c, const DesfireReaderPage()),
           deviceRequired: true),
     ];
 

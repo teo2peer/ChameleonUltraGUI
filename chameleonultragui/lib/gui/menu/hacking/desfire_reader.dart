@@ -1,0 +1,250 @@
+import 'package:chameleonultragui/helpers/general.dart';
+import 'package:chameleonultragui/main.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:provider/provider.dart';
+
+// Localizations
+import 'package:chameleonultragui/generated/i18n/app_localizations.dart';
+
+class _DesfireApp {
+  final String aid;
+  final List<String> fileIds;
+  _DesfireApp(this.aid, this.fileIds);
+}
+
+class _DesfireResult {
+  final String uid;
+  final Map<String, String> info; // vendor, hw/sw version, storage
+  final List<_DesfireApp> apps;
+  final List<(Uint8List, Uint8List)> apdus;
+  _DesfireResult(this.uid, this.info, this.apps, this.apdus);
+}
+
+// Enumerate a MIFARE DESFire card (read-only): version, UID, applications and
+// their file IDs. Uses the firmware HF14A_4_DESFIRE_SCAN one-shot command.
+class DesfireReaderPage extends StatefulWidget {
+  const DesfireReaderPage({super.key});
+
+  @override
+  DesfireReaderPageState createState() => DesfireReaderPageState();
+}
+
+class DesfireReaderPageState extends State<DesfireReaderPage> {
+  bool _busy = false;
+  String? _error;
+  _DesfireResult? _result;
+
+  ChameleonGUIState get _app => context.read<ChameleonGUIState>();
+  bool get _connected => _app.connector?.connected ?? false;
+
+  String _storageLabel(int code) {
+    // DESFire storage size is 2^(n>>1); an odd LSB means "between this and the
+    // next size".
+    final bytes = 1 << (code >> 1);
+    final approx = (code & 1) != 0 ? "> " : "";
+    return "0x${code.toRadixString(16).padLeft(2, '0').toUpperCase()} ($approx$bytes B)";
+  }
+
+  _DesfireResult _parse(Uint8List d) {
+    int i = 0;
+    final uidLen = d[i++];
+    final tagUid = d.sublist(i, i + uidLen);
+    i += uidLen;
+    i += 2; // atqa
+    i += 1; // sak
+    final atsLen = d[i++];
+    i += atsLen;
+    final num = d[i++];
+
+    final apdus = <(Uint8List, Uint8List)>[];
+    final version = <int>[];
+    final apps = <_DesfireApp>[];
+    List<int> aids = [];
+    String? currentAid;
+
+    for (int k = 0; k < num; k++) {
+      final cmdLen = d[i++];
+      final cmd = d.sublist(i, i + cmdLen);
+      i += cmdLen;
+      final respLen = d[i] | (d[i + 1] << 8);
+      i += 2;
+      final resp = d.sublist(i, i + respLen);
+      i += respLen;
+      apdus.add((cmd, resp));
+
+      final ins = cmd.length > 1 ? cmd[1] : 0;
+      final body = resp.length >= 2 ? resp.sublist(0, resp.length - 2) : resp;
+      if (ins == 0x60 || ins == 0xAF) {
+        version.addAll(body);
+      } else if (ins == 0x6A) {
+        aids = body; // N * 3 bytes
+      } else if (ins == 0x5A) {
+        // AID is in the command: 90 5A 00 00 03 <aid0 aid1 aid2> 00
+        if (cmd.length >= 8) {
+          currentAid = bytesToHex(cmd.sublist(5, 8)).toUpperCase();
+        }
+      } else if (ins == 0x6F) {
+        final files =
+            body.map((b) => b.toRadixString(16).padLeft(2, '0').toUpperCase()).toList();
+        apps.add(_DesfireApp(currentAid ?? '??????', files));
+      }
+    }
+
+    // Applications with no GetFileIDs response (or before select mapping)
+    if (apps.isEmpty && aids.length >= 3) {
+      for (int a = 0; a + 3 <= aids.length; a += 3) {
+        apps.add(_DesfireApp(
+            bytesToHex(Uint8List.fromList(aids.sublist(a, a + 3))).toUpperCase(),
+            const []));
+      }
+    }
+
+    final info = <String, String>{};
+    String uid = bytesToHexSpace(tagUid).toUpperCase();
+    if (version.length >= 21) {
+      info['Vendor'] = version[0] == 0x04
+          ? 'NXP (0x04)'
+          : '0x${version[0].toRadixString(16).padLeft(2, '0')}';
+      info['HW version'] = '${version[3]}.${version[4]}';
+      info['Storage'] = _storageLabel(version[5]);
+      info['SW version'] = '${version[10]}.${version[11]}';
+      uid = bytesToHexSpace(Uint8List.fromList(version.sublist(14, 21)))
+          .toUpperCase();
+    }
+    return _DesfireResult(uid, info, apps, apdus);
+  }
+
+  Future<void> _scan() async {
+    var localizations = AppLocalizations.of(context)!;
+    setState(() {
+      _busy = true;
+      _error = null;
+      _result = null;
+    });
+    try {
+      if (!await _app.communicator!.isReaderDeviceMode()) {
+        await _app.communicator!.setReaderDeviceMode(true);
+      }
+      final data = await _app.communicator!.hf14a4DesfireScan();
+      if (data.isEmpty) {
+        setState(() => _error = localizations.no_card_found);
+        return;
+      }
+      setState(() => _result = _parse(data));
+    } catch (e) {
+      setState(() => _error = e.toString());
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Widget _row(String k, String v) => Padding(
+        padding: const EdgeInsets.symmetric(vertical: 3.0),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Text(k, style: const TextStyle(fontWeight: FontWeight.bold)),
+            Flexible(
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Flexible(
+                    child: SelectableText(v,
+                        textAlign: TextAlign.end,
+                        style: const TextStyle(fontFamily: 'RobotoMono')),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.copy, size: 16),
+                    onPressed: () => Clipboard.setData(ClipboardData(text: v)),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      );
+
+  @override
+  Widget build(BuildContext context) {
+    var localizations = AppLocalizations.of(context)!;
+    final r = _result;
+    return Scaffold(
+      appBar: AppBar(title: Text(localizations.desfire_reader)),
+      body: !_connected
+          ? Center(child: Text(localizations.no_device))
+          : SingleChildScrollView(
+              padding: const EdgeInsets.all(16.0),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Center(
+                    child: ElevatedButton.icon(
+                      onPressed: _busy ? null : _scan,
+                      icon: _busy
+                          ? const SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(strokeWidth: 2))
+                          : const Icon(Icons.memory),
+                      label: Text(localizations.desfire_reader),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  if (_error != null)
+                    Text(_error!,
+                        style: TextStyle(
+                            color: Theme.of(context).colorScheme.error)),
+                  if (r != null) ...[
+                    _row('UID', r.uid),
+                    ...r.info.entries.map((e) => _row(e.key, e.value)),
+                    const Divider(height: 24),
+                    Text(
+                        "${localizations.applications} (${r.apps.length})",
+                        style: const TextStyle(fontWeight: FontWeight.bold)),
+                    ...r.apps.map((a) => Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 4.0),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              SelectableText("AID ${a.aid}",
+                                  style: const TextStyle(
+                                      fontFamily: 'RobotoMono')),
+                              Text(a.fileIds.isEmpty
+                                  ? '-'
+                                  : "files: ${a.fileIds.join(', ')}"),
+                            ],
+                          ),
+                        )),
+                    const SizedBox(height: 12),
+                    ExpansionTile(
+                      title: Text("APDU (${r.apdus.length})"),
+                      children: r.apdus
+                          .map((p) => Padding(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 12, vertical: 4),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    SelectableText(
+                                        "→ ${bytesToHexSpace(p.$1).toUpperCase()}",
+                                        style: const TextStyle(
+                                            fontFamily: 'RobotoMono',
+                                            fontSize: 12)),
+                                    SelectableText(
+                                        "← ${bytesToHexSpace(p.$2).toUpperCase()}",
+                                        style: const TextStyle(
+                                            fontFamily: 'RobotoMono',
+                                            fontSize: 12)),
+                                  ],
+                                ),
+                              ))
+                          .toList(),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+    );
+  }
+}

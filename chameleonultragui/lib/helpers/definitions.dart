@@ -80,6 +80,7 @@ enum ChameleonCommand {
   hf14aSniff(2020),
   hf14a4ReaderApdu(6004),
   hf14a4EmvScan(6005),
+  hf14a4DesfireScan(6006),
 
   // lf commands
   scanEM410Xtag(3000),

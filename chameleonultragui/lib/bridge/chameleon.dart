@@ -775,6 +775,17 @@ class ChameleonCommunicator {
     return resp.data;
   }
 
+  // Enumerate a MIFARE DESFire card in one call (GetVersion + GetApplicationIDs
+  // + per-AID SelectApplication/GetFileIDs). Same packed buffer as EMV scan.
+  Future<Uint8List> hf14a4DesfireScan() async {
+    final resp = await sendCmd(ChameleonCommand.hf14a4DesfireScan,
+        data: Uint8List(0), timeout: const Duration(seconds: 10));
+    if (resp == null) {
+      throw ('No response from DESFire scan command');
+    }
+    return resp.data;
+  }
+
   Future<Uint8List> hf14aSniff({int timeoutMs = 5000}) async {
     timeoutMs = timeoutMs.clamp(1, 30000);
     final resp = await sendCmd(ChameleonCommand.hf14aSniff,
