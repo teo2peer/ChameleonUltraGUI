@@ -5,6 +5,7 @@ import 'package:chameleonultragui/gui/menu/hacking/autopwn.dart';
 import 'package:chameleonultragui/gui/menu/hacking/backdoor.dart';
 import 'package:chameleonultragui/gui/menu/hacking/darkside.dart';
 import 'package:chameleonultragui/gui/menu/hacking/desfire_reader.dart';
+import 'package:chameleonultragui/gui/menu/hacking/emv_emulator.dart';
 import 'package:chameleonultragui/gui/menu/hacking/emv_reader.dart';
 import 'package:chameleonultragui/gui/menu/hacking/emv_transaction.dart';
 import 'package:chameleonultragui/gui/menu/hacking/mfkey_manual.dart';
@@ -224,6 +225,9 @@ class EthicalHackingPageState extends State<EthicalHackingPage> {
       _Attack(localizations.wiegand_decoder,
           localizations.wiegand_decoder_description, Icons.numbers,
           (c) => _dialog(c, const WiegandMenu())),
+      _Attack(localizations.emv_emulator, localizations.emv_emulator_description,
+          Icons.sim_card, (c) => _push(c, const EmvEmulatorPage()),
+          deviceRequired: true),
     ];
 
     final diagnostics = <_Attack>[

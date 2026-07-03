@@ -78,6 +78,10 @@ enum ChameleonCommand {
   hf14ARawCommand(2010),
   hf14aAuthTrace(2017),
   hf14aSniff(2020),
+  hf14a4ApduRecv(6000),
+  hf14a4ApduSend(6001),
+  hf14a4SetAntiColl(6002),
+  hf14a4StaticResp(6003),
   hf14a4ReaderApdu(6004),
   hf14a4EmvScan(6005),
   hf14a4DesfireScan(6006),
@@ -193,7 +197,8 @@ enum TagType {
   ultralight(1103),
   ultralightC(1104),
   ultralight11(1105),
-  ultralight21(1106);
+  ultralight21(1106),
+  hf14a4(3000);
 
   const TagType(this.value);
   final int value;

@@ -788,6 +788,40 @@ class ChameleonCommunicator {
     return resp.data;
   }
 
+  // ---- ISO14443-4 card emulation (terminal robustness testing in a lab) ----
+  // Set the emulated card's anti-collision data (UID/ATQA/SAK/ATS).
+  Future<void> hf14a4SetAntiColl(
+      Uint8List uid, Uint8List atqa, int sak, Uint8List ats) async {
+    await sendCmd(ChameleonCommand.hf14a4SetAntiColl,
+        data: Uint8List.fromList([
+          uid.length,
+          ...uid,
+          ...atqa,
+          sak,
+          ats.length,
+          ...ats,
+        ]));
+  }
+
+  // Clear all preloaded static APDU responses.
+  Future<void> hf14a4ClearStaticResponses() async {
+    await sendCmd(ChameleonCommand.hf14a4StaticResp,
+        data: Uint8List.fromList([0]));
+  }
+
+  // Add a static command-prefix -> response rule for the emulated card.
+  Future<void> hf14a4AddStaticResponse(
+      Uint8List command, Uint8List response) async {
+    await sendCmd(ChameleonCommand.hf14a4StaticResp,
+        data: Uint8List.fromList([
+          command.length,
+          ...command,
+          (response.length >> 8) & 0xFF,
+          response.length & 0xFF,
+          ...response,
+        ]));
+  }
+
   Future<Uint8List> hf14aSniff({int timeoutMs = 5000}) async {
     timeoutMs = timeoutMs.clamp(1, 30000);
     final resp = await sendCmd(ChameleonCommand.hf14aSniff,
