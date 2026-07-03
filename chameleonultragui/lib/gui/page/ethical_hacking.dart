@@ -1,4 +1,6 @@
 import 'package:chameleonultragui/gui/component/element_button.dart';
+import 'package:chameleonultragui/gui/menu/hacking/apdu_terminal.dart';
+import 'package:chameleonultragui/gui/menu/hacking/auth_trace.dart';
 import 'package:chameleonultragui/gui/menu/hacking/autopwn.dart';
 import 'package:chameleonultragui/gui/menu/hacking/darkside.dart';
 import 'package:chameleonultragui/gui/menu/hacking/mfkey_manual.dart';
@@ -217,6 +219,15 @@ class EthicalHackingPageState extends State<EthicalHackingPage> {
           (c) => _dialog(c, const WiegandMenu())),
     ];
 
+    final diagnostics = <_Attack>[
+      _Attack(localizations.auth_trace, localizations.auth_trace_description,
+          Icons.timeline, (c) => _push(c, const AuthTracePage()),
+          deviceRequired: true),
+      _Attack(localizations.apdu_terminal, localizations.apdu_terminal_description,
+          Icons.terminal, (c) => _push(c, const ApduTerminalPage()),
+          deviceRequired: true),
+    ];
+
     return Scaffold(
       appBar: AppBar(title: Text(localizations.ethical_hacking)),
       body: SingleChildScrollView(
@@ -227,6 +238,7 @@ class EthicalHackingPageState extends State<EthicalHackingPage> {
             _section(context, localizations.mfc_attacks, mfc),
             _section(context, localizations.capture_sniffing, capture),
             _section(context, localizations.emulation_magic, emulation),
+            _section(context, localizations.diagnostics, diagnostics),
           ],
         ),
       ),

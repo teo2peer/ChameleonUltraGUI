@@ -730,6 +730,38 @@ class ChameleonCommunicator {
     throw ('LF sniff failed with status 0x${resp.status.toRadixString(16)}');
   }
 
+  // Run a reader-side ISO14443A + Crypto1 auth against a real card and return
+  // all wire frames (same buffer format as hf14aSniff, parseable with
+  // parseHf14aSniffFrames). key_type is 0x60 (A) or 0x61 (B).
+  Future<Uint8List> hf14aAuthTrace(int block, int keyType, Uint8List key,
+      {int timeoutMs = 5000}) async {
+    timeoutMs = timeoutMs.clamp(1, 30000);
+    final resp = await sendCmd(ChameleonCommand.hf14aAuthTrace,
+        data: Uint8List.fromList([
+          keyType,
+          block & 0xFF,
+          ...key,
+          (timeoutMs >> 8) & 0xFF,
+          timeoutMs & 0xFF,
+        ]),
+        timeout: Duration(seconds: timeoutMs ~/ 1000 + 5));
+    if (resp == null) {
+      throw ('No response from auth-trace command');
+    }
+    return resp.data;
+  }
+
+  // Select a card (with RATS) and send one ISO14443-4 T=CL APDU. Returns the
+  // APDU response bytes (no PCB/CRC).
+  Future<Uint8List> hf14a4ReaderApdu(Uint8List apdu) async {
+    final resp = await sendCmd(ChameleonCommand.hf14a4ReaderApdu,
+        data: apdu, timeout: const Duration(seconds: 3));
+    if (resp == null) {
+      throw ('No response from reader APDU command');
+    }
+    return resp.data;
+  }
+
   Future<Uint8List> hf14aSniff({int timeoutMs = 5000}) async {
     timeoutMs = timeoutMs.clamp(1, 30000);
     final resp = await sendCmd(ChameleonCommand.hf14aSniff,
