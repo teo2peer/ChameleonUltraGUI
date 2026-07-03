@@ -1,3 +1,4 @@
+import 'package:chameleonultragui/gui/component/relay_assessment.dart';
 import 'package:chameleonultragui/helpers/emv.dart';
 import 'package:chameleonultragui/helpers/general.dart';
 import 'package:chameleonultragui/main.dart';
@@ -25,6 +26,7 @@ class EmvTransactionPageState extends State<EmvTransactionPage> {
   String? _error;
   Map<String, String>? _card;
   Map<String, String>? _crypto;
+  EmvAip? _aip;
   List<EmvTlv> _tlvs = [];
   List<(Uint8List, Uint8List)> _apdus = [];
 
@@ -57,6 +59,7 @@ class EmvTransactionPageState extends State<EmvTransactionPage> {
       _error = null;
       _card = null;
       _crypto = null;
+      _aip = null;
       _tlvs = [];
       _apdus = [];
     });
@@ -83,6 +86,7 @@ class EmvTransactionPageState extends State<EmvTransactionPage> {
       setState(() {
         _card = emvExtractFields(leaf);
         _crypto = emvExtractCryptogram(leaf);
+        _aip = emvDecodeAip(leaf);
         _tlvs = tlvs;
         _apdus = scan.apdus;
       });
@@ -188,6 +192,7 @@ class EmvTransactionPageState extends State<EmvTransactionPage> {
                     else
                       ...(_crypto!.entries.map((e) => _row(e.key, e.value,
                           color: Theme.of(context).colorScheme.primary))),
+                    relayAssessmentCard(context, _aip),
                     const SizedBox(height: 8),
                     ExpansionTile(
                       title: Text("EMV TLV (${_tlvs.length})"),

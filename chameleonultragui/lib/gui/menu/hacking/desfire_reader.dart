@@ -11,7 +11,9 @@ import 'package:chameleonultragui/generated/i18n/app_localizations.dart';
 class _DesfireApp {
   final String aid;
   final List<String> fileIds;
-  _DesfireApp(this.aid, this.fileIds);
+  final String? keySettings; // GetKeySettings summary
+  final Map<String, String> fileSettings = {}; // fileId -> decoded settings
+  _DesfireApp(this.aid, this.fileIds, [this.keySettings]);
 }
 
 class _DesfireResult {
@@ -48,6 +50,29 @@ class DesfireReaderPageState extends State<DesfireReaderPage> {
     return "0x${code.toRadixString(16).padLeft(2, '0').toUpperCase()} ($approx$bytes B)";
   }
 
+  // Decode a DESFire GetFileSettings response: type, comm mode, size.
+  String _decodeFileSettings(List<int> b) {
+    const types = [
+      'Standard data',
+      'Backup data',
+      'Value',
+      'Linear record',
+      'Cyclic record'
+    ];
+    final type = b[0] < types.length
+        ? types[b[0]]
+        : 'type 0x${b[0].toRadixString(16).padLeft(2, '0')}';
+    final comm = b.length > 1
+        ? const ['plain', 'MAC', '?', 'encrypted'][b[1] & 0x03]
+        : '?';
+    var extra = '';
+    if ((b[0] == 0x00 || b[0] == 0x01) && b.length >= 7) {
+      final size = b[4] | (b[5] << 8) | (b[6] << 16);
+      extra = ' · $size B';
+    }
+    return '$type · $comm$extra';
+  }
+
   _DesfireResult _parse(Uint8List d) {
     final scan = parseEmvScanBuffer(d); // bounds-checked; throws on truncation
     final tagUid = scan.uid;
@@ -58,6 +83,7 @@ class DesfireReaderPageState extends State<DesfireReaderPage> {
     List<int> aids = [];
     List<int> freeMemory = [];
     String? currentAid;
+    String? pendingKeySettings;
 
     for (final (cmd, resp) in scan.apdus) {
       apdus.add((cmd, resp));
@@ -75,10 +101,25 @@ class DesfireReaderPageState extends State<DesfireReaderPage> {
         if (cmd.length >= 8) {
           currentAid = bytesToHex(cmd.sublist(5, 8)).toUpperCase();
         }
+        pendingKeySettings = null;
+      } else if (ins == 0x45) {
+        // GetKeySettings: body[0]=settings byte, body[1]=key count
+        if (body.length >= 2) {
+          pendingKeySettings =
+              "0x${body[0].toRadixString(16).padLeft(2, '0').toUpperCase()} · ${body[1] & 0x0F} keys";
+        }
       } else if (ins == 0x6F) {
-        final files =
-            body.map((b) => b.toRadixString(16).padLeft(2, '0').toUpperCase()).toList();
-        apps.add(_DesfireApp(currentAid ?? '??????', files));
+        final files = body
+            .map((b) => b.toRadixString(16).padLeft(2, '0').toUpperCase())
+            .toList();
+        apps.add(_DesfireApp(currentAid ?? '??????', files, pendingKeySettings));
+      } else if (ins == 0xF5) {
+        // GetFileSettings for the file id in the command (byte 5)
+        if (apps.isNotEmpty && cmd.length >= 6 && body.isNotEmpty) {
+          apps.last.fileSettings[
+                  cmd[5].toRadixString(16).padLeft(2, '0').toUpperCase()] =
+              _decodeFileSettings(body);
+        }
       }
     }
 
@@ -198,18 +239,46 @@ class DesfireReaderPageState extends State<DesfireReaderPage> {
                     Text(
                         "${localizations.applications} (${r.apps.length})",
                         style: const TextStyle(fontWeight: FontWeight.bold)),
-                    ...r.apps.map((a) => Padding(
-                          padding: const EdgeInsets.symmetric(vertical: 4.0),
-                          child: Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                            children: [
-                              SelectableText("AID ${a.aid}",
-                                  style: const TextStyle(
-                                      fontFamily: 'RobotoMono')),
-                              Text(a.fileIds.isEmpty
-                                  ? '-'
-                                  : "files: ${a.fileIds.join(', ')}"),
-                            ],
+                    ...r.apps.map((a) => Card(
+                          clipBehavior: Clip.antiAlias,
+                          child: Padding(
+                            padding: const EdgeInsets.all(10.0),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Row(
+                                  mainAxisAlignment:
+                                      MainAxisAlignment.spaceBetween,
+                                  children: [
+                                    SelectableText("AID ${a.aid}",
+                                        style: const TextStyle(
+                                            fontFamily: 'RobotoMono',
+                                            fontWeight: FontWeight.bold)),
+                                    if (a.keySettings != null)
+                                      Text(a.keySettings!,
+                                          style: const TextStyle(fontSize: 12)),
+                                  ],
+                                ),
+                                if (a.fileIds.isEmpty)
+                                  const Padding(
+                                    padding: EdgeInsets.only(top: 4),
+                                    child: Text('no files',
+                                        style: TextStyle(fontSize: 12)),
+                                  )
+                                else
+                                  ...a.fileIds.map((fid) => Padding(
+                                        padding: const EdgeInsets.only(
+                                            top: 4, left: 8),
+                                        child: Text(
+                                            a.fileSettings[fid] != null
+                                                ? "· file $fid:  ${a.fileSettings[fid]}"
+                                                : "· file $fid",
+                                            style: const TextStyle(
+                                                fontFamily: 'RobotoMono',
+                                                fontSize: 12)),
+                                      )),
+                              ],
+                            ),
                           ),
                         )),
                     const SizedBox(height: 12),

@@ -167,7 +167,25 @@ enum ChameleonCommand {
   getIoProxEmulatorID(5009),
 
   setIdteckEmulatorID(5012),
-  getIdteckEmulatorID(5013);
+  getIdteckEmulatorID(5013),
+
+  // BLE (2.4GHz radio) — passive, listen-only scanner (device transmits nothing)
+  bleScanStart(7000),
+  bleScanStop(7001),
+  bleScanGetCount(7002),
+  bleScanGetResults(7003),
+
+  // BLE directed GATT fuzzing harness — point-to-point against ONE target
+  bleConnect(7010),
+  bleDisconnect(7011),
+  bleCentralState(7012),
+  bleGattDiscover(7013),
+  bleGattGetChars(7014),
+  bleFuzzStart(7015),
+  bleFuzzStop(7016),
+  bleFuzzGetLog(7017),
+  bleGattRead(7018),
+  bleGattGetRead(7019);
 
   const ChameleonCommand(this.value);
   final int value;
@@ -283,6 +301,68 @@ class ChameleonMessage {
 
   ChameleonMessage(
       {required this.command, required this.status, required this.data});
+}
+
+// One device seen by the passive BLE scanner (listen-only).
+class BleScanResult {
+  Uint8List addr; // little-endian, as reported by the SoftDevice
+  int addrType;
+  int rssi;
+  Uint8List adv; // raw advertising payload
+
+  BleScanResult(
+      {required this.addr,
+      required this.addrType,
+      required this.rssi,
+      required this.adv});
+}
+
+// One GATT characteristic discovered on the connected fuzzing target.
+class BleCharacteristic {
+  int handle; // value handle
+  int props; // bit0 broadcast,1 read,2 write-nr,3 write,4 notify,5 indicate,6 signed-write
+  int uuidType;
+  int uuid;
+
+  BleCharacteristic(
+      {required this.handle,
+      required this.props,
+      required this.uuidType,
+      required this.uuid});
+}
+
+// Snapshot of the directed fuzzing harness state.
+class BleCentralState {
+  int connState; // 0 idle,1 connecting,2 connected,3 disconnected
+  int discState; // 0 idle,1 discovering,2 done,3 error
+  int charCount;
+  int fuzzState; // 0 idle,1 running,2 stopped/finished
+  int fuzzSent;
+  bool targetAlive;
+  int lastReason; // HCI reason of last target disconnect
+
+  BleCentralState(
+      {required this.connState,
+      required this.discState,
+      required this.charCount,
+      required this.fuzzState,
+      required this.fuzzSent,
+      required this.targetAlive,
+      required this.lastReason});
+}
+
+// One entry of the fuzz log (a mutated write that was sent to the target).
+class BleFuzzLogEntry {
+  int index;
+  int length; // full payload length
+  int status; // 0 = stack accepted the write, else low byte of nrf error
+  Uint8List data; // first bytes of the payload (up to 16)
+
+  BleFuzzLogEntry(
+      {required this.index,
+      required this.length,
+      required this.status,
+      required this.data});
 }
 
 enum NTLevel { static, weak, hard, backdoor, unknown }

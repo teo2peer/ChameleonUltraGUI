@@ -1,3 +1,4 @@
+import 'package:chameleonultragui/gui/component/relay_assessment.dart';
 import 'package:chameleonultragui/helpers/emv.dart';
 import 'package:chameleonultragui/helpers/general.dart';
 import 'package:chameleonultragui/main.dart';
@@ -177,57 +178,6 @@ class EmvReaderPageState extends State<EmvReaderPage> {
     );
   }
 
-  // Relay-resistance assessment from the AIP (tag 82): tells you, defensively,
-  // whether this card would block a relay attack (RRP) and whether it resists
-  // cloning (DDA/CDA) — plus remediation guidance.
-  Widget _relaySection(BuildContext context, EmvAip? aip) {
-    final l = AppLocalizations.of(context)!;
-    if (aip == null) {
-      return Padding(
-        padding: const EdgeInsets.symmetric(vertical: 8),
-        child: Text(l.relay_no_aip,
-            style: TextStyle(color: Theme.of(context).colorScheme.outline)),
-      );
-    }
-    final scheme = Theme.of(context).colorScheme;
-    final protected = aip.rrp;
-    final bg = protected ? scheme.primaryContainer : scheme.errorContainer;
-    final fg = protected ? scheme.onPrimaryContainer : scheme.onErrorContainer;
-    return Container(
-      margin: const EdgeInsets.symmetric(vertical: 10),
-      padding: const EdgeInsets.all(12),
-      decoration:
-          BoxDecoration(color: bg, borderRadius: BorderRadius.circular(10)),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(children: [
-            Icon(protected ? Icons.verified_user : Icons.gpp_bad, color: fg),
-            const SizedBox(width: 8),
-            Expanded(
-                child: Text(l.relay_assessment,
-                    style:
-                        TextStyle(fontWeight: FontWeight.bold, color: fg))),
-          ]),
-          const SizedBox(height: 6),
-          Text(protected ? l.relay_protected : l.relay_exposed,
-              style: TextStyle(color: fg)),
-          const SizedBox(height: 6),
-          Text(aip.dda || aip.cda ? l.relay_clone_ok : l.relay_clone_weak,
-              style: TextStyle(color: fg, fontSize: 12)),
-          const SizedBox(height: 8),
-          SelectableText("AIP ${aip.raw}: ${aip.features.join(', ')}",
-              style: TextStyle(
-                  color: fg, fontSize: 11, fontFamily: 'RobotoMono')),
-          const SizedBox(height: 8),
-          Text(l.relay_remediation,
-              style: TextStyle(
-                  color: fg, fontSize: 12, fontStyle: FontStyle.italic)),
-        ],
-      ),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     var localizations = AppLocalizations.of(context)!;
@@ -280,7 +230,7 @@ class EmvReaderPageState extends State<EmvReaderPage> {
                               color: Theme.of(context).colorScheme.outline))
                     else
                       ...r.fields.entries.map((e) => _field(e.key, e.value)),
-                    _relaySection(context, r.aip),
+                    relayAssessmentCard(context, r.aip),
                     const SizedBox(height: 8),
                     ExpansionTile(
                       title: Text("EMV TLV (${r.tlvs.length})"),

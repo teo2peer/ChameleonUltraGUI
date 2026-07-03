@@ -3,6 +3,7 @@ import 'package:chameleonultragui/gui/menu/hacking/apdu_terminal.dart';
 import 'package:chameleonultragui/gui/menu/hacking/auth_trace.dart';
 import 'package:chameleonultragui/gui/menu/hacking/autopwn.dart';
 import 'package:chameleonultragui/gui/menu/hacking/backdoor.dart';
+import 'package:chameleonultragui/gui/menu/hacking/ble_audit.dart';
 import 'package:chameleonultragui/gui/menu/hacking/darkside.dart';
 import 'package:chameleonultragui/gui/menu/hacking/desfire_reader.dart';
 import 'package:chameleonultragui/gui/menu/hacking/emv_emulator.dart';
@@ -248,6 +249,15 @@ class EthicalHackingPageState extends State<EthicalHackingPage> {
           deviceRequired: true),
     ];
 
+    final bluetooth = <_Attack>[
+      _Attack(
+          "BLE audit",
+          "Passive scan of nearby devices + directed GATT fuzzing of one target you own",
+          Icons.bluetooth_searching,
+          (c) => _push(c, const BleAuditPage()),
+          deviceRequired: true),
+    ];
+
     return Scaffold(
       appBar: AppBar(title: Text(localizations.ethical_hacking)),
       body: SingleChildScrollView(
@@ -259,6 +269,7 @@ class EthicalHackingPageState extends State<EthicalHackingPage> {
             _section(context, localizations.capture_sniffing, capture),
             _section(context, localizations.emulation_magic, emulation),
             _section(context, localizations.diagnostics, diagnostics),
+            _section(context, "Bluetooth (BLE)", bluetooth),
           ],
         ),
       ),

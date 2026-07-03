@@ -1457,4 +1457,181 @@ class ChameleonCommunicator {
         writeMode: mode // write mode
         );
   }
+
+  // -----------------------------------------------------------------------
+  // BLE — passive scanner (listen-only) and directed GATT fuzzing harness.
+  // The scanner never transmits; the fuzzer only ever talks to the single
+  // target you connect to by address. Neither broadcasts to the environment.
+  // -----------------------------------------------------------------------
+
+  Future<void> blePassiveScanStart() async {
+    await sendCmd(ChameleonCommand.bleScanStart);
+  }
+
+  Future<void> blePassiveScanStop() async {
+    await sendCmd(ChameleonCommand.bleScanStop);
+  }
+
+  Future<int> blePassiveScanCount() async {
+    var resp = await sendCmd(ChameleonCommand.bleScanGetCount);
+    return (resp!.data.isNotEmpty) ? resp.data[0] : 0;
+  }
+
+  // Fetch discovered devices. Wire per record:
+  // addr[6] | addr_type[1] | rssi[1 signed] | adv_len[1] | adv[adv_len].
+  Future<List<BleScanResult>> blePassiveScanResults({int startIndex = 0}) async {
+    var resp = await sendCmd(ChameleonCommand.bleScanGetResults,
+        data: Uint8List.fromList([startIndex & 0xFF]));
+    List<BleScanResult> out = [];
+    var d = resp!.data;
+    int o = 0;
+    while (o + 9 <= d.length) {
+      var addr = d.sublist(o, o + 6);
+      o += 6;
+      int addrType = d[o];
+      int rssi = d[o + 1].toSigned(8);
+      int advLen = d[o + 2];
+      o += 3;
+      if (o + advLen > d.length) break;
+      var adv = d.sublist(o, o + advLen);
+      o += advLen;
+      out.add(BleScanResult(
+          addr: Uint8List.fromList(addr),
+          addrType: addrType,
+          rssi: rssi,
+          adv: Uint8List.fromList(adv)));
+    }
+    return out;
+  }
+
+  // Connect to ONE target. addrLe is 6 bytes little-endian (as the scanner
+  // reports). Returns the firmware status byte (0x68 = success/initiated).
+  Future<int> bleConnect(Uint8List addrLe, {int addrType = 0}) async {
+    var payload = Uint8List.fromList([addrType & 0xFF, ...addrLe]);
+    var resp = await sendCmd(ChameleonCommand.bleConnect, data: payload);
+    return resp!.status;
+  }
+
+  Future<void> bleDisconnect() async {
+    await sendCmd(ChameleonCommand.bleDisconnect);
+  }
+
+  Future<BleCentralState> bleCentralState() async {
+    var resp = await sendCmd(ChameleonCommand.bleCentralState);
+    var d = resp!.data;
+    if (d.length < 8) {
+      return BleCentralState(
+          connState: 0,
+          discState: 0,
+          charCount: 0,
+          fuzzState: 0,
+          fuzzSent: 0,
+          targetAlive: false,
+          lastReason: 0);
+    }
+    return BleCentralState(
+        connState: d[0],
+        discState: d[1],
+        charCount: d[2],
+        fuzzState: d[3],
+        fuzzSent: (d[4] << 8) | d[5],
+        targetAlive: d[6] != 0,
+        lastReason: d[7]);
+  }
+
+  Future<int> bleGattDiscover() async {
+    var resp = await sendCmd(ChameleonCommand.bleGattDiscover);
+    return resp!.status;
+  }
+
+  // Fetch discovered characteristics. Wire per char:
+  // value_handle[2] | props[1] | uuid_type[1] | uuid[2] (big-endian).
+  Future<List<BleCharacteristic>> bleGattChars({int startIndex = 0}) async {
+    var resp = await sendCmd(ChameleonCommand.bleGattGetChars,
+        data: Uint8List.fromList([startIndex & 0xFF]));
+    List<BleCharacteristic> out = [];
+    var d = resp!.data;
+    int o = 0;
+    while (o + 6 <= d.length) {
+      out.add(BleCharacteristic(
+          handle: (d[o] << 8) | d[o + 1],
+          props: d[o + 2],
+          uuidType: d[o + 3],
+          uuid: (d[o + 4] << 8) | d[o + 5]));
+      o += 6;
+    }
+    return out;
+  }
+
+  // Start fuzzing value_handle: mutated writes every intervalMs, up to
+  // maxIterations (0 = until stopped). Returns the firmware status byte.
+  Future<int> bleFuzzStart(int valueHandle,
+      {int maxIterations = 0, int intervalMs = 50}) async {
+    var payload = Uint8List.fromList([
+      (valueHandle >> 8) & 0xFF,
+      valueHandle & 0xFF,
+      (maxIterations >> 8) & 0xFF,
+      maxIterations & 0xFF,
+      (intervalMs >> 8) & 0xFF,
+      intervalMs & 0xFF,
+    ]);
+    var resp = await sendCmd(ChameleonCommand.bleFuzzStart, data: payload);
+    return resp!.status;
+  }
+
+  Future<void> bleFuzzStop() async {
+    await sendCmd(ChameleonCommand.bleFuzzStop);
+  }
+
+  // Fetch the fuzz log. Wire per entry:
+  // index[2] | payload_len[1] | write_status[1] | data[min(payload_len,16)].
+  Future<List<BleFuzzLogEntry>> bleFuzzLog({int startIndex = 0}) async {
+    var resp = await sendCmd(ChameleonCommand.bleFuzzGetLog,
+        data: Uint8List.fromList([(startIndex >> 8) & 0xFF, startIndex & 0xFF]));
+    List<BleFuzzLogEntry> out = [];
+    var d = resp!.data;
+    int o = 0;
+    while (o + 4 <= d.length) {
+      int index = (d[o] << 8) | d[o + 1];
+      int plen = d[o + 2];
+      int status = d[o + 3];
+      o += 4;
+      int dlen = plen < 16 ? plen : 16;
+      if (o + dlen > d.length) break;
+      var data = d.sublist(o, o + dlen);
+      o += dlen;
+      out.add(BleFuzzLogEntry(
+          index: index,
+          length: plen,
+          status: status,
+          data: Uint8List.fromList(data)));
+    }
+    return out;
+  }
+
+  // Read a characteristic value from the connected target. Returns
+  // (gattStatus, value): gattStatus 0 = success, >0 = ATT error, -1 = timeout.
+  Future<(int, Uint8List)> bleGattRead(int valueHandle,
+      {Duration timeout = const Duration(seconds: 2)}) async {
+    var start = await sendCmd(ChameleonCommand.bleGattRead,
+        data:
+            Uint8List.fromList([(valueHandle >> 8) & 0xFF, valueHandle & 0xFF]));
+    if (start!.status != 0x68) {
+      return (-1, Uint8List(0)); // not connected / rejected
+    }
+    var deadline = DateTime.now().add(timeout);
+    while (DateTime.now().isBefore(deadline)) {
+      await Future.delayed(const Duration(milliseconds: 50));
+      var resp = await sendCmd(ChameleonCommand.bleGattGetRead);
+      var d = resp!.data;
+      if (d.length >= 3 && d[0] == 2) {
+        // ready
+        int len = d[2];
+        var value =
+            (d.length >= 3 + len) ? d.sublist(3, 3 + len) : Uint8List(0);
+        return (d[1], Uint8List.fromList(value));
+      }
+    }
+    return (-1, Uint8List(0)); // timed out
+  }
 }
