@@ -826,8 +826,10 @@ class DumpEditorState extends State<DumpEditor> {
     return buffer.toString();
   }
 
-  List<TextSpan> _byteSpans(
-      String cleanHex, List<bool> byteDiff, int byteCount) {
+  // Render a hex row against the other card's row, colouring individual hex
+  // nibbles (4-bit granularity) that differ rather than the whole byte, so the
+  // exact bits that changed are visible.
+  List<TextSpan> _byteSpans(String cleanHex, String otherHex, int byteCount) {
     Color normalColor = _getDefaultHighlightColor();
     Color diffColor = _getDiffColor();
 
@@ -836,15 +838,35 @@ class DumpEditorState extends State<DumpEditor> {
       if (k > 0) spans.add(const TextSpan(text: ' '));
       String token = _byteAt(cleanHex, k);
       if (token.isEmpty) token = '--';
-      bool differs = k < byteDiff.length ? byteDiff[k] : true;
-      spans.add(TextSpan(
-        text: token,
-        style: differs
-            ? TextStyle(color: diffColor, fontWeight: FontWeight.bold)
-            : TextStyle(color: normalColor),
-      ));
+      String other = _byteAt(otherHex, k);
+      for (int n = 0; n < token.length; n++) {
+        bool differs =
+            other.isEmpty || n >= other.length || token[n] != other[n];
+        spans.add(TextSpan(
+          text: token[n],
+          style: differs
+              ? TextStyle(color: diffColor, fontWeight: FontWeight.bold)
+              : TextStyle(color: normalColor),
+        ));
+      }
     }
     return spans;
+  }
+
+  // Number of differing bits between two hex rows (popcount of the XOR).
+  int _bitDiffCount(String a, String b, int byteCount) {
+    int count = 0;
+    for (int k = 0; k < byteCount; k++) {
+      int av = int.tryParse(_byteAt(a, k), radix: 16) ?? 0;
+      String bt = _byteAt(b, k);
+      int bv = bt.isEmpty ? 0 : (int.tryParse(bt, radix: 16) ?? 0);
+      int x = av ^ bv;
+      while (x != 0) {
+        count += x & 1;
+        x >>= 1;
+      }
+    }
+    return count;
   }
 
   Future<void> _startCompare() async {
@@ -1076,6 +1098,7 @@ class DumpEditorState extends State<DumpEditor> {
   }
 
   Widget _buildCompareView(int controllerIndex, {double fontSize = 14.0}) {
+    var localizations = AppLocalizations.of(context)!;
     List<String> lines = controllers[controllerIndex].text.split('\n');
     List<TextSpan> spans = [];
 
@@ -1104,13 +1127,13 @@ class DumpEditorState extends State<DumpEditor> {
           otherBytes != null ? bytesToHex(otherBytes).toUpperCase() : '';
 
       int byteCount = (currentClean.length + 1) ~/ 2;
-      List<bool> byteDiff = [];
       bool blockDiffers = false;
       for (int k = 0; k < byteCount; k++) {
-        bool differs = otherClean.isEmpty ||
-            _byteAt(currentClean, k) != _byteAt(otherClean, k);
-        byteDiff.add(differs);
-        if (differs) blockDiffers = true;
+        if (otherClean.isEmpty ||
+            _byteAt(currentClean, k) != _byteAt(otherClean, k)) {
+          blockDiffers = true;
+          break;
+        }
       }
 
       if (spans.isNotEmpty) {
@@ -1131,19 +1154,25 @@ class DumpEditorState extends State<DumpEditor> {
       }
 
       // Differing block: each dump's row is preceded by its card name so it is
-      // clear which card the row belongs to. Changed bytes are highlighted.
+      // clear which card the row belongs to. Changed nibbles are highlighted and
+      // the number of differing bits in the block is shown.
       String gutter = ' ' * (numStr.length + 2);
+      int bitDiff = _bitDiffCount(currentClean, otherClean, byteCount);
 
       spans.add(TextSpan(
-        text: '$gutter$currentName',
+        text: '$gutter$currentName  ',
         style: TextStyle(color: labelColor, fontWeight: FontWeight.bold),
+      ));
+      spans.add(TextSpan(
+        text: localizations.bit_difference(bitDiff),
+        style: TextStyle(color: _getDiffColor(), fontSize: fontSize - 2),
       ));
       spans.add(const TextSpan(text: '\n'));
       spans.add(TextSpan(
         text: '$numStr: ',
         style: TextStyle(color: blockNumberColor),
       ));
-      spans.addAll(_byteSpans(currentClean, byteDiff, byteCount));
+      spans.addAll(_byteSpans(currentClean, otherClean, byteCount));
 
       spans.add(const TextSpan(text: '\n'));
       spans.add(TextSpan(
@@ -1155,7 +1184,7 @@ class DumpEditorState extends State<DumpEditor> {
         text: '$numStr: ',
         style: TextStyle(color: blockNumberColor),
       ));
-      spans.addAll(_byteSpans(otherClean, byteDiff, byteCount));
+      spans.addAll(_byteSpans(otherClean, currentClean, byteCount));
     }
 
     return Padding(

@@ -25,6 +25,7 @@ import 'package:chameleonultragui/gui/page/slot_manager.dart';
 import 'package:chameleonultragui/gui/page/flashing.dart';
 import 'package:chameleonultragui/gui/page/read_card.dart';
 import 'package:chameleonultragui/gui/page/write_card.dart';
+import 'package:chameleonultragui/gui/page/reader_keys.dart';
 import 'package:chameleonultragui/gui/page/pending_connection.dart';
 
 // Localizations
@@ -226,8 +227,9 @@ class _MainPageState extends State<MainPage> {
         selectedIndex != 2 &&
         selectedIndex != 5 &&
         selectedIndex != 6 &&
-        selectedIndex != 7) {
+        selectedIndex != 8) {
       // If not connected, and not on home, tools, settings or dev page, go to home page
+      // (reader keys, index 7, requires a connected device)
       selectedIndex = 0;
     }
 
@@ -267,6 +269,9 @@ class _MainPageState extends State<MainPage> {
         page = const SettingsMainPage();
         break;
       case 7:
+        page = const ReaderKeysPage();
+        break;
+      case 8:
         page = const DebugPage();
         break;
       default:
@@ -370,6 +375,12 @@ class _MainPageState extends State<MainPage> {
                                 icon: const Icon(Icons.settings),
                                 label: Text(
                                     AppLocalizations.of(context)!.settings),
+                              ),
+                              NavigationRailDestination(
+                                disabled: !appState.connector!.connected,
+                                icon: const Icon(Icons.vpn_key),
+                                label: Text(AppLocalizations.of(context)!
+                                    .reader_keys_capture),
                               ),
                               if (appState.devMode)
                                 NavigationRailDestination(

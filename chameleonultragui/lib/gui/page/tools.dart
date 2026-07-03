@@ -1,4 +1,5 @@
 import 'package:chameleonultragui/generated/i18n/app_localizations.dart';
+import 'package:chameleonultragui/gui/menu/tools/compare_cards.dart';
 import 'package:chameleonultragui/gui/menu/tools/dictionary_download.dart';
 import 'package:chameleonultragui/gui/menu/tools/hf_sniffing.dart';
 import 'package:chameleonultragui/gui/menu/tools/lf_sniffing.dart';
@@ -41,6 +42,11 @@ class ToolsPageState extends State<ToolsPage> {
     var localizations = AppLocalizations.of(context)!;
 
     List<ToolItem> tools = [
+      ToolItem(
+          name: localizations.compare_cards,
+          description: localizations.compare_cards_description,
+          icon: Icons.difference,
+          onPressed: const CompareCardsMenu()),
       ToolItem(
           name: localizations.dictionary_download,
           description: localizations.dictionary_download_description,

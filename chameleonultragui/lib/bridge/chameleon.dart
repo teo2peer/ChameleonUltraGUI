@@ -473,6 +473,24 @@ class ChameleonCommunicator {
     return resp!.data.buffer.asByteData().getInt32(0, Endian.big);
   }
 
+  Future<void> setMf1RandomUidMode(bool enabled) async {
+    // Emulate a new random UID on each reader activation (per-slot).
+    // Note: random UID fragments MFKey32 recovery; use a fixed UID for capture.
+    await sendCmd(ChameleonCommand.mf1SetRandomUidMode,
+        data: Uint8List.fromList([enabled ? 1 : 0]));
+  }
+
+  Future<bool> getMf1RandomUidMode() async {
+    var resp = await sendCmd(ChameleonCommand.mf1GetRandomUidMode);
+    return resp!.data[0] == 1;
+  }
+
+  Future<void> setMf1ReaderKeysAnim(bool enabled) async {
+    // Toggle the center-out rainbow LED animation used during reader-key capture.
+    await sendCmd(ChameleonCommand.mf1SetReaderKeysAnim,
+        data: Uint8List.fromList([enabled ? 1 : 0]));
+  }
+
   Future<Map<int, Map<int, Map<String, List<DetectionResult>>>>>
       getMf1DetectionResult(int count) async {
     List<DetectionResult> resultList = [];

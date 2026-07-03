@@ -355,6 +355,10 @@ ButtonConfig getButtonConfigType(int value) {
     return ButtonConfig.cloneUID;
   } else if (value == 4) {
     return ButtonConfig.chargeStatus;
+  } else if (value == 5) {
+    return ButtonConfig.nfcField;
+  } else if (value == 6) {
+    return ButtonConfig.readerKeys;
   } else {
     return ButtonConfig.disable;
   }
