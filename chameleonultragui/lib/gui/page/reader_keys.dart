@@ -246,14 +246,22 @@ class ReaderKeysPageState extends State<ReaderKeysPage>
         await _app.communicator!.activateSlot(_selectedSlot!);
       }
 
-      // The active slot must be MIFARE Classic.
-      final activeSlot = await _app.communicator!.getActiveSlot();
+      // The active slot must be MIFARE Classic. In Fixed-UID / Random modes we
+      // reuse whatever slot is active, so if it isn't MFC, fall back to any
+      // configured MIFARE Classic slot instead of failing.
       final slotTypes = await _app.communicator!.getSlotTagTypes();
-      if (activeSlot >= slotTypes.length ||
-          !isMifareClassic(slotTypes[activeSlot].hf)) {
-        _showMessage(localizations.not_mifare_classic_slot);
-        setState(() => busy = false);
-        return;
+      final activeSlot = await _app.communicator!.getActiveSlot();
+      final bool activeIsMfc = activeSlot < slotTypes.length &&
+          isMifareClassic(slotTypes[activeSlot].hf);
+      if (!activeIsMfc) {
+        final int mfcSlot = slotTypes
+            .indexWhere((t) => isMifareClassic(t.hf));
+        if (mfcSlot < 0) {
+          _showMessage(localizations.no_mifare_classic_slot_hint);
+          setState(() => busy = false);
+          return;
+        }
+        await _app.communicator!.activateSlot(mfcSlot);
       }
 
       // UID handling per mode.

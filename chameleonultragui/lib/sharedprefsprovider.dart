@@ -497,4 +497,12 @@ class SharedPreferencesProvider extends ChangeNotifier {
   void setAutoConnectFirstFoundDevice(bool value) {
     _sharedPreferences.setBool('auto_connect_first_found', value);
   }
+
+  bool getEthicalHackingAck() {
+    return _sharedPreferences.getBool('ethical_hacking_ack') ?? false;
+  }
+
+  void setEthicalHackingAck(bool value) {
+    _sharedPreferences.setBool('ethical_hacking_ack', value);
+  }
 }

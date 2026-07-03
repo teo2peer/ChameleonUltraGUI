@@ -217,6 +217,94 @@ class MifareClassicRecovery {
     update();
   }
 
+  // Standalone Darkside: recover sector 0 key B from a card with no known key
+  // (weak-PRNG cards). Returns true if a key was found.
+  Future<bool> recoverDarkside() async {
+    state = localizations.checking_or_running_darkside;
+    update();
+    DarksideResult darkside;
+    try {
+      setCheckingSector(0, 1);
+      darkside = await appState.communicator!.checkMf1Darkside();
+    } catch (_) {
+      setMissingSector(0, 1);
+      state = "";
+      update();
+      return false;
+    }
+    if (darkside != DarksideResult.vulnerable) {
+      setMissingSector(0, 1);
+      error = localizations.recovery_error_no_keys_darkside;
+      state = "";
+      update();
+      return false;
+    }
+    var data = await appState.communicator!.getMf1Darkside(0x03, 0x61, true, 15);
+    var ds = DarksideDart(uid: data.uid, items: []);
+    update();
+    for (var tries = 0; tries < 5; tries++) {
+      ds.items.add(DarksideItemDart(
+          nt1: data.nt1, ks1: data.ks1, par: data.par, nr: data.nr, ar: data.ar));
+      var keys = await recovery.darkside(ds);
+      if (keys.isNotEmpty &&
+          await checkKeysOnSector(mfClassicConvertKeys(keys), 1, 0)) {
+        state = "";
+        update();
+        return true;
+      }
+      data = await appState.communicator!.getMf1Darkside(0x03, 0x61, false, 15);
+    }
+    setMissingSector(0, 1);
+    error = localizations.recovery_error_no_keys_darkside;
+    state = "";
+    update();
+    return false;
+  }
+
+  // Standalone weak-PRNG Nested: recover a target sector/keyType key from a
+  // known key. Returns true if a key was found.
+  Future<bool> recoverNestedSingle(Uint8List knownKey, int knownSector,
+      int knownKeyType, int targetSector, int targetKeyType) async {
+    int knownBlock = mfClassicGetSectorTrailerBlockBySector(knownSector);
+    int targetBlock = mfClassicGetSectorTrailerBlockBySector(targetSector);
+    state = localizations.collecting_nonces("Nested");
+    setCheckingSector(targetSector, targetKeyType);
+    update();
+    try {
+      NTDistance distance = await appState.communicator!
+          .getMf1NTDistance(knownBlock, 0x60 + knownKeyType, knownKey);
+      for (var i = 0; i < 5; i++) {
+        NestedNonces nonces = await appState.communicator!.getMf1NestedNonces(
+            knownBlock, 0x60 + knownKeyType, knownKey, targetBlock,
+            0x60 + targetKeyType,
+            level: NTLevel.weak);
+        var nested = NestedDart(
+            uid: distance.uid,
+            distance: distance.distance,
+            nt0: nonces.nonces[0].nt,
+            nt0Enc: nonces.nonces[0].ntEnc,
+            par0: nonces.nonces[0].parity,
+            nt1: nonces.nonces[1].nt,
+            nt1Enc: nonces.nonces[1].ntEnc,
+            par1: nonces.nonces[1].parity);
+        var keys = await recovery.nested(nested);
+        if (keys.isNotEmpty &&
+            await checkKeysOnSector(
+                mfClassicConvertKeys(keys), targetKeyType, targetSector)) {
+          state = "";
+          update();
+          return true;
+        }
+      }
+    } catch (e) {
+      error = e.toString();
+    }
+    setMissingSector(targetSector, targetKeyType);
+    state = "";
+    update();
+    return false;
+  }
+
   Future<void> recoverKeys() async {
     state = localizations.checking_card_info;
     update();

@@ -26,6 +26,7 @@ import 'package:chameleonultragui/gui/page/flashing.dart';
 import 'package:chameleonultragui/gui/page/read_card.dart';
 import 'package:chameleonultragui/gui/page/write_card.dart';
 import 'package:chameleonultragui/gui/page/reader_keys.dart';
+import 'package:chameleonultragui/gui/page/ethical_hacking.dart';
 import 'package:chameleonultragui/gui/page/pending_connection.dart';
 
 // Localizations
@@ -227,9 +228,10 @@ class _MainPageState extends State<MainPage> {
         selectedIndex != 2 &&
         selectedIndex != 5 &&
         selectedIndex != 6 &&
-        selectedIndex != 8) {
-      // If not connected, and not on home, tools, settings or dev page, go to home page
-      // (reader keys, index 7, requires a connected device)
+        selectedIndex != 8 &&
+        selectedIndex != 9) {
+      // If not connected, and not on home, tools, settings, ethical hacking hub
+      // or dev page, go to home page (reader keys, index 7, requires a device)
       selectedIndex = 0;
     }
 
@@ -272,6 +274,9 @@ class _MainPageState extends State<MainPage> {
         page = const ReaderKeysPage();
         break;
       case 8:
+        page = const EthicalHackingPage();
+        break;
+      case 9:
         page = const DebugPage();
         break;
       default:
@@ -381,6 +386,11 @@ class _MainPageState extends State<MainPage> {
                                 icon: const Icon(Icons.vpn_key),
                                 label: Text(AppLocalizations.of(context)!
                                     .reader_keys_capture),
+                              ),
+                              NavigationRailDestination(
+                                icon: const Icon(Icons.security),
+                                label: Text(AppLocalizations.of(context)!
+                                    .ethical_hacking),
                               ),
                               if (appState.devMode)
                                 NavigationRailDestination(
