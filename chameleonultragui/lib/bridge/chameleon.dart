@@ -766,9 +766,11 @@ class ChameleonCommunicator {
   // PPSE, SELECT AID, GPO, READ RECORDs). Returns the raw buffer:
   //   uid_len(1) uid(n) atqa(2) sak(1) ats_len(1) ats(m) num_apdus(1)
   //   then per APDU: cmd_len(1) cmd(n) resp_len_le(2) resp(m)
-  Future<Uint8List> hf14a4EmvScan() async {
+  // Read-only EMV scan when amount is null; with a 6-byte n12 BCD amount the
+  // firmware also runs GENERATE AC (offline purchase simulation — no bank).
+  Future<Uint8List> hf14a4EmvScan({Uint8List? amount}) async {
     final resp = await sendCmd(ChameleonCommand.hf14a4EmvScan,
-        data: Uint8List(0), timeout: const Duration(seconds: 12));
+        data: amount ?? Uint8List(0), timeout: const Duration(seconds: 12));
     if (resp == null) {
       throw ('No response from EMV scan command');
     }

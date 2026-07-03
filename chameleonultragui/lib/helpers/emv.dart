@@ -271,3 +271,30 @@ Map<String, String> emvExtractFields(List<EmvTlv> tlvs) {
   if (leaf.containsKey('5F50')) f['Issuer URL'] = _ascii(leaf['5F50']!);
   return f;
 }
+
+// Extract the transaction/GENERATE-AC result (offline purchase simulation).
+Map<String, String> emvExtractCryptogram(List<EmvTlv> tlvs) {
+  final leaf = <String, Uint8List>{};
+  for (final t in tlvs) {
+    if (!t.constructed) leaf[t.tag] = t.value;
+  }
+  final f = <String, String>{};
+  if (leaf.containsKey('9F26')) {
+    f['Application Cryptogram'] = bytesToHex(leaf['9F26']!).toUpperCase();
+  }
+  if (leaf.containsKey('9F27') && leaf['9F27']!.isNotEmpty) {
+    final cid = leaf['9F27']![0] & 0xC0;
+    f['Cryptogram type'] = cid == 0x80
+        ? 'ARQC — online authorisation requested'
+        : cid == 0x40
+            ? 'TC — offline approved'
+            : 'AAC — declined';
+  }
+  if (leaf.containsKey('9F36')) {
+    f['ATC'] = int.parse(bytesToHex(leaf['9F36']!), radix: 16).toString();
+  }
+  if (leaf.containsKey('9F10')) {
+    f['Issuer Application Data'] = bytesToHex(leaf['9F10']!).toUpperCase();
+  }
+  return f;
+}
