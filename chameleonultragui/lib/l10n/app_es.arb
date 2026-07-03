@@ -248,6 +248,7 @@
   "nested_description": "Recupera una llave objetivo desde una llave conocida (PRNG débil)",
   "static_nested_description": "Recupera una llave objetivo desde una llave conocida (nonce estático)",
   "hardnested_description": "Recupera una llave objetivo desde una llave conocida (PRNG duro, p. ej. EV1)",
+  "backdoor_rf08s_description": "Static-encrypted nested de Fudan FM11RF08S — autodetectado y ejecutado por Autopwn",
   "wiegand_decoder": "Decodificador Wiegand",
   "wiegand_decoder_description": "Decodifica un valor de control de acceso en facility code + número de tarjeta",
   "diagnostics": "Diagnóstico",

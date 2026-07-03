@@ -254,6 +254,7 @@
   "nested_description": "Recover a target key from a known key (weak-PRNG cards)",
   "static_nested_description": "Recover a target key from a known key (static-nonce cards)",
   "hardnested_description": "Recover a target key from a known key (hard-PRNG cards, e.g. EV1)",
+  "backdoor_rf08s_description": "Fudan FM11RF08S static-encrypted nested — auto-detected and run by Autopwn",
   "wiegand_decoder": "Wiegand decoder",
   "wiegand_decoder_description": "Decode a raw access-control value into facility code + card number",
   "diagnostics": "Diagnostics",
