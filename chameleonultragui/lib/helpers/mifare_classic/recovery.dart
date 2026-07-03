@@ -391,6 +391,85 @@ class MifareClassicRecovery {
     return false;
   }
 
+  // Standalone Static-Encrypted Nested (Fudan FM11RF08S backdoor, eprint
+  // 2024/1275): recover every A/B key using the factory backdoor. Mirrors the
+  // backdoor branch of recoverKeys(). Returns true if any key was found.
+  Future<bool> recoverBackdoor() async {
+    state = localizations.checking_card_info;
+    update();
+    if (!await mfClassicHasBackdoor(appState.communicator!)) {
+      error = localizations.no_backdoor_support;
+      state = "";
+      update();
+      return false;
+    }
+    final sectors =
+        mfClassicGetSectorCount(mifareClassicType, isEV1: isMifareClassicEV1);
+    final backdoorInfo = await appState.communicator!
+        .getMf1StaticEncryptedNestedAcquire(sectorCount: sectors);
+    if (backdoorInfo == null) {
+      error = localizations.no_backdoor_support;
+      state = "";
+      update();
+      return false;
+    }
+    for (var sector = 0; sector < sectors; sector++) {
+      state = localizations.collecting_nonces("Backdoor");
+      setCheckingSector(sector, 0);
+      setCheckingSector(sector, 1);
+      update();
+      try {
+        var possibleAKeys = await recovery.staticEncryptedNested(
+            StaticEncryptedNestedDart(
+                uid: backdoorInfo.$1,
+                nt: backdoorInfo.$2.nonces[sector].nt,
+                ntEnc: backdoorInfo.$2.nonces[sector].ntEnc,
+                ntParEnc: backdoorInfo.$2.nonces[sector].parity));
+        var possibleBKeys = await recovery.staticEncryptedNested(
+            StaticEncryptedNestedDart(
+                uid: backdoorInfo.$1,
+                nt: backdoorInfo.$3.nonces[sector].nt,
+                ntEnc: backdoorInfo.$3.nonces[sector].ntEnc,
+                ntParEnc: backdoorInfo.$3.nonces[sector].parity));
+        var filtered = await StaticEncryptedKeysFilterAsync.filterKeys(
+            possibleAKeys,
+            possibleBKeys,
+            backdoorInfo.$2.nonces[sector].nt,
+            backdoorInfo.$3.nonces[sector].nt);
+        // Key B
+        if (getSectorState(sector, 1) != ChameleonKeyCheckmark.found &&
+            getSectorState(sector, 1) != ChameleonKeyCheckmark.disabled) {
+          await checkKeysOnSector(
+              mfClassicConvertKeys(filtered.$2.reversed.toList()), 1, sector);
+        }
+        // Key A (direct candidates, then derived from the recovered B key)
+        if (getSectorState(sector, 0) != ChameleonKeyCheckmark.found &&
+            getSectorState(sector, 0) != ChameleonKeyCheckmark.disabled) {
+          final aFound = await checkKeysOnSector(
+              mfClassicConvertKeys(filtered.$1.reversed.toList()), 0, sector);
+          if (!aFound &&
+              getSectorState(sector, 1) == ChameleonKeyCheckmark.found) {
+            final matching =
+                await StaticEncryptedKeysFilterAsync.findMatchingKeys(
+                    backdoorInfo.$3.nonces[sector].nt,
+                    bytesToU64(
+                        Uint8List.fromList([0, 0, ...validKeys[sector + 40]])),
+                    backdoorInfo.$2.nonces[sector].nt,
+                    possibleAKeys);
+            await checkKeysOnSector(mfClassicConvertKeys(matching), 0, sector);
+          }
+        }
+      } catch (e) {
+        error = e.toString();
+      }
+      setMissingSector(sector, 0);
+      setMissingSector(sector, 1);
+    }
+    state = "";
+    update();
+    return validKeys.any((k) => k.isNotEmpty);
+  }
+
   Future<void> recoverKeys() async {
     state = localizations.checking_card_info;
     update();

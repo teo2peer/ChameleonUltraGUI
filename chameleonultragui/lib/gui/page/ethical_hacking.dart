@@ -2,6 +2,7 @@ import 'package:chameleonultragui/gui/component/element_button.dart';
 import 'package:chameleonultragui/gui/menu/hacking/apdu_terminal.dart';
 import 'package:chameleonultragui/gui/menu/hacking/auth_trace.dart';
 import 'package:chameleonultragui/gui/menu/hacking/autopwn.dart';
+import 'package:chameleonultragui/gui/menu/hacking/backdoor.dart';
 import 'package:chameleonultragui/gui/menu/hacking/darkside.dart';
 import 'package:chameleonultragui/gui/menu/hacking/emv_reader.dart';
 import 'package:chameleonultragui/gui/menu/hacking/mfkey_manual.dart';
@@ -182,7 +183,7 @@ class EthicalHackingPageState extends State<EthicalHackingPage> {
           (c) => _push(c, const NestedPage(variant: NestedVariant.hard)),
           deviceRequired: true),
       _Attack("Backdoor (RF08S)", localizations.backdoor_rf08s_description,
-          Icons.door_back_door, (c) => _push(c, const AutopwnPage()),
+          Icons.door_back_door, (c) => _push(c, const BackdoorPage()),
           deviceRequired: true),
       _Attack(localizations.read_card, localizations.recover_keys,
           Icons.sensors, (c) => _push(c, const ReadCardPage()),
