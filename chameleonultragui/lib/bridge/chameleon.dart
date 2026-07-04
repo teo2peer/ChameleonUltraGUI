@@ -446,6 +446,40 @@ class ChameleonCommunicator {
     }
   }
 
+  // Check a key set against ALL sectors in one firmware call
+  // (MF1_CHECK_KEYS_OF_SECTORS) — far fewer round-trips than per-sector checks.
+  // mask: 10 bytes, 2 bits per sector in byte s~/4 at shift 6-(s%4)*2
+  //   (bit 0b10 = skip keyA, 0b01 = skip keyB).
+  // Returns sectorKey-index (sector*2 + keyType) -> found key, or null if the
+  // command is unsupported / failed (so the caller can fall back per-sector).
+  Future<Map<int, Uint8List>?> mf1CheckKeysOfSectors(
+      Uint8List mask, List<Uint8List> keys) async {
+    if (mask.length != 10 || keys.isEmpty || keys.length > 83) return null;
+    try {
+      final resp = await sendCmd(ChameleonCommand.mf1CheckKeysOfSectors,
+          data: Uint8List.fromList([...mask, for (final k in keys) ...k]),
+          // ~ auth time per key across the unmasked sectors, capped.
+          timeout: Duration(seconds: (5 + keys.length).clamp(10, 90)));
+      if (resp == null || resp.data.length != 490) return null;
+      final d = resp.data;
+      final found = <int, Uint8List>{};
+      for (var s = 0; s < 40; s++) {
+        final shift = 6 - (s % 4) * 2;
+        final bits = (d[s ~/ 4] >> shift) & 0x03;
+        if (bits & 0x02 != 0) {
+          found[s * 2] = Uint8List.fromList(d.sublist(10 + s * 12, 10 + s * 12 + 6));
+        }
+        if (bits & 0x01 != 0) {
+          found[s * 2 + 1] =
+              Uint8List.fromList(d.sublist(10 + s * 12 + 6, 10 + s * 12 + 12));
+        }
+      }
+      return found;
+    } catch (_) {
+      return null;
+    }
+  }
+
   Future<bool> mf1WriteBlock(
       int block, int keyType, Uint8List key, Uint8List data) async {
     // Write block

@@ -201,13 +201,17 @@ class MifareClassicRecovery {
       }
     }
 
-    for (var sector = 0;
-        sector <
-            mfClassicGetSectorCount(mifareClassicType,
-                isEV1: isMifareClassicEV1);
-        sector++) {
-      for (var keyType = 0; keyType < 2; keyType++) {
-        await checkKeysOnSector(keyList, keyType, sector);
+    final sectorCount =
+        mfClassicGetSectorCount(mifareClassicType, isEV1: isMifareClassicEV1);
+
+    // Fast path: one batched command tests the whole dictionary against every
+    // sector on-device — far fewer round-trips than per-sector (big over BLE).
+    // Falls back to the per-sector loop if the firmware doesn't support it.
+    if (!await _checkKeysBatch(keyList, sectorCount)) {
+      for (var sector = 0; sector < sectorCount; sector++) {
+        for (var keyType = 0; keyType < 2; keyType++) {
+          await checkKeysOnSector(keyList, keyType, sector);
+        }
       }
     }
 
@@ -228,6 +232,66 @@ class MifareClassicRecovery {
 
     state = "";
     update();
+  }
+
+  // Batched dictionary check via MF1_CHECK_KEYS_OF_SECTORS: the device tests the
+  // whole key list against every sector in one call, so a few chunked calls
+  // replace hundreds of per-sector round-trips. Chunked (progress + bounded
+  // per-call time) with a mask that skips already-resolved sector-keys and
+  // sectors beyond this card. Returns false if the firmware lacks the command
+  // (caller then falls back to the per-sector loop).
+  Future<bool> _checkKeysBatch(List<Uint8List> keyList, int sectorCount) async {
+    const chunkKeys = 20;
+    final totalChunks = (keyList.length / chunkKeys).ceil();
+    for (var c = 0; c < totalChunks; c++) {
+      // Fresh mask each chunk: skip sector-keys already found/disabled and any
+      // sector past this card's count. Bit 0b10 = skip keyA, 0b01 = skip keyB.
+      final mask = Uint8List(10);
+      for (var s = 0; s < 40; s++) {
+        var skip = 0;
+        for (var t = 0; t < 2; t++) {
+          if (s >= sectorCount ||
+              getSectorState(s, t) == ChameleonKeyCheckmark.found ||
+              getSectorState(s, t) == ChameleonKeyCheckmark.disabled) {
+            skip |= (t == 0 ? 0x02 : 0x01);
+          }
+        }
+        mask[s ~/ 4] |= skip << (6 - (s % 4) * 2);
+      }
+
+      final part = keyList.sublist(
+          c * chunkKeys, ((c + 1) * chunkKeys).clamp(0, keyList.length));
+      state = localizations.checking_keys(part.length);
+      keyCheckProgress = totalChunks > 1 ? c / totalChunks : null;
+      update();
+
+      final found =
+          await appState.communicator!.mf1CheckKeysOfSectors(mask, part);
+      if (found == null) {
+        keyCheckProgress = null;
+        return false; // unsupported / failed -> per-sector fallback
+      }
+      found.forEach((k, key) {
+        final s = k ~/ 2, t = k % 2;
+        if (s < sectorCount &&
+            getSectorState(s, t) != ChameleonKeyCheckmark.found) {
+          setKeyAsFound(s, t, key);
+        }
+      });
+      update();
+    }
+
+    // Everything the dictionary could resolve is found; mark the rest missing.
+    keyCheckProgress = null;
+    for (var s = 0; s < sectorCount; s++) {
+      for (var t = 0; t < 2; t++) {
+        if (getSectorState(s, t) != ChameleonKeyCheckmark.found &&
+            getSectorState(s, t) != ChameleonKeyCheckmark.disabled) {
+          setMissingSector(s, t);
+        }
+      }
+    }
+    return true;
   }
 
   // Standalone Darkside: recover sector 0 key B from a card with no known key

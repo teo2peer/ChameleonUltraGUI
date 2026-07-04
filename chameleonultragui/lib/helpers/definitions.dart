@@ -72,7 +72,7 @@ enum ChameleonCommand {
   mf1ReadBlocks(2018),
   mf1WriteBlock(2009),
   mf1ManipulateValueBlock(2011),
-  mf1CheckKeysOfSectors(2012), // not implemented
+  mf1CheckKeysOfSectors(2012),
   mf1HardNestedAcquire(2013),
   mf1StaticEncryptedNestedAcquire(2014),
   mf1CheckKeysOnBlock(2015),
