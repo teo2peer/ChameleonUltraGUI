@@ -1,8 +1,7 @@
-import 'dart:typed_data';
-
 import 'package:chameleonultragui/helpers/definitions.dart';
 import 'package:chameleonultragui/main.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 // BLE audit tool.
@@ -43,6 +42,9 @@ class BleAuditPageState extends State<BleAuditPage>
   List<BleCharacteristic> _chars = [];
   final Map<int, String> _readValues = {}; // value handle -> last read result
   List<BleFuzzLogEntry> _log = [];
+  bool _notifying = false;
+  int? _notifCccd; // CCCD handle currently subscribed
+  List<Map<String, dynamic>> _notifs = [];
   bool _busy = false;
   bool _fuzzing = false;
   String? _error;
@@ -59,6 +61,7 @@ class BleAuditPageState extends State<BleAuditPage>
   @override
   void dispose() {
     _fuzzing = false; // stop any polling loop
+    _notifying = false;
     _tab.dispose();
     _scanDuration.dispose();
     _addr.dispose();
@@ -146,6 +149,52 @@ class BleAuditPageState extends State<BleAuditPage>
     return parts.join(' · ');
   }
 
+  // Full advertising-data breakdown (one string per AD structure) for the
+  // per-device details dialog.
+  static List<String> _advDetails(Uint8List adv) {
+    final fields = <String>[];
+    int i = 0;
+    while (i + 1 < adv.length) {
+      final ln = adv[i];
+      if (ln == 0) break;
+      final type = adv[i + 1];
+      final end = (i + 1 + ln <= adv.length) ? i + 1 + ln : adv.length;
+      final value = adv.sublist((i + 2 <= end) ? i + 2 : end, end);
+      if (type == 0x01 && value.isNotEmpty) {
+        final f = <String>[];
+        if (value[0] & 0x01 != 0) f.add('LE-limited');
+        if (value[0] & 0x02 != 0) f.add('LE-general');
+        if (value[0] & 0x04 != 0) f.add('no-BR/EDR');
+        fields.add('flags: ${f.isEmpty ? '0x${value[0].toRadixString(16)}' : f.join('|')}');
+      } else if (type == 0x02 || type == 0x03) {
+        final us = <String>[];
+        for (int j = 0; j + 1 < value.length; j += 2) {
+          final u = value[j] | (value[j + 1] << 8);
+          final nm = _uuidName(u);
+          us.add('0x${u.toRadixString(16).padLeft(4, '0')}${nm.isNotEmpty ? '($nm)' : ''}');
+        }
+        if (us.isNotEmpty) fields.add('services16: ${us.join(', ')}');
+      } else if (type == 0x06 || type == 0x07) {
+        fields.add('services128: ${value.length ~/ 16}');
+      } else if (type == 0x08 || type == 0x09) {
+        fields.add('name: ${String.fromCharCodes(value)}');
+      } else if (type == 0x0A && value.isNotEmpty) {
+        fields.add('tx_power: ${value[0] > 127 ? value[0] - 256 : value[0]} dBm');
+      } else if (type == 0x19 && value.length >= 2) {
+        fields.add('appearance: 0x${(value[0] | (value[1] << 8)).toRadixString(16).padLeft(4, '0')}');
+      } else if (type == 0xFF && value.length >= 2) {
+        final c = value[0] | (value[1] << 8);
+        final cn = _companyIds[c] ?? '0x${c.toRadixString(16).padLeft(4, '0')}';
+        fields.add('mfr: $cn [${_hex(value.sublist(2))}]');
+      } else if (type == 0x16 && value.length >= 2) {
+        final s = value[0] | (value[1] << 8);
+        fields.add('svc_data 0x${s.toRadixString(16).padLeft(4, '0')}: ${_hex(value.sublist(2))}');
+      }
+      i += ln + 1;
+    }
+    return fields;
+  }
+
   static String _propsStr(int p) {
     final names = <String>[];
     if (p & 0x02 != 0) names.add('read');
@@ -155,6 +204,27 @@ class BleAuditPageState extends State<BleAuditPage>
     if (p & 0x20 != 0) names.add('indicate');
     return names.isEmpty ? '-' : names.join(',');
   }
+
+  // Common Bluetooth SIG 16-bit UUIDs (services 0x18xx, characteristics 0x2Axx).
+  static const Map<int, String> _uuidNames = {
+    0x1800: 'Generic Access', 0x1801: 'Generic Attribute', 0x1802: 'Immediate Alert',
+    0x1803: 'Link Loss', 0x1804: 'Tx Power', 0x1805: 'Current Time',
+    0x1808: 'Glucose', 0x1809: 'Health Thermometer', 0x180A: 'Device Information',
+    0x180D: 'Heart Rate', 0x180F: 'Battery', 0x1810: 'Blood Pressure',
+    0x1812: 'HID', 0x1816: 'Cycling Speed', 0x1818: 'Cycling Power',
+    0x1819: 'Location and Navigation', 0x181A: 'Environmental Sensing',
+    0x181C: 'User Data', 0x1826: 'Fitness Machine',
+    0xFE59: 'Nordic DFU', 0xFD6F: 'Exposure Notification',
+    0x2A00: 'Device Name', 0x2A01: 'Appearance', 0x2A04: 'Preferred Conn Params',
+    0x2A05: 'Service Changed', 0x2A06: 'Alert Level', 0x2A19: 'Battery Level',
+    0x2A23: 'System ID', 0x2A24: 'Model Number', 0x2A25: 'Serial Number',
+    0x2A26: 'Firmware Rev', 0x2A27: 'Hardware Rev', 0x2A28: 'Software Rev',
+    0x2A29: 'Manufacturer', 0x2A2B: 'Current Time', 0x2A37: 'Heart Rate Meas',
+    0x2A38: 'Body Sensor Loc', 0x2A50: 'PnP ID', 0x2A6E: 'Temperature',
+    0x2A6F: 'Humidity',
+  };
+
+  static String _uuidName(int uuid) => _uuidNames[uuid] ?? '';
 
   bool _isWritable(int p) => (p & 0x0C) != 0; // write or write-without-response
 
@@ -189,10 +259,112 @@ class BleAuditPageState extends State<BleAuditPage>
     _tab.animateTo(1);
   }
 
+  void _showDeviceDetails(BleScanResult r) {
+    final details = _advDetails(r.adv);
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(_leToMac(r.addr),
+            style: const TextStyle(fontFamily: 'RobotoMono')),
+        content: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text('type: ${r.addrType}    RSSI: ${r.rssi} dBm'),
+              const SizedBox(height: 8),
+              if (details.isEmpty) const Text('(no advertising data)'),
+              for (final d in details)
+                Text(d,
+                    style:
+                        const TextStyle(fontFamily: 'RobotoMono', fontSize: 12)),
+              const SizedBox(height: 8),
+              const Text('raw:', style: TextStyle(fontWeight: FontWeight.bold)),
+              SelectableText(_hex(r.adv),
+                  style:
+                      const TextStyle(fontFamily: 'RobotoMono', fontSize: 11)),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Navigator.pop(ctx);
+              _useAsTarget(r);
+            },
+            child: const Text('Fuzz this'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Close'),
+          ),
+        ],
+      ),
+    );
+  }
+
   // ---- directed fuzz ----------------------------------------------------
   Future<void> _refreshState() async {
     final st = await _app.communicator!.bleCentralState();
     if (mounted) setState(() => _state = st);
+  }
+
+  // Toggle the device's OWN advertising (discoverable) — controls only this
+  // Chameleon, does not touch other devices.
+  Future<void> _toggleAdvertising() async {
+    try {
+      final cur = await _app.communicator!.bleAdvertisingGet();
+      final now = await _app.communicator!.bleAdvertisingSet(!cur);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Local advertising ${now ? 'on' : 'off'}')));
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Advertising toggle failed: $e')));
+    }
+  }
+
+  Future<void> _probeLink() async {
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+
+    try {
+      final status = await _app.communicator!.bleLinkProbe(globalMode: true);
+      if (!mounted) return;
+      if (status != _statusSuccess) {
+        setState(() {
+          _error = 'Global probe rejected by device (0x${status.toRadixString(16)})';
+        });
+        return;
+      }
+
+      for (int i = 0; i < 80 && mounted; i++) {
+        await Future.delayed(const Duration(milliseconds: 100));
+        final st = await _app.communicator!.bleCentralState();
+        if (!mounted) return;
+        setState(() => _state = st);
+        if (st.probeState == 2) {
+          return;
+        }
+        if (st.probeState == 3) {
+          setState(() {
+            _error = 'Global probe failed (0x${st.probeResult.toRadixString(16)})';
+          });
+          return;
+        }
+      }
+
+      if (mounted) {
+        setState(() => _error = 'Global probe timed out');
+      }
+    } catch (e) {
+      if (mounted) setState(() => _error = e.toString());
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
   }
 
   Future<void> _connect() async {
@@ -271,6 +443,44 @@ class BleAuditPageState extends State<BleAuditPage>
     setState(() => _readValues[handle] = text);
   }
 
+  // Subscribe/unsubscribe to notifications on a characteristic. Uses the common
+  // CCCD-at-(value handle + 1) layout. Receive-only: streams the target's own
+  // notifications, sends nothing but the one CCCD write.
+  Future<void> _toggleNotify(BleCharacteristic c) async {
+    if (_notifying) {
+      _notifying = false;
+      if (_notifCccd != null) {
+        await _app.communicator!.bleSubscribe(_notifCccd!, 0);
+      }
+      if (mounted) setState(() => _notifCccd = null);
+      return;
+    }
+    final cccd = c.handle + 1;
+    final mode = (c.props & 0x10 != 0) ? 1 : 2; // notify else indicate
+    final status = await _app.communicator!.bleSubscribe(cccd, mode);
+    if (!mounted) return;
+    if (status != _statusSuccess) {
+      setState(() => _error = 'Subscribe failed (0x${status.toRadixString(16)})');
+      return;
+    }
+    setState(() {
+      _notifying = true;
+      _notifCccd = cccd;
+      _notifs = [];
+    });
+    int seen = 0;
+    while (_notifying && mounted) {
+      await Future.delayed(const Duration(milliseconds: 300));
+      if (!_notifying || !mounted) break;
+      final list = await _app.communicator!.bleGetNotifications();
+      if (!mounted) return;
+      if (list.length > seen) {
+        seen = list.length;
+        setState(() => _notifs = list);
+      }
+    }
+  }
+
   Future<void> _startFuzz() async {
     final handle = int.tryParse(_handle.text.trim().replaceFirst('0x', ''),
             radix: 16) ??
@@ -341,6 +551,13 @@ class BleAuditPageState extends State<BleAuditPage>
     return Scaffold(
       appBar: AppBar(
         title: const Text('BLE audit'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.bluetooth_audio),
+            tooltip: 'Toggle local advertising (discoverable)',
+            onPressed: _connected ? _toggleAdvertising : null,
+          ),
+        ],
         bottom: TabBar(
           controller: _tab,
           tabs: const [
@@ -403,6 +620,7 @@ class BleAuditPageState extends State<BleAuditPage>
           for (final r in _scanResults)
             Card(
               child: ListTile(
+                onTap: () => _showDeviceDetails(r),
                 title: Text(_leToMac(r.addr),
                     style: const TextStyle(fontFamily: 'RobotoMono')),
                 subtitle: Text([
@@ -462,6 +680,11 @@ class BleAuditPageState extends State<BleAuditPage>
               icon: const Icon(Icons.link),
               label: const Text('Connect'),
             ),
+            ElevatedButton.icon(
+              onPressed: (_busy || !_connected) ? null : _probeLink,
+              icon: const Icon(Icons.wifi_tethering),
+              label: const Text('Probe all'),
+            ),
             OutlinedButton.icon(
               onPressed: (_busy || !connected) ? null : _discover,
               icon: const Icon(Icons.travel_explore),
@@ -490,7 +713,8 @@ class BleAuditPageState extends State<BleAuditPage>
                 isThreeLine: _readValues.containsKey(c.handle),
                 title: Text(
                     'handle 0x${c.handle.toRadixString(16).padLeft(4, '0')}  '
-                    'UUID 0x${c.uuid.toRadixString(16).padLeft(4, '0')}',
+                    'UUID 0x${c.uuid.toRadixString(16).padLeft(4, '0')}'
+                    '${_uuidName(c.uuid).isNotEmpty ? ' (${_uuidName(c.uuid)})' : ''}',
                     style: const TextStyle(fontFamily: 'RobotoMono')),
                 subtitle: Text(
                     _propsStr(c.props) +
@@ -511,6 +735,13 @@ class BleAuditPageState extends State<BleAuditPage>
                         onPressed: () => setState(() => _handle.text =
                             '0x${c.handle.toRadixString(16).padLeft(4, '0')}'),
                         child: const Text('Select'),
+                      ),
+                    if (c.props & 0x30 != 0)
+                      TextButton(
+                        onPressed: () => _toggleNotify(c),
+                        child: Text(_notifying && _notifCccd == c.handle + 1
+                            ? 'Stop'
+                            : 'Notify'),
                       ),
                   ],
                 ),
@@ -569,8 +800,25 @@ class BleAuditPageState extends State<BleAuditPage>
           ]),
           if (_log.isNotEmpty) ...[
             const SizedBox(height: 12),
-            Text('Log (${_log.length} entries, last 15):',
-                style: const TextStyle(fontWeight: FontWeight.bold)),
+            Row(children: [
+              Expanded(
+                child: Text('Log (${_log.length} entries, last 15):',
+                    style: const TextStyle(fontWeight: FontWeight.bold)),
+              ),
+              IconButton(
+                tooltip: 'Copy full log',
+                icon: const Icon(Icons.copy, size: 18),
+                onPressed: () {
+                  Clipboard.setData(ClipboardData(
+                      text: _log
+                          .map((e) =>
+                              '#${e.index}\tlen=${e.length}\t${e.status == 0 ? 'ok' : 'err0x${e.status.toRadixString(16)}'}\t${_hex(e.data)}')
+                          .join('\n')));
+                  ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                      content: Text('Copied ${_log.length} log entries')));
+                },
+              ),
+            ]),
             Container(
               width: double.infinity,
               margin: const EdgeInsets.only(top: 6),
@@ -589,6 +837,44 @@ class BleAuditPageState extends State<BleAuditPage>
                         '${e.status == 0 ? 'ok' : 'err0x${e.status.toRadixString(16)}'}  '
                         '${_hex(e.data)}')
                     .join('\n'),
+                style: const TextStyle(fontFamily: 'RobotoMono', fontSize: 12),
+              ),
+            ),
+          ],
+          if (_notifs.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            Row(children: [
+              Expanded(
+                child: Text('Notifications (${_notifs.length}, last 15):',
+                    style: const TextStyle(fontWeight: FontWeight.bold)),
+              ),
+              IconButton(
+                tooltip: 'Copy all notifications',
+                icon: const Icon(Icons.copy, size: 18),
+                onPressed: () {
+                  Clipboard.setData(ClipboardData(
+                      text: _notifs.map((n) {
+                    final d = n['data'] as Uint8List;
+                    return 'h0x${(n['handle'] as int).toRadixString(16).padLeft(4, '0')}\t${_hex(d)}';
+                  }).join('\n')));
+                  ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                      content: Text('Copied ${_notifs.length} notifications')));
+                },
+              ),
+            ]),
+            Container(
+              width: double.infinity,
+              margin: const EdgeInsets.only(top: 6),
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: SelectableText(
+                _notifs.reversed.take(15).toList().reversed.map((n) {
+                  final d = n['data'] as Uint8List;
+                  return 'h0x${(n['handle'] as int).toRadixString(16).padLeft(4, '0')}  ${_hex(d)}';
+                }).join('\n'),
                 style: const TextStyle(fontFamily: 'RobotoMono', fontSize: 12),
               ),
             ),
@@ -622,6 +908,8 @@ class BleAuditPageState extends State<BleAuditPage>
           Text('discovery  : ${at(disc, st.discState)} (${st.charCount} chars)'),
           Text('fuzz       : ${at(fuzz, st.fuzzState)} (${st.fuzzSent} writes)'),
           Text('target up  : ${st.targetAlive}'),
+            Text('probe      : ${at(<String>["idle", "probing", "done", "error"], st.probeState)}'
+              ' ${st.probeIndex}/${st.probeTotal} (${st.probeResult})'),
           if (st.lastReason != 0)
             Text('last disconnect reason : '
                 '0x${st.lastReason.toRadixString(16).padLeft(2, '0')}'),
