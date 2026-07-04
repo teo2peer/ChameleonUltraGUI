@@ -69,6 +69,7 @@ enum ChameleonCommand {
   mf1NestedAcquire(2006),
   mf1CheckKey(2007),
   mf1ReadBlock(2008),
+  mf1ReadBlocks(2018),
   mf1WriteBlock(2009),
   mf1ManipulateValueBlock(2011),
   mf1CheckKeysOfSectors(2012), // not implemented
@@ -174,6 +175,9 @@ enum ChameleonCommand {
   bleScanStop(7001),
   bleScanGetCount(7002),
   bleScanGetResults(7003),
+  bleAdvertisingSet(7004),
+  bleAdvertisingGet(7005),
+  bleLinkProbe(7006),
 
   // BLE directed GATT fuzzing harness — point-to-point against ONE target
   bleConnect(7010),
@@ -185,7 +189,11 @@ enum ChameleonCommand {
   bleFuzzStop(7016),
   bleFuzzGetLog(7017),
   bleGattRead(7018),
-  bleGattGetRead(7019);
+  bleGattGetRead(7019),
+  bleSubscribe(7020),
+  bleGetNotifications(7021),
+  bleFindCccd(7022),
+  bleGetCccd(7023);
 
   const ChameleonCommand(this.value);
   final int value;
@@ -340,6 +348,10 @@ class BleCentralState {
   int fuzzSent;
   bool targetAlive;
   int lastReason; // HCI reason of last target disconnect
+  int probeState; // 0 idle,1 probing,2 done,3 error
+  int probeResult; // 0 on success, otherwise low byte of nrf error / reason
+  int probeIndex;
+  int probeTotal;
 
   BleCentralState(
       {required this.connState,
@@ -348,7 +360,11 @@ class BleCentralState {
       required this.fuzzState,
       required this.fuzzSent,
       required this.targetAlive,
-      required this.lastReason});
+      required this.lastReason,
+      this.probeState = 0,
+      this.probeResult = 0,
+      this.probeIndex = 0,
+      this.probeTotal = 0});
 }
 
 // One entry of the fuzz log (a mutated write that was sent to the target).

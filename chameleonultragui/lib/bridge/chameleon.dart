@@ -427,6 +427,25 @@ class ChameleonCommunicator {
         .data;
   }
 
+  // Auth once, read `count` consecutive blocks of the start block's sector.
+  // Returns the blocks actually read (16 bytes each; may be fewer than count on
+  // error, or empty on old firmware) so the caller can fall back to per-block.
+  Future<List<Uint8List>> mf1ReadBlocks(
+      int startBlock, int count, int keyType, Uint8List key) async {
+    try {
+      final resp = await sendCmd(ChameleonCommand.mf1ReadBlocks,
+          data: Uint8List.fromList([keyType, startBlock, count, ...key]));
+      final data = resp?.data ?? Uint8List(0);
+      final blocks = <Uint8List>[];
+      for (var i = 0; i + 16 <= data.length; i += 16) {
+        blocks.add(Uint8List.fromList(data.sublist(i, i + 16)));
+      }
+      return blocks;
+    } catch (_) {
+      return const []; // unsupported / timeout -> caller falls back
+    }
+  }
+
   Future<bool> mf1WriteBlock(
       int block, int keyType, Uint8List key, Uint8List data) async {
     // Write block
@@ -1464,8 +1483,11 @@ class ChameleonCommunicator {
   // target you connect to by address. Neither broadcasts to the environment.
   // -----------------------------------------------------------------------
 
-  Future<void> blePassiveScanStart() async {
-    await sendCmd(ChameleonCommand.bleScanStart);
+  // Start a scan. Passive (default) is listen-only; active also sends scan
+  // requests to collect scan responses (e.g. full device names).
+  Future<void> blePassiveScanStart({bool active = false}) async {
+    await sendCmd(ChameleonCommand.bleScanStart,
+        data: Uint8List.fromList([active ? 1 : 0]));
   }
 
   Future<void> blePassiveScanStop() async {
@@ -1504,6 +1526,19 @@ class ChameleonCommunicator {
     return out;
   }
 
+  // Query whether the device's own BLE advertising (discoverable) is on.
+  Future<bool> bleAdvertisingGet() async {
+    var resp = await sendCmd(ChameleonCommand.bleAdvertisingGet);
+    return resp!.data.isNotEmpty && resp.data[0] != 0;
+  }
+
+  // Enable/disable the device's own BLE advertising. Returns the new state.
+  Future<bool> bleAdvertisingSet(bool on, {bool eraseBonds = false}) async {
+    var resp = await sendCmd(ChameleonCommand.bleAdvertisingSet,
+        data: Uint8List.fromList([on ? 1 : 0, eraseBonds ? 1 : 0]));
+    return resp!.data.isNotEmpty && resp.data[0] != 0;
+  }
+
   // Connect to ONE target. addrLe is 6 bytes little-endian (as the scanner
   // reports). Returns the firmware status byte (0x68 = success/initiated).
   Future<int> bleConnect(Uint8List addrLe, {int addrType = 0}) async {
@@ -1519,7 +1554,7 @@ class ChameleonCommunicator {
   Future<BleCentralState> bleCentralState() async {
     var resp = await sendCmd(ChameleonCommand.bleCentralState);
     var d = resp!.data;
-    if (d.length < 8) {
+    if (d.length < 12) {
       return BleCentralState(
           connState: 0,
           discState: 0,
@@ -1527,7 +1562,11 @@ class ChameleonCommunicator {
           fuzzState: 0,
           fuzzSent: 0,
           targetAlive: false,
-          lastReason: 0);
+        lastReason: 0,
+        probeState: 0,
+        probeResult: 0,
+        probeIndex: 0,
+        probeTotal: 0);
     }
     return BleCentralState(
         connState: d[0],
@@ -1536,7 +1575,11 @@ class ChameleonCommunicator {
         fuzzState: d[3],
         fuzzSent: (d[4] << 8) | d[5],
         targetAlive: d[6] != 0,
-        lastReason: d[7]);
+      lastReason: d[7],
+      probeState: d[8],
+      probeResult: d[9],
+      probeIndex: d[10],
+      probeTotal: d[11]);
   }
 
   Future<int> bleGattDiscover() async {
@@ -1581,6 +1624,15 @@ class ChameleonCommunicator {
 
   Future<void> bleFuzzStop() async {
     await sendCmd(ChameleonCommand.bleFuzzStop);
+  }
+
+  Future<int> bleLinkProbe({bool globalMode = false}) async {
+    if (globalMode) {
+      return (await sendCmd(ChameleonCommand.bleLinkProbe,
+          data: Uint8List.fromList([1])))!
+          .status;
+    }
+    return (await sendCmd(ChameleonCommand.bleLinkProbe))!.status;
   }
 
   // Fetch the fuzz log. Wire per entry:
@@ -1633,5 +1685,57 @@ class ChameleonCommunicator {
       }
     }
     return (-1, Uint8List(0)); // timed out
+  }
+
+  // Subscribe to notifications/indications on the connected target by writing its
+  // CCCD. mode: 0 = off, 1 = notifications, 2 = indications. Returns the status.
+  Future<int> bleSubscribe(int cccdHandle, int mode) async {
+    var resp = await sendCmd(ChameleonCommand.bleSubscribe,
+        data: Uint8List.fromList(
+            [(cccdHandle >> 8) & 0xFF, cccdHandle & 0xFF, mode & 0xFF]));
+    return resp!.status;
+  }
+
+  // Fetch received notifications. Wire per entry: handle[2] | len[1] | data[len].
+  Future<List<Map<String, dynamic>>> bleGetNotifications(
+      {int startIndex = 0}) async {
+    var resp = await sendCmd(ChameleonCommand.bleGetNotifications,
+        data:
+            Uint8List.fromList([(startIndex >> 8) & 0xFF, startIndex & 0xFF]));
+    List<Map<String, dynamic>> out = [];
+    var d = resp!.data;
+    int o = 0;
+    while (o + 3 <= d.length) {
+      int handle = (d[o] << 8) | d[o + 1];
+      int len = d[o + 2];
+      o += 3;
+      if (o + len > d.length) break;
+      out.add({'handle': handle, 'data': Uint8List.fromList(d.sublist(o, o + len))});
+      o += len;
+    }
+    return out;
+  }
+
+  // Discover a characteristic's CCCD descriptor handle. Falls back to
+  // valueHandle + 1 (the common layout) if none is found or on timeout.
+  Future<int> bleFindCccd(int valueHandle,
+      {Duration timeout = const Duration(seconds: 2)}) async {
+    var start = await sendCmd(ChameleonCommand.bleFindCccd,
+        data:
+            Uint8List.fromList([(valueHandle >> 8) & 0xFF, valueHandle & 0xFF]));
+    if (start!.status != 0x68) {
+      return valueHandle + 1;
+    }
+    var deadline = DateTime.now().add(timeout);
+    while (DateTime.now().isBefore(deadline)) {
+      await Future.delayed(const Duration(milliseconds: 50));
+      var resp = await sendCmd(ChameleonCommand.bleGetCccd);
+      var d = resp!.data;
+      if (d.length >= 3) {
+        if (d[0] == 2) return (d[1] << 8) | d[2]; // found
+        if (d[0] == 3) break; // not found
+      }
+    }
+    return valueHandle + 1;
   }
 }

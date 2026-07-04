@@ -901,61 +901,61 @@ class MifareClassicRecovery {
   Future<void> dumpData() async {
     cardData = List.generate(256, (_) => Uint8List(0));
 
-    for (var sector = 0;
-        sector <
-            mfClassicGetSectorCount(mifareClassicType,
-                isEV1: isMifareClassicEV1);
-        sector++) {
-      for (var block = 0;
-          block < mfClassicGetBlockCountBySector(sector);
-          block++) {
-        for (var keyType = 0; keyType < 2; keyType++) {
-          appState.log!
-              .d("Dumping sector $sector, block $block with key $keyType");
+    final sectorCount =
+        mfClassicGetSectorCount(mifareClassicType, isEV1: isMifareClassicEV1);
+    final totalBlocks =
+        mfClassicGetBlockCount(mifareClassicType, isEV1: isMifareClassicEV1);
 
-          if (getSectorKey(sector, keyType).isEmpty) {
-            appState.log!.w("Skipping missing key");
-            cardData[block + mfClassicGetFirstBlockCountBySector(sector)] =
-                Uint8List(16);
-            continue;
-          }
+    for (var sector = 0; sector < sectorCount; sector++) {
+      final firstBlock = mfClassicGetFirstBlockCountBySector(sector);
+      final blocks = mfClassicGetBlockCountBySector(sector);
+      final trailer = mfClassicGetSectorTrailerBlockBySector(sector);
 
-          var blockData = await appState.communicator!.mf1ReadBlock(
-              block + mfClassicGetFirstBlockCountBySector(sector),
-              0x60 + keyType,
-              getSectorKey(sector, keyType));
+      // One authentication for the whole sector: read every block in a single
+      // MF1_READ_BLOCKS call (~4x fewer auths than read-one-block per block).
+      // keyA preferred; any block the batch didn't return falls back per-block.
+      final int primaryType = getSectorKey(sector, 0).isNotEmpty ? 0 : 1;
+      final Uint8List primaryKey = getSectorKey(sector, primaryType);
+      List<Uint8List> batch = const [];
+      if (primaryKey.isNotEmpty) {
+        batch = await appState.communicator!
+            .mf1ReadBlocks(firstBlock, blocks, 0x60 + primaryType, primaryKey);
+      }
 
-          if (blockData.isEmpty) {
-            if (keyType == 1) {
-              blockData = Uint8List(16);
-            } else {
-              continue;
+      for (var b = 0; b < blocks; b++) {
+        final absBlock = firstBlock + b;
+        Uint8List blockData;
+        if (b < batch.length) {
+          blockData = batch[b];
+        } else {
+          // Per-block fallback (old firmware, or a block the batch missed):
+          // try keyA then keyB.
+          blockData = Uint8List(16);
+          for (var keyType = 0; keyType < 2; keyType++) {
+            final key = getSectorKey(sector, keyType);
+            if (key.isEmpty) continue;
+            final d = await appState.communicator!
+                .mf1ReadBlock(absBlock, 0x60 + keyType, key);
+            if (d.length == 16) {
+              blockData = d;
+              break;
             }
           }
-
-          if (mfClassicGetSectorTrailerBlockBySector(sector) ==
-              block + mfClassicGetFirstBlockCountBySector(sector)) {
-            // set keys in sector trailer
-            if (getSectorKey(sector, 0).isNotEmpty) {
-              blockData.setRange(0, 6, getSectorKey(sector, 0));
-            }
-
-            if (getSectorKey(sector, 1).isNotEmpty) {
-              blockData.setRange(10, 16, getSectorKey(sector, 1));
-            }
-          }
-
-          cardData[block + mfClassicGetFirstBlockCountBySector(sector)] =
-              blockData;
-
-          dumpProgress = (block + mfClassicGetFirstBlockCountBySector(sector)) /
-              (mfClassicGetBlockCount(mifareClassicType,
-                  isEV1: isMifareClassicEV1));
-
-          update();
-
-          break;
         }
+
+        if (absBlock == trailer) {
+          // Fill in the known keys (keyA reads back as zeros from the card).
+          if (getSectorKey(sector, 0).isNotEmpty) {
+            blockData.setRange(0, 6, getSectorKey(sector, 0));
+          }
+          if (getSectorKey(sector, 1).isNotEmpty) {
+            blockData.setRange(10, 16, getSectorKey(sector, 1));
+          }
+        }
+
+        cardData[absBlock] = blockData;
+        dumpProgress = totalBlocks == 0 ? 1.0 : absBlock / totalBlocks;
+        update();
       }
     }
   }
