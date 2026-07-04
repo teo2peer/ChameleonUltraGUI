@@ -141,7 +141,12 @@ class MifareClassicRecovery {
   }
 
   Future<void> recheckKey(Uint8List key, int startingSector) async {
-    for (var sector = startingSector;
+    // Scan ALL sectors (not just from startingSector): keys are frequently
+    // reused across sectors, and a key found late is often the missing key of
+    // an earlier, still-unresolved sector. Trying it there is one cheap auth
+    // that can avoid an expensive nested/darkside attack. Only sectors still in
+    // the `none` state are probed, so resolved sectors are skipped.
+    for (var sector = 0;
         sector <
             mfClassicGetSectorCount(mifareClassicType,
                 isEV1: isMifareClassicEV1);
@@ -181,18 +186,26 @@ class MifareClassicRecovery {
   Future<void> checkKeys({bool skipDefaultDictionary = false}) async {
     initializeEV1();
 
+    // Build the candidate list ONCE, de-duplicated by value (dictionary first,
+    // then default keys minus overlaps). Previously it was rebuilt every sector
+    // with an O(dict*defaults) `contains` filter, and duplicate dictionary keys
+    // were re-tested on every sector.
+    final seen = <String>{};
+    final keyList = <Uint8List>[];
+    for (final k in selectedDictionary!.keys) {
+      if (seen.add(bytesToHex(k))) keyList.add(k);
+    }
+    if (!skipDefaultDictionary) {
+      for (final k in gMifareClassicKeys) {
+        if (seen.add(bytesToHex(k))) keyList.add(k);
+      }
+    }
+
     for (var sector = 0;
         sector <
             mfClassicGetSectorCount(mifareClassicType,
                 isEV1: isMifareClassicEV1);
         sector++) {
-      List<Uint8List> keyList = [
-        ...selectedDictionary!.keys,
-        if (!skipDefaultDictionary)
-          ...gMifareClassicKeys
-              .where((key) => !selectedDictionary!.keys.contains(key))
-      ];
-
       for (var keyType = 0; keyType < 2; keyType++) {
         await checkKeysOnSector(keyList, keyType, sector);
       }
