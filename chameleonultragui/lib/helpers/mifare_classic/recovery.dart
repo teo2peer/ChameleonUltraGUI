@@ -66,8 +66,27 @@ class MifareClassicRecovery {
     initializeEV1();
   }
 
+  // Reorder a large candidate list so the most likely keys are tried first —
+  // checkKeysOnSector breaks on the first hit, so this turns an average
+  // half-list scan into an early hit on the common cases (default keys, and
+  // keys already recovered on other sectors = key reuse). Order-only.
+  List<Uint8List> _prioritiseCandidates(List<Uint8List> keys) {
+    if (keys.length < 64) return keys; // not worth it for short lists
+    final likely = <String>{...gMifareClassicKeys.map(bytesToHex)};
+    for (final k in validKeys) {
+      if (k.isNotEmpty) likely.add(bytesToHex(k));
+    }
+    final pri = <Uint8List>[];
+    final rest = <Uint8List>[];
+    for (final k in keys) {
+      (likely.contains(bytesToHex(k)) ? pri : rest).add(k);
+    }
+    return pri.isEmpty ? keys : [...pri, ...rest];
+  }
+
   Future<bool> checkKeysOnSector(
       List<Uint8List> keys, int keyType, int sector) async {
+    keys = _prioritiseCandidates(keys);
     state = localizations.checking_keys(keys.length);
     Uint8List? key;
     keyCheckProgress = null;
@@ -439,10 +458,30 @@ class MifareClassicRecovery {
     final rawA = <int, List<int>>{}; // unfiltered A candidates for findMatchingKeys
     final sameNt = <int, bool>{};
     for (var sector = 0; sector < sectors; sector++) {
-      state = localizations.collecting_nonces("Backdoor");
-      setCheckingSector(sector, 0);
-      setCheckingSector(sector, 1);
+      // Phase 1 is a collect-all pass: show ONLY global progress so we don't
+      // light up every block as "checking" at once (blocks keep their state;
+      // phase 3 animates each block as it is confirmed).
+      state = "${localizations.collecting_nonces("Backdoor")} ${sector + 1}/$sectors";
+      keyCheckProgress = sectors == 0 ? null : sector / sectors;
       update();
+
+      // Skip sectors already resolved (e.g. by the dictionary pass), and guard
+      // against an acquire that returned fewer nonces than sectors (would throw
+      // a RangeError on nonces[sector]).
+      final aDone = getSectorState(sector, 0) == ChameleonKeyCheckmark.found ||
+          getSectorState(sector, 0) == ChameleonKeyCheckmark.disabled;
+      final bDone = getSectorState(sector, 1) == ChameleonKeyCheckmark.found ||
+          getSectorState(sector, 1) == ChameleonKeyCheckmark.disabled;
+      if ((aDone && bDone) ||
+          sector >= backdoorInfo.$2.nonces.length ||
+          sector >= backdoorInfo.$3.nonces.length) {
+        candA[sector] = [];
+        candB[sector] = [];
+        rawA[sector] = [];
+        sameNt[sector] = false;
+        continue;
+      }
+
       final aN = backdoorInfo.$2.nonces[sector];
       final bN = backdoorInfo.$3.nonces[sector];
       sameNt[sector] = aN.nt == bN.nt;
@@ -471,6 +510,7 @@ class MifareClassicRecovery {
         rawA[sector] = [];
       }
     }
+    keyCheckProgress = null;
 
     // ---- Phase 2: build priority set (cross-sector duplicates + defaults) ---
     final counts = <String, int>{};
@@ -496,11 +536,19 @@ class MifareClassicRecovery {
           rest.add(k);
         }
       }
+      // Most-reused candidates first (the more sectors a key appears in, the
+      // likelier it is the real reused key) so the on-card hit comes sooner.
+      pri.sort((a, b) =>
+          (counts[bytesToHex(b)] ?? 0).compareTo(counts[bytesToHex(a)] ?? 0));
       return [...pri, ...rest];
     }
 
     // ---- Phase 3: confirm keys on card, priority candidates first ----------
     for (var sector = 0; sector < sectors; sector++) {
+      if (sector >= backdoorInfo.$2.nonces.length ||
+          sector >= backdoorInfo.$3.nonces.length) {
+        continue; // no nonces collected for this sector (guarded in phase 1)
+      }
       final aN = backdoorInfo.$2.nonces[sector];
       final bN = backdoorInfo.$3.nonces[sector];
       try {
@@ -709,10 +757,19 @@ class MifareClassicRecovery {
 
     int tries = [NTLevel.backdoor, NTLevel.static].contains(prng) ? 1 : 5;
 
+    // RF08S backdoor: delegate to the optimized standalone recovery — it collects
+    // every sector's candidates (global progress bar, no all-blocks flash),
+    // prioritises cross-sector duplicate + default keys, and confirms each block
+    // per-sector (animation). The per-sector loop below is skipped for this case.
+    if (prng == NTLevel.backdoor) {
+      await recoverBackdoor();
+    }
+
     for (var sector = 0;
-        sector <
-            mfClassicGetSectorCount(mifareClassicType,
-                isEV1: isMifareClassicEV1);
+        prng != NTLevel.backdoor &&
+            sector <
+                mfClassicGetSectorCount(mifareClassicType,
+                    isEV1: isMifareClassicEV1);
         sector++) {
       for (var keyType = 0; keyType < 2; keyType++) {
         if (getSectorState(sector, keyType) == ChameleonKeyCheckmark.none) {
@@ -743,6 +800,9 @@ class MifareClassicRecovery {
           }
 
           bool found = false;
+          // Weak nested: candidate sets from successive nonce collections are
+          // intersected here so we test a handful on-card instead of ~26000.
+          Set<int>? weakCandidates;
           for (var i = 0; i < tries && !found; i++) {
             List<int> keys = [];
 
@@ -788,7 +848,23 @@ class MifareClassicRecovery {
                   nt1Enc: nonces.nonces[1].ntEnc,
                   par1: nonces.nonces[1].parity);
 
-              keys = await recovery.nested(nested);
+              // Intersect candidate sets across collections. The real key is in
+              // every set, so a few rounds shrink ~26000 candidates to a handful
+              // — avoiding thousands of on-card auths. Never empty the set (keep
+              // the latest), so the worst case is the old single-pass behaviour.
+              final set = (await recovery.nested(nested)).toSet();
+              if (weakCandidates == null) {
+                weakCandidates = set;
+              } else {
+                final inter = weakCandidates.intersection(set);
+                weakCandidates = inter.isEmpty ? set : inter;
+              }
+              // Still large and tries remain -> collect another pair to narrow
+              // further before spending time testing on-card.
+              if (weakCandidates.length > 20 && i < tries - 1) {
+                continue;
+              }
+              keys = weakCandidates.toList();
             } else if (prng == NTLevel.static) {
               var nested = StaticNestedDart(
                 uid: distance!.uid,
