@@ -746,6 +746,18 @@ class MifareClassicRecovery {
       await recoverBackdoor();
     }
 
+    // The NT distance is a card-level PRNG property tied to the reference
+    // key/block, not the target sector — measure it once and reuse it across
+    // sectors instead of re-measuring for every sector (weak/hard nested). If a
+    // sector later fails, it is reset so the next sector re-measures (drift).
+    NTDistance? cardDistance;
+    if (prng != NTLevel.backdoor && validKeyType != -1) {
+      try {
+        cardDistance = await appState.communicator!
+            .getMf1NTDistance(validKeyBlock, 0x60 + validKeyType, validKey);
+      } catch (_) {}
+    }
+
     for (var sector = 0;
         prng != NTLevel.backdoor &&
             sector <
@@ -772,12 +784,15 @@ class MifareClassicRecovery {
           state = localizations.collecting_nonces(attackType);
           setCheckingSector(sector, keyType);
 
-          NTDistance? distance;
+          NTDistance? distance = cardDistance;
           NestedNonces? nonces;
 
-          if (prng != NTLevel.backdoor) {
+          // Reuse the once-measured distance; only re-measure if we don't have
+          // one (first measure failed, or a prior sector reset it for drift).
+          if (prng != NTLevel.backdoor && distance == null) {
             distance = await appState.communicator!
                 .getMf1NTDistance(validKeyBlock, 0x60 + validKeyType, validKey);
+            cardDistance = distance;
           }
 
           bool found = false;
@@ -928,6 +943,11 @@ class MifareClassicRecovery {
             } else {
               appState.log!.e("Can't find keys, retrying...");
             }
+          }
+          // Nested failed for this sector: refresh the distance for the next one
+          // in case the card's PRNG timing drifted.
+          if (!found && prng == NTLevel.weak) {
+            cardDistance = null;
           }
         }
       }
