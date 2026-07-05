@@ -30,7 +30,10 @@ class BleAuditPageState extends State<BleAuditPage>
   // --- passive scan state ---
   final _scanDuration = TextEditingController(text: '5');
   bool _scanning = false;
+  bool _activeScan = false;
   List<BleScanResult> _scanResults = [];
+  final _nameFilter = TextEditingController();
+  final _minRssi = TextEditingController();
 
   // --- directed fuzz state ---
   final _addr = TextEditingController();
@@ -64,6 +67,8 @@ class BleAuditPageState extends State<BleAuditPage>
     _notifying = false;
     _tab.dispose();
     _scanDuration.dispose();
+    _nameFilter.dispose();
+    _minRssi.dispose();
     _addr.dispose();
     _handle.dispose();
     _count.dispose();
@@ -181,7 +186,10 @@ class BleAuditPageState extends State<BleAuditPage>
       } else if (type == 0x0A && value.isNotEmpty) {
         fields.add('tx_power: ${value[0] > 127 ? value[0] - 256 : value[0]} dBm');
       } else if (type == 0x19 && value.length >= 2) {
-        fields.add('appearance: 0x${(value[0] | (value[1] << 8)).toRadixString(16).padLeft(4, '0')}');
+        final appv = value[0] | (value[1] << 8);
+        final appn = _appearanceName(appv);
+        fields.add('appearance: 0x${appv.toRadixString(16).padLeft(4, '0')}'
+            '${appn.isNotEmpty ? ' ($appn)' : ''}');
       } else if (type == 0xFF && value.length >= 2) {
         final c = value[0] | (value[1] << 8);
         final cn = _companyIds[c] ?? '0x${c.toRadixString(16).padLeft(4, '0')}';
@@ -226,6 +234,23 @@ class BleAuditPageState extends State<BleAuditPage>
 
   static String _uuidName(int uuid) => _uuidNames[uuid] ?? '';
 
+  // BLE appearance categories (top 10 bits) + a few specific subtypes.
+  static const Map<int, String> _appearanceCat = {
+    0x0040: 'Phone', 0x0080: 'Computer', 0x00C0: 'Watch', 0x0100: 'Clock',
+    0x0140: 'Display', 0x0180: 'Remote Control', 0x01C0: 'Eye-glasses',
+    0x0200: 'Tag', 0x0240: 'Keyring', 0x0280: 'Media Player',
+    0x02C0: 'Barcode Scanner', 0x0300: 'Thermometer', 0x0340: 'Heart Rate Sensor',
+    0x0380: 'Blood Pressure', 0x03C0: 'HID', 0x0400: 'Glucose Meter',
+    0x0440: 'Running/Walking Sensor', 0x0480: 'Cycling',
+  };
+  static const Map<int, String> _appearanceSpecific = {
+    0x03C1: 'Keyboard', 0x03C2: 'Mouse', 0x03C3: 'Joystick', 0x03C4: 'Gamepad',
+    0x0341: 'Heart Rate Belt',
+  };
+
+  static String _appearanceName(int v) =>
+      _appearanceSpecific[v] ?? _appearanceCat[v & 0xFFC0] ?? '';
+
   bool _isWritable(int p) => (p & 0x0C) != 0; // write or write-without-response
 
   // ---- passive scan -----------------------------------------------------
@@ -237,7 +262,7 @@ class BleAuditPageState extends State<BleAuditPage>
     });
     try {
       final secs = double.tryParse(_scanDuration.text.trim()) ?? 5.0;
-      await _app.communicator!.blePassiveScanStart();
+      await _app.communicator!.blePassiveScanStart(active: _activeScan);
       await Future.delayed(
           Duration(milliseconds: (secs.clamp(1, 60) * 1000).round()));
       await _app.communicator!.blePassiveScanStop();
@@ -251,10 +276,25 @@ class BleAuditPageState extends State<BleAuditPage>
     }
   }
 
+  List<BleScanResult> _visibleResults() {
+    final name = _nameFilter.text.trim().toLowerCase();
+    final minRssi = int.tryParse(_minRssi.text.trim());
+    return _scanResults.where((r) {
+      if (minRssi != null && r.rssi < minRssi) return false;
+      if (name.isNotEmpty && !(_advName(r.adv)?.toLowerCase() ?? '').contains(name)) {
+        return false;
+      }
+      return true;
+    }).toList();
+  }
+
   void _useAsTarget(BleScanResult r) {
     setState(() {
       _addr.text = _leToMac(r.addr);
-      _addrType = r.addrType;
+      // The scanner can report addr types 0-3 (and rarely 0x7F anonymous);
+      // clamp to a value the dropdown actually has an item for, else the
+      // DropdownButton throws on the next build.
+      _addrType = (r.addrType >= 0 && r.addrType <= 3) ? r.addrType : 1;
     });
     _tab.animateTo(1);
   }
@@ -332,11 +372,13 @@ class BleAuditPageState extends State<BleAuditPage>
     });
 
     try {
-      final status = await _app.communicator!.bleLinkProbe(globalMode: true);
+      // Single-target liveness ping of the one connected target — never the
+      // batch/global mode.
+      final status = await _app.communicator!.bleLinkProbe(globalMode: false);
       if (!mounted) return;
       if (status != _statusSuccess) {
         setState(() {
-          _error = 'Global probe rejected by device (0x${status.toRadixString(16)})';
+          _error = 'Ping rejected (0x${status.toRadixString(16)}) — connect to a target first';
         });
         return;
       }
@@ -347,18 +389,20 @@ class BleAuditPageState extends State<BleAuditPage>
         if (!mounted) return;
         setState(() => _state = st);
         if (st.probeState == 2) {
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+              content: Text('Target responded to the link probe')));
           return;
         }
         if (st.probeState == 3) {
           setState(() {
-            _error = 'Global probe failed (0x${st.probeResult.toRadixString(16)})';
+            _error = 'Ping failed (0x${st.probeResult.toRadixString(16)})';
           });
           return;
         }
       }
 
       if (mounted) {
-        setState(() => _error = 'Global probe timed out');
+        setState(() => _error = 'Ping timed out');
       }
     } catch (e) {
       if (mounted) setState(() => _error = e.toString());
@@ -455,7 +499,8 @@ class BleAuditPageState extends State<BleAuditPage>
       if (mounted) setState(() => _notifCccd = null);
       return;
     }
-    final cccd = c.handle + 1;
+    final cccd = await _app.communicator!.bleFindCccd(c.handle);
+    if (!mounted) return;
     final mode = (c.props & 0x10 != 0) ? 1 : 2; // notify else indicate
     final status = await _app.communicator!.bleSubscribe(cccd, mode);
     if (!mounted) return;
@@ -527,7 +572,16 @@ class BleAuditPageState extends State<BleAuditPage>
       final log = await _app.communicator!.bleFuzzLog();
       if (mounted) setState(() => _log = log);
     } catch (_) {}
-    if (mounted) setState(() => _fuzzing = false);
+    // Batch finished (or cancelled): release the target so it can reconnect to
+    // its normal source.
+    await _app.communicator!.bleDisconnect();
+    await _refreshState();
+    if (mounted) {
+      setState(() {
+        _fuzzing = false;
+        _chars = [];
+      });
+    }
   }
 
   Future<void> _stopFuzz() async {
@@ -608,7 +662,43 @@ class BleAuditPageState extends State<BleAuditPage>
               label: Text(_scanning ? 'Scanning...' : 'Scan'),
             ),
           ]),
-          const SizedBox(height: 16),
+          Row(children: [
+            Checkbox(
+              value: _activeScan,
+              onChanged: _scanning
+                  ? null
+                  : (v) => setState(() => _activeScan = v ?? false),
+            ),
+            const Flexible(
+              child: Text('Active scan (sends scan requests to get full names)'),
+            ),
+          ]),
+          const SizedBox(height: 8),
+          if (_scanResults.isNotEmpty)
+            Row(children: [
+              Expanded(
+                child: TextField(
+                  controller: _nameFilter,
+                  onChanged: (_) => setState(() {}),
+                  decoration: const InputDecoration(
+                      labelText: 'Filter by name', isDense: true,
+                      border: OutlineInputBorder()),
+                ),
+              ),
+              const SizedBox(width: 8),
+              SizedBox(
+                width: 110,
+                child: TextField(
+                  controller: _minRssi,
+                  keyboardType: TextInputType.number,
+                  onChanged: (_) => setState(() {}),
+                  decoration: const InputDecoration(
+                      labelText: 'Min RSSI', isDense: true,
+                      border: OutlineInputBorder()),
+                ),
+              ),
+            ]),
+          const SizedBox(height: 8),
           if (_error != null && _tab.index == 0)
             Text(_error!,
                 style: TextStyle(color: Theme.of(context).colorScheme.error)),
@@ -617,14 +707,14 @@ class BleAuditPageState extends State<BleAuditPage>
               padding: EdgeInsets.only(top: 24),
               child: Text('No devices yet — run a scan.'),
             ),
-          for (final r in _scanResults)
+          for (final r in _visibleResults())
             Card(
               child: ListTile(
                 onTap: () => _showDeviceDetails(r),
-                title: Text(_leToMac(r.addr),
+                title: Text(_advName(r.adv) ?? _leToMac(r.addr),
                     style: const TextStyle(fontFamily: 'RobotoMono')),
                 subtitle: Text([
-                  if (_advName(r.adv) != null) _advName(r.adv)!,
+                  if (_advName(r.adv) != null) _leToMac(r.addr),
                   'type ${r.addrType}',
                   'RSSI ${r.rssi} dBm',
                   if (_advSummary(r.adv).isNotEmpty) _advSummary(r.adv),
@@ -665,10 +755,15 @@ class BleAuditPageState extends State<BleAuditPage>
             ),
             const SizedBox(width: 12),
             DropdownButton<int>(
-              value: _addrType,
+              // Defensive: the value passed to the dropdown is always clamped to
+              // a range that has a matching item, so no stale/unexpected
+              // _addrType can ever trip the "exactly one item" assertion.
+              value: (_addrType >= 0 && _addrType <= 3) ? _addrType : 0,
               items: const [
                 DropdownMenuItem(value: 0, child: Text('public')),
                 DropdownMenuItem(value: 1, child: Text('random')),
+                DropdownMenuItem(value: 2, child: Text('random-RPA')),
+                DropdownMenuItem(value: 3, child: Text('random-NRPA')),
               ],
               onChanged: (v) => setState(() => _addrType = v ?? 0),
             ),
@@ -680,10 +775,10 @@ class BleAuditPageState extends State<BleAuditPage>
               icon: const Icon(Icons.link),
               label: const Text('Connect'),
             ),
-            ElevatedButton.icon(
-              onPressed: (_busy || !_connected) ? null : _probeLink,
+            OutlinedButton.icon(
+              onPressed: (_busy || !connected) ? null : _probeLink,
               icon: const Icon(Icons.wifi_tethering),
-              label: const Text('Probe all'),
+              label: const Text('Ping'),
             ),
             OutlinedButton.icon(
               onPressed: (_busy || !connected) ? null : _discover,
@@ -705,8 +800,27 @@ class BleAuditPageState extends State<BleAuditPage>
           ],
           if (_chars.isNotEmpty) ...[
             const SizedBox(height: 16),
-            const Text('Characteristics',
-                style: TextStyle(fontWeight: FontWeight.bold)),
+            Row(children: [
+              const Expanded(
+                child: Text('Characteristics',
+                    style: TextStyle(fontWeight: FontWeight.bold)),
+              ),
+              IconButton(
+                tooltip: 'Copy characteristics',
+                icon: const Icon(Icons.copy, size: 18),
+                onPressed: () {
+                  Clipboard.setData(ClipboardData(
+                      text: _chars.map((c) {
+                    final nm = _uuidName(c.uuid);
+                    return 'handle 0x${c.handle.toRadixString(16).padLeft(4, '0')}\t'
+                        'UUID 0x${c.uuid.toRadixString(16).padLeft(4, '0')}'
+                        '${nm.isNotEmpty ? ' ($nm)' : ''}\t[${_propsStr(c.props)}]';
+                  }).join('\n')));
+                  ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                      content: Text('Copied ${_chars.length} characteristics')));
+                },
+              ),
+            ]),
             for (final c in _chars)
               ListTile(
                 dense: true,
@@ -794,8 +908,26 @@ class BleAuditPageState extends State<BleAuditPage>
             ),
             OutlinedButton.icon(
               onPressed: _fuzzing ? _stopFuzz : null,
-              icon: const Icon(Icons.stop),
-              label: const Text('Stop'),
+              icon: const Icon(Icons.cancel_outlined),
+              label: const Text('Cancel'),
+            ),
+          ]),
+          const SizedBox(height: 6),
+          Row(children: [
+            Icon(Icons.info_outline,
+                size: 14, color: Theme.of(context).colorScheme.outline),
+            const SizedBox(width: 6),
+            Expanded(
+              child: Text(
+                _fuzzing
+                    ? 'The target is connected only during the test. It will reconnect to '
+                        'its normal source when the batch finishes or you press Cancel.'
+                    : 'While testing, the target stays connected to this device only; it '
+                        'reconnects to its normal source once the batch finishes or you cancel.',
+                style: TextStyle(
+                    fontSize: 12,
+                    color: Theme.of(context).colorScheme.outline),
+              ),
             ),
           ]),
           if (_log.isNotEmpty) ...[
@@ -908,8 +1040,9 @@ class BleAuditPageState extends State<BleAuditPage>
           Text('discovery  : ${at(disc, st.discState)} (${st.charCount} chars)'),
           Text('fuzz       : ${at(fuzz, st.fuzzState)} (${st.fuzzSent} writes)'),
           Text('target up  : ${st.targetAlive}'),
-            Text('probe      : ${at(<String>["idle", "probing", "done", "error"], st.probeState)}'
-              ' ${st.probeIndex}/${st.probeTotal} (${st.probeResult})'),
+          Text('link probe : '
+              '${at(<String>["idle", "probing", "done", "error"], st.probeState)}'
+              '${st.probeState == 3 ? " (0x${st.probeResult.toRadixString(16)})" : ""}'),
           if (st.lastReason != 0)
             Text('last disconnect reason : '
                 '0x${st.lastReason.toRadixString(16).padLeft(2, '0')}'),
