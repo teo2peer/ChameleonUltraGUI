@@ -29,13 +29,31 @@ class AutopwnPageState extends State<AutopwnPage> {
   bool running = false;
   String message = '';
 
+  // Saved dictionaries the user can pick from as a starting key set before the
+  // run. Index 0 is always the "empty" entry (default keys only).
+  List<Dictionary> _dictionaries = [];
+  Dictionary? _selectedDictionary;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_dictionaries.isEmpty) {
+      var appState = context.read<ChameleonGUIState>();
+      var localizations = AppLocalizations.of(context)!;
+      _dictionaries = [
+        Dictionary(id: "", name: localizations.empty, keys: []),
+        ...appState.sharedPreferencesProvider.getDictionaries(keyLength: 12),
+      ];
+      _selectedDictionary = _dictionaries.first;
+    }
+  }
+
   void _refresh() {
     if (mounted) setState(() {});
   }
 
   Future<void> _run() async {
     var localizations = AppLocalizations.of(context)!;
-    var appState = context.read<ChameleonGUIState>();
     setState(() {
       running = true;
       message = '';
@@ -53,13 +71,12 @@ class AutopwnPageState extends State<AutopwnPage> {
       }
       setState(() => mfcInfo = mfc);
 
-      // checkKeys() dereferences selectedDictionary; seed it (and the saved
-      // dictionaries) the same way the Read Card screen does.
-      mfc.recovery!.dictionaries =
-          appState.sharedPreferencesProvider.getDictionaries(keyLength: 12);
-      mfc.recovery!.dictionaries
-          .insert(0, Dictionary(id: "", name: localizations.empty, keys: []));
-      mfc.recovery!.selectedDictionary ??= mfc.recovery!.dictionaries[0];
+      // Seed the recovery with the dictionary the user picked before starting.
+      // checkKeys() tests these keys first (default keys are still tried on top,
+      // unless skipDefaultDictionary). Falls back to "empty" (defaults only).
+      mfc.recovery!.dictionaries = List.of(_dictionaries);
+      mfc.recovery!.selectedDictionary =
+          _selectedDictionary ?? _dictionaries.first;
 
       await mfc.recovery!.checkKeys();
       if (!widget.dictionaryOnly && !mfc.recovery!.allKeysExists) {
@@ -93,6 +110,37 @@ class AutopwnPageState extends State<AutopwnPage> {
         padding: const EdgeInsets.all(16.0),
         child: Column(
           children: [
+            // Pick which saved dictionary to seed the run with (default keys are
+            // always tried on top). Only shown when the user has saved some.
+            if (_dictionaries.length > 1) ...[
+              Align(
+                alignment: Alignment.centerLeft,
+                child: Text(localizations.additional_key_dict),
+              ),
+              const SizedBox(height: 4),
+              DropdownButton<String>(
+                value: _selectedDictionary?.id,
+                isExpanded: true,
+                items: _dictionaries
+                    .map<DropdownMenuItem<String>>(
+                        (Dictionary d) => DropdownMenuItem<String>(
+                              value: d.id,
+                              child: Text(
+                                  "${d.name} (${d.keys.length} ${localizations.keys.toLowerCase()})"),
+                            ))
+                    .toList(),
+                onChanged: running
+                    ? null
+                    : (String? newValue) {
+                        setState(() {
+                          _selectedDictionary = _dictionaries.firstWhere(
+                              (d) => d.id == newValue,
+                              orElse: () => _dictionaries.first);
+                        });
+                      },
+              ),
+              const SizedBox(height: 12),
+            ],
             Center(
               child: ElevatedButton.icon(
                 onPressed: running ? null : _run,

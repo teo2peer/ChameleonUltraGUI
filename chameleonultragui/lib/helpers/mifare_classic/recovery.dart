@@ -970,64 +970,84 @@ class MifareClassicRecovery {
     update();
   }
 
+  // Read every block of [sector], preferring a single authenticate-once
+  // MF1_READ_BLOCKS (2018) for the whole sector and falling back to per-block
+  // reads for anything it doesn't return. Returns one Uint8List per block
+  // (empty means unreadable). Never throws.
+  Future<List<Uint8List>> _readSectorBlocks(
+      int sector, int firstBlock, int blocks) async {
+    // Try the batched read with whichever key we have (keyA preferred).
+    final primaryType = getSectorKey(sector, 0).isNotEmpty
+        ? 0
+        : (getSectorKey(sector, 1).isNotEmpty ? 1 : -1);
+    List<Uint8List> batch = const [];
+    if (primaryType != -1) {
+      try {
+        batch = await appState.communicator!.mf1ReadBlocks(
+            firstBlock, blocks, 0x60 + primaryType,
+            getSectorKey(sector, primaryType));
+      } catch (_) {
+        batch = const [];
+      }
+    }
+
+    final out = <Uint8List>[];
+    for (var b = 0; b < blocks; b++) {
+      if (b < batch.length && batch[b].length == 16) {
+        out.add(Uint8List.fromList(batch[b]));
+        continue;
+      }
+      // Per-block fallback (block the batch didn't return): keyA then keyB.
+      Uint8List blockData = Uint8List(0);
+      for (var keyType = 0; keyType < 2; keyType++) {
+        final key = getSectorKey(sector, keyType);
+        if (key.isEmpty) continue;
+        final d = await appState.communicator!
+            .mf1ReadBlock(firstBlock + b, 0x60 + keyType, key);
+        if (d.length == 16) {
+          blockData = d;
+          break;
+        }
+      }
+      out.add(blockData);
+    }
+    return out;
+  }
+
   Future<void> dumpData() async {
     cardData = List.generate(256, (_) => Uint8List(0));
 
-    for (var sector = 0;
-        sector <
-            mfClassicGetSectorCount(mifareClassicType,
-                isEV1: isMifareClassicEV1);
-        sector++) {
-      for (var block = 0;
-          block < mfClassicGetBlockCountBySector(sector);
-          block++) {
-        for (var keyType = 0; keyType < 2; keyType++) {
-          appState.log!
-              .d("Dumping sector $sector, block $block with key $keyType");
+    final sectorCount =
+        mfClassicGetSectorCount(mifareClassicType, isEV1: isMifareClassicEV1);
+    final totalBlocks =
+        mfClassicGetBlockCount(mifareClassicType, isEV1: isMifareClassicEV1);
 
-          if (getSectorKey(sector, keyType).isEmpty) {
-            appState.log!.w("Skipping missing key");
-            cardData[block + mfClassicGetFirstBlockCountBySector(sector)] =
-                Uint8List(16);
-            continue;
+    for (var sector = 0; sector < sectorCount; sector++) {
+      final firstBlock = mfClassicGetFirstBlockCountBySector(sector);
+      final blocks = mfClassicGetBlockCountBySector(sector);
+      final trailer = mfClassicGetSectorTrailerBlockBySector(sector);
+
+      final sectorBlocks = await _readSectorBlocks(sector, firstBlock, blocks);
+
+      for (var b = 0; b < blocks; b++) {
+        final absBlock = firstBlock + b;
+        // Empty means unreadable -> store zeros (matches the old behaviour).
+        Uint8List blockData =
+            sectorBlocks[b].length == 16 ? sectorBlocks[b] : Uint8List(16);
+
+        if (absBlock == trailer) {
+          // Fill in the known keys (they read back as zeros from the card).
+          if (getSectorKey(sector, 0).isNotEmpty) {
+            blockData.setRange(0, 6, getSectorKey(sector, 0));
           }
-
-          var blockData = await appState.communicator!.mf1ReadBlock(
-              block + mfClassicGetFirstBlockCountBySector(sector),
-              0x60 + keyType,
-              getSectorKey(sector, keyType));
-
-          if (blockData.isEmpty) {
-            if (keyType == 1) {
-              blockData = Uint8List(16);
-            } else {
-              continue;
-            }
+          if (getSectorKey(sector, 1).isNotEmpty) {
+            blockData.setRange(10, 16, getSectorKey(sector, 1));
           }
-
-          if (mfClassicGetSectorTrailerBlockBySector(sector) ==
-              block + mfClassicGetFirstBlockCountBySector(sector)) {
-            // set keys in sector trailer
-            if (getSectorKey(sector, 0).isNotEmpty) {
-              blockData.setRange(0, 6, getSectorKey(sector, 0));
-            }
-
-            if (getSectorKey(sector, 1).isNotEmpty) {
-              blockData.setRange(10, 16, getSectorKey(sector, 1));
-            }
-          }
-
-          cardData[block + mfClassicGetFirstBlockCountBySector(sector)] =
-              blockData;
-
-          dumpProgress = (block + mfClassicGetFirstBlockCountBySector(sector)) /
-              (mfClassicGetBlockCount(mifareClassicType,
-                  isEV1: isMifareClassicEV1));
-
-          update();
-
-          break;
         }
+
+        cardData[absBlock] = blockData;
+        dumpProgress = totalBlocks == 0 ? 1.0 : absBlock / totalBlocks;
+        update();
       }
     }
   }
