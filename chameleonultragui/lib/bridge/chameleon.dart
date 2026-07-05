@@ -1640,6 +1640,64 @@ class ChameleonCommunicator {
     return out;
   }
 
+  // Discover the target's primary services. Each map: uuidType, uuid, start, end.
+  Future<List<Map<String, int>>> bleServices(
+      {Duration timeout = const Duration(seconds: 3)}) async {
+    await sendCmd(ChameleonCommand.bleSvcDiscover);
+    var deadline = DateTime.now().add(timeout);
+    while (DateTime.now().isBefore(deadline)) {
+      await Future.delayed(const Duration(milliseconds: 100));
+      var resp = await sendCmd(ChameleonCommand.bleSvcGet,
+          data: Uint8List.fromList([0]));
+      var d = resp!.data;
+      if (d.isEmpty) continue;
+      if (d[0] == 2 || d[0] == 3) {
+        // done / error
+        List<Map<String, int>> out = [];
+        int o = 1;
+        while (o + 7 <= d.length) {
+          out.add({
+            'uuidType': d[o],
+            'uuid': (d[o + 1] << 8) | d[o + 2],
+            'start': (d[o + 3] << 8) | d[o + 4],
+            'end': (d[o + 5] << 8) | d[o + 6],
+          });
+          o += 7;
+        }
+        return out;
+      }
+    }
+    return [];
+  }
+
+  // Enumerate all descriptors of the connected target. Each map: handle, uuidType, uuid.
+  Future<List<Map<String, int>>> bleDescriptors(
+      {Duration timeout = const Duration(seconds: 5)}) async {
+    await sendCmd(ChameleonCommand.bleDescDiscover);
+    var deadline = DateTime.now().add(timeout);
+    while (DateTime.now().isBefore(deadline)) {
+      await Future.delayed(const Duration(milliseconds: 100));
+      var resp = await sendCmd(ChameleonCommand.bleDescGet,
+          data: Uint8List.fromList([0]));
+      var d = resp!.data;
+      if (d.isEmpty) continue;
+      if (d[0] == 2 || d[0] == 3) {
+        List<Map<String, int>> out = [];
+        int o = 1;
+        while (o + 5 <= d.length) {
+          out.add({
+            'handle': (d[o] << 8) | d[o + 1],
+            'uuidType': d[o + 2],
+            'uuid': (d[o + 3] << 8) | d[o + 4],
+          });
+          o += 5;
+        }
+        return out;
+      }
+    }
+    return [];
+  }
+
   // Start fuzzing value_handle: mutated writes every intervalMs, up to
   // maxIterations (0 = until stopped). Returns the firmware status byte.
   Future<int> bleFuzzStart(int valueHandle,
@@ -1719,6 +1777,38 @@ class ChameleonCommunicator {
       }
     }
     return (-1, Uint8List(0)); // timed out
+  }
+
+  // Write a value to a characteristic on the connected target (write-with-
+  // response). Returns the target's ATT status: 0 = success, >0 = ATT error,
+  // -1 = timeout / rejected.
+  Future<int> bleGattWrite(int valueHandle, Uint8List data,
+      {Duration timeout = const Duration(seconds: 2)}) async {
+    var payload = Uint8List.fromList(
+        [(valueHandle >> 8) & 0xFF, valueHandle & 0xFF, ...data]);
+    var start = await sendCmd(ChameleonCommand.bleGattWrite, data: payload);
+    if (start!.status != 0x68) {
+      return -1; // not connected / rejected
+    }
+    var deadline = DateTime.now().add(timeout);
+    while (DateTime.now().isBefore(deadline)) {
+      await Future.delayed(const Duration(milliseconds: 50));
+      var resp = await sendCmd(ChameleonCommand.bleGetWrite);
+      var d = resp!.data;
+      if (d.length >= 2 && d[0] == 2) {
+        return d[1]; // done: gatt_status
+      }
+    }
+    return -1; // timed out
+  }
+
+  // Effective ATT MTU of the connected target link (23 until negotiated).
+  Future<int> bleGetMtu() async {
+    var resp = await sendCmd(ChameleonCommand.bleGetMtu);
+    if (resp!.data.length >= 2) {
+      return (resp.data[0] << 8) | resp.data[1];
+    }
+    return 23;
   }
 
   // Subscribe to notifications/indications on the connected target by writing its

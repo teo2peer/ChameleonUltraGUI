@@ -193,7 +193,14 @@ enum ChameleonCommand {
   bleSubscribe(7020),
   bleGetNotifications(7021),
   bleFindCccd(7022),
-  bleGetCccd(7023);
+  bleGetCccd(7023),
+  bleGattWrite(7024),
+  bleGetWrite(7025),
+  bleGetMtu(7026),
+  bleDescDiscover(7027),
+  bleDescGet(7028),
+  bleSvcDiscover(7029),
+  bleSvcGet(7030);
 
   const ChameleonCommand(this.value);
   final int value;

@@ -42,7 +42,9 @@ class BleAuditPageState extends State<BleAuditPage>
   final _count = TextEditingController(text: '200');
   final _interval = TextEditingController(text: '50');
   BleCentralState? _state;
+  int _mtu = 23;
   List<BleCharacteristic> _chars = [];
+  List<Map<String, int>> _services = [];
   final Map<int, String> _readValues = {}; // value handle -> last read result
   List<BleFuzzLogEntry> _log = [];
   bool _notifying = false;
@@ -230,6 +232,10 @@ class BleAuditPageState extends State<BleAuditPage>
     0x2A29: 'Manufacturer', 0x2A2B: 'Current Time', 0x2A37: 'Heart Rate Meas',
     0x2A38: 'Body Sensor Loc', 0x2A50: 'PnP ID', 0x2A6E: 'Temperature',
     0x2A6F: 'Humidity',
+    // descriptors
+    0x2900: 'Char Ext Props', 0x2901: 'Char User Desc', 0x2902: 'CCCD',
+    0x2903: 'Server Char Config', 0x2904: 'Char Presentation Fmt',
+    0x2905: 'Char Aggregate Fmt', 0x2908: 'Report Reference',
   };
 
   static String _uuidName(int uuid) => _uuidNames[uuid] ?? '';
@@ -346,7 +352,18 @@ class BleAuditPageState extends State<BleAuditPage>
   // ---- directed fuzz ----------------------------------------------------
   Future<void> _refreshState() async {
     final st = await _app.communicator!.bleCentralState();
-    if (mounted) setState(() => _state = st);
+    int mtu = _mtu;
+    if (st.connState == 2) {
+      try {
+        mtu = await _app.communicator!.bleGetMtu();
+      } catch (_) {}
+    }
+    if (mounted) {
+      setState(() {
+        _state = st;
+        _mtu = mtu;
+      });
+    }
   }
 
   // Toggle the device's OWN advertising (discoverable) — controls only this
@@ -430,7 +447,10 @@ class BleAuditPageState extends State<BleAuditPage>
         final st = await _app.communicator!.bleCentralState();
         if (!mounted) return;
         setState(() => _state = st);
-        if (st.connState == 2) break; // connected
+        if (st.connState == 2) {
+          await _refreshState(); // pick up the negotiated MTU
+          break;
+        }
         if (st.connState == 0 || st.connState == 3) {
           setState(() => _error = 'Connection failed / timed out');
           break;
@@ -450,6 +470,7 @@ class BleAuditPageState extends State<BleAuditPage>
       _busy = true;
       _error = null;
       _chars = [];
+      _services = [];
     });
     try {
       final status = await _app.communicator!.bleGattDiscover();
@@ -465,7 +486,14 @@ class BleAuditPageState extends State<BleAuditPage>
         if (st.discState == 2 || st.discState == 3) break;
       }
       final chars = await _app.communicator!.bleGattChars();
-      if (mounted) setState(() => _chars = chars);
+      // Also discover primary services so characteristics can be grouped.
+      final services = await _app.communicator!.bleServices();
+      if (mounted) {
+        setState(() {
+          _chars = chars;
+          _services = services;
+        });
+      }
     } catch (e) {
       if (mounted) setState(() => _error = e.toString());
     } finally {
@@ -485,6 +513,131 @@ class BleAuditPageState extends State<BleAuditPage>
       text = 'ATT err 0x${status.toRadixString(16)}';
     }
     setState(() => _readValues[handle] = text);
+  }
+
+  static Uint8List _hexToBytes(String s) {
+    if (s.isEmpty || s.length % 2 != 0) {
+      throw const FormatException('need an even number of hex digits');
+    }
+    return Uint8List.fromList([
+      for (int i = 0; i < s.length; i += 2)
+        int.parse(s.substring(i, i + 2), radix: 16)
+    ]);
+  }
+
+  // Prompt for a hex value and write it to a characteristic (point-to-point).
+  Future<void> _writeChar(BleCharacteristic c) async {
+    final controller = TextEditingController();
+    final input = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('Write 0x${c.handle.toRadixString(16).padLeft(4, '0')}'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          decoration: const InputDecoration(
+              labelText: 'Value (hex)', hintText: '0100'),
+          style: const TextStyle(fontFamily: 'RobotoMono'),
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, controller.text),
+              child: const Text('Write')),
+        ],
+      ),
+    );
+    if (input == null || input.trim().isEmpty) return;
+    Uint8List data;
+    try {
+      data = _hexToBytes(input.replaceAll(' ', ''));
+    } catch (_) {
+      if (mounted) setState(() => _error = 'Invalid hex value');
+      return;
+    }
+    final status = await _app.communicator!.bleGattWrite(c.handle, data);
+    if (!mounted) return;
+    final String msg = status == 0
+        ? 'Write to 0x${c.handle.toRadixString(16).padLeft(4, '0')} OK'
+        : status < 0
+            ? 'Write timed out'
+            : 'Write rejected (ATT 0x${status.toRadixString(16)})';
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+  }
+
+  // List all GATT descriptors of the connected target in a dialog.
+  Future<void> _showDescriptors() async {
+    final descs = await _app.communicator!.bleDescriptors();
+    if (!mounted) return;
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Descriptors'),
+        content: SingleChildScrollView(
+          child: descs.isEmpty
+              ? const Text('No descriptors found.')
+              : Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    for (final d in descs)
+                      Text(
+                          'handle 0x${(d['handle'] ?? 0).toRadixString(16).padLeft(4, '0')}  '
+                          'UUID 0x${(d['uuid'] ?? 0).toRadixString(16).padLeft(4, '0')}'
+                          '${_uuidName(d['uuid'] ?? 0).isNotEmpty ? " (${_uuidName(d['uuid'] ?? 0)})" : ""}',
+                          style: const TextStyle(
+                              fontFamily: 'RobotoMono', fontSize: 12)),
+                  ],
+                ),
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx), child: const Text('Close')),
+        ],
+      ),
+    );
+  }
+
+  // One characteristic row (Read / Write / Select / Notify actions).
+  Widget _charTile(BleCharacteristic c) {
+    return ListTile(
+      dense: true,
+      isThreeLine: _readValues.containsKey(c.handle),
+      title: Text(
+          'handle 0x${c.handle.toRadixString(16).padLeft(4, '0')}  '
+          'UUID 0x${c.uuid.toRadixString(16).padLeft(4, '0')}'
+          '${_uuidName(c.uuid).isNotEmpty ? ' (${_uuidName(c.uuid)})' : ''}',
+          style: const TextStyle(fontFamily: 'RobotoMono')),
+      subtitle: Text(
+          _propsStr(c.props) +
+              (_readValues.containsKey(c.handle)
+                  ? '\n= ${_readValues[c.handle]}'
+                  : ''),
+          style: const TextStyle(fontFamily: 'RobotoMono')),
+      trailing: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (c.props & 0x02 != 0)
+            TextButton(
+                onPressed: () => _readChar(c.handle), child: const Text('Read')),
+          if (_isWritable(c.props))
+            TextButton(
+                onPressed: () => _writeChar(c), child: const Text('Write')),
+          if (_isWritable(c.props))
+            TextButton(
+                onPressed: () => setState(() => _handle.text =
+                    '0x${c.handle.toRadixString(16).padLeft(4, '0')}'),
+                child: const Text('Select')),
+          if (c.props & 0x30 != 0)
+            TextButton(
+                onPressed: () => _toggleNotify(c),
+                child: Text(_notifying && _notifCccd == c.handle + 1
+                    ? 'Stop'
+                    : 'Notify')),
+        ],
+      ),
+    );
   }
 
   // Subscribe/unsubscribe to notifications on a characteristic. Uses the common
@@ -806,6 +959,11 @@ class BleAuditPageState extends State<BleAuditPage>
                     style: TextStyle(fontWeight: FontWeight.bold)),
               ),
               IconButton(
+                tooltip: 'List all descriptors',
+                icon: const Icon(Icons.list_alt, size: 18),
+                onPressed: _showDescriptors,
+              ),
+              IconButton(
                 tooltip: 'Copy characteristics',
                 icon: const Icon(Icons.copy, size: 18),
                 onPressed: () {
@@ -821,45 +979,33 @@ class BleAuditPageState extends State<BleAuditPage>
                 },
               ),
             ]),
-            for (final c in _chars)
-              ListTile(
-                dense: true,
-                isThreeLine: _readValues.containsKey(c.handle),
-                title: Text(
-                    'handle 0x${c.handle.toRadixString(16).padLeft(4, '0')}  '
-                    'UUID 0x${c.uuid.toRadixString(16).padLeft(4, '0')}'
-                    '${_uuidName(c.uuid).isNotEmpty ? ' (${_uuidName(c.uuid)})' : ''}',
-                    style: const TextStyle(fontFamily: 'RobotoMono')),
-                subtitle: Text(
-                    _propsStr(c.props) +
-                        (_readValues.containsKey(c.handle)
-                            ? '\n= ${_readValues[c.handle]}'
-                            : ''),
-                    style: const TextStyle(fontFamily: 'RobotoMono')),
-                trailing: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    if (c.props & 0x02 != 0)
-                      TextButton(
-                        onPressed: () => _readChar(c.handle),
-                        child: const Text('Read'),
-                      ),
-                    if (_isWritable(c.props))
-                      TextButton(
-                        onPressed: () => setState(() => _handle.text =
-                            '0x${c.handle.toRadixString(16).padLeft(4, '0')}'),
-                        child: const Text('Select'),
-                      ),
-                    if (c.props & 0x30 != 0)
-                      TextButton(
-                        onPressed: () => _toggleNotify(c),
-                        child: Text(_notifying && _notifCccd == c.handle + 1
-                            ? 'Stop'
-                            : 'Notify'),
-                      ),
-                  ],
+            // Grouped under primary services when known, else a flat list.
+            if (_services.isNotEmpty) ...[
+              for (final s in _services) ...[
+                Padding(
+                  padding: const EdgeInsets.only(top: 8, bottom: 2),
+                  child: Text(
+                      'Service 0x${(s['uuid'] ?? 0).toRadixString(16).padLeft(4, '0')}'
+                      '${_uuidName(s['uuid'] ?? 0).isNotEmpty ? " (${_uuidName(s['uuid'] ?? 0)})" : ""}'
+                      '  [0x${(s['start'] ?? 0).toRadixString(16).padLeft(4, '0')}-'
+                      '0x${(s['end'] ?? 0).toRadixString(16).padLeft(4, '0')}]',
+                      style: TextStyle(
+                          fontFamily: 'RobotoMono',
+                          fontWeight: FontWeight.w600,
+                          color: Theme.of(context).colorScheme.primary)),
                 ),
-              ),
+                for (final c in _chars)
+                  if (c.handle >= (s['start'] ?? 0) &&
+                      c.handle <= (s['end'] ?? 0))
+                    _charTile(c),
+              ],
+              // Characteristics that fell outside any discovered service.
+              for (final c in _chars)
+                if (!_services.any((s) =>
+                    c.handle >= (s['start'] ?? 0) && c.handle <= (s['end'] ?? 0)))
+                  _charTile(c),
+            ] else
+              for (final c in _chars) _charTile(c),
           ],
           const SizedBox(height: 16),
           const Text('Fuzz', style: TextStyle(fontWeight: FontWeight.bold)),
@@ -1040,6 +1186,7 @@ class BleAuditPageState extends State<BleAuditPage>
           Text('discovery  : ${at(disc, st.discState)} (${st.charCount} chars)'),
           Text('fuzz       : ${at(fuzz, st.fuzzState)} (${st.fuzzSent} writes)'),
           Text('target up  : ${st.targetAlive}'),
+          if (st.connState == 2) Text('ATT MTU    : $_mtu'),
           Text('link probe : '
               '${at(<String>["idle", "probing", "done", "error"], st.probeState)}'
               '${st.probeState == 3 ? " (0x${st.probeResult.toRadixString(16)})" : ""}'),
