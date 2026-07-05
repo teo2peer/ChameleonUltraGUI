@@ -4,6 +4,7 @@ import 'package:chameleonultragui/connector/serial_abstract.dart';
 import 'package:chameleonultragui/generated/i18n/app_localizations.dart';
 import 'package:chameleonultragui/helpers/definitions.dart';
 import 'package:chameleonultragui/helpers/general.dart';
+import 'package:chameleonultragui/helpers/mifare_classic/candidate_priority.dart';
 import 'package:chameleonultragui/helpers/mifare_classic/general.dart';
 import 'package:chameleonultragui/main.dart';
 import 'package:chameleonultragui/recovery/recovery.dart';
@@ -71,17 +72,12 @@ class MifareClassicRecovery {
   // half-list scan into an early hit on the common cases (default keys, and
   // keys already recovered on other sectors = key reuse). Order-only.
   List<Uint8List> _prioritiseCandidates(List<Uint8List> keys) {
-    if (keys.length < 64) return keys; // not worth it for short lists
+    if (keys.length < 64) return keys; // not worth building the set for short lists
     final likely = <String>{...gMifareClassicKeys.map(bytesToHex)};
     for (final k in validKeys) {
       if (k.isNotEmpty) likely.add(bytesToHex(k));
     }
-    final pri = <Uint8List>[];
-    final rest = <Uint8List>[];
-    for (final k in keys) {
-      (likely.contains(bytesToHex(k)) ? pri : rest).add(k);
-    }
-    return pri.isEmpty ? keys : [...pri, ...rest];
+    return prioritiseCandidates(keys, likely, minLength: 0);
   }
 
   Future<bool> checkKeysOnSector(
@@ -525,23 +521,8 @@ class MifareClassicRecovery {
       tally(candB[s]!);
     }
     final defaultSet = gMifareClassicKeys.map(bytesToHex).toSet();
-    List<Uint8List> prioritise(List<Uint8List> list) {
-      final pri = <Uint8List>[];
-      final rest = <Uint8List>[];
-      for (final k in list) {
-        final h = bytesToHex(k);
-        if ((counts[h] ?? 0) >= 2 || defaultSet.contains(h)) {
-          pri.add(k);
-        } else {
-          rest.add(k);
-        }
-      }
-      // Most-reused candidates first (the more sectors a key appears in, the
-      // likelier it is the real reused key) so the on-card hit comes sooner.
-      pri.sort((a, b) =>
-          (counts[bytesToHex(b)] ?? 0).compareTo(counts[bytesToHex(a)] ?? 0));
-      return [...pri, ...rest];
-    }
+    List<Uint8List> prioritise(List<Uint8List> list) =>
+        prioritiseByFrequency(list, counts, defaultSet);
 
     // ---- Phase 3: confirm keys on card, priority candidates first ----------
     for (var sector = 0; sector < sectors; sector++) {
@@ -853,12 +834,7 @@ class MifareClassicRecovery {
               // — avoiding thousands of on-card auths. Never empty the set (keep
               // the latest), so the worst case is the old single-pass behaviour.
               final set = (await recovery.nested(nested)).toSet();
-              if (weakCandidates == null) {
-                weakCandidates = set;
-              } else {
-                final inter = weakCandidates.intersection(set);
-                weakCandidates = inter.isEmpty ? set : inter;
-              }
+              weakCandidates = narrowCandidates(weakCandidates, set);
               // Still large and tries remain -> collect another pair to narrow
               // further before spending time testing on-card.
               if (weakCandidates.length > 20 && i < tries - 1) {
