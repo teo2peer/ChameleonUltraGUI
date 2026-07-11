@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:typed_data';
 import 'dart:async';
 import 'package:chameleonultragui/helpers/definitions.dart';
+import 'package:chameleonultragui/helpers/emv_trace.dart';
 import 'package:chameleonultragui/helpers/general.dart';
 import 'package:chameleonultragui/connector/serial_abstract.dart';
 import 'package:chameleonultragui/helpers/mifare_classic/general.dart';
@@ -1059,6 +1060,90 @@ class ChameleonCommunicator {
       throw ('No response from DESFire scan command');
     }
     return resp.data;
+  }
+
+  Future<EmvTraceStartResponse> hf14a4EmvTraceStart(
+      EmvTraceRequest request) async {
+    final resp = await sendCmd(
+      ChameleonCommand.hf14a4EmvTraceStart,
+      data: request.encode(),
+      timeout: Duration(
+          milliseconds:
+              (request.budgetMs == 0 ? 12000 : request.budgetMs) + 5000),
+    );
+    if (resp == null) {
+      throw ('No response from EMV trace START command');
+    }
+    // START returns the HF result directly (0 = card, 1 = no card).
+    if (resp.status != 0x00 && resp.status != 0x01) {
+      throw ChameleonCommandException(
+          ChameleonCommand.hf14a4EmvTraceStart, resp.status);
+    }
+    return EmvTraceStartResponse.parse(resp.data);
+  }
+
+  Future<EmvTraceMeta> hf14a4EmvTraceMeta(int scanId) async {
+    final resp = await sendCmd(
+      ChameleonCommand.hf14a4EmvTraceMeta,
+      data: encodeEmvTraceSessionRequest(scanId),
+    );
+    if (resp == null) {
+      throw ('No response from EMV trace META command');
+    }
+    if (resp.status != chameleonStatusSuccess) {
+      throw ChameleonCommandException(
+          ChameleonCommand.hf14a4EmvTraceMeta, resp.status);
+    }
+    final meta = EmvTraceMeta.parse(resp.data);
+    if (meta.scanId != scanId) {
+      throw const FormatException('EMV trace META session mismatch');
+    }
+    return meta;
+  }
+
+  Future<EmvTracePage> hf14a4EmvTraceGet(int scanId, int startRecord,
+      {int maxPayload = 4096}) async {
+    final resp = await sendCmd(
+      ChameleonCommand.hf14a4EmvTraceGet,
+      data: encodeEmvTraceGetRequest(scanId, startRecord, maxPayload),
+    );
+    if (resp == null) {
+      throw ('No response from EMV trace GET command');
+    }
+    if (resp.status != chameleonStatusSuccess) {
+      throw ChameleonCommandException(
+          ChameleonCommand.hf14a4EmvTraceGet, resp.status);
+    }
+    final page = EmvTracePage.parse(resp.data);
+    if (page.scanId != scanId || page.startRecord != startRecord) {
+      throw const FormatException('EMV trace GET session/cursor mismatch');
+    }
+    return page;
+  }
+
+  Future<EmvTraceCapture> hf14a4EmvTrace(EmvTraceRequest request,
+      {int maxPayload = 4096}) async {
+    final start = await hf14a4EmvTraceStart(request);
+    final meta = await hf14a4EmvTraceMeta(start.scanId);
+    if (start.state != meta.state || start.flags != meta.flags) {
+      throw const FormatException('EMV trace START/META mismatch');
+    }
+
+    final pages = <EmvTracePage>[];
+    var cursor = 0;
+    while (cursor < meta.storedRecords) {
+      final page = await hf14a4EmvTraceGet(
+        meta.scanId,
+        cursor,
+        maxPayload: maxPayload,
+      );
+      if (page.nextRecord <= cursor) {
+        throw const FormatException('EMV trace GET made no cursor progress');
+      }
+      pages.add(page);
+      cursor = page.nextRecord;
+    }
+    return EmvTraceCapture.assemble(meta, pages);
   }
 
   // ---- ISO14443-4 card emulation (terminal robustness testing in a lab) ----

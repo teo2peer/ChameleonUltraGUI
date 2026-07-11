@@ -86,6 +86,9 @@ enum ChameleonCommand {
   hf14a4ReaderApdu(6004),
   hf14a4EmvScan(6005),
   hf14a4DesfireScan(6006),
+  hf14a4EmvTraceStart(6007),
+  hf14a4EmvTraceMeta(6008),
+  hf14a4EmvTraceGet(6009),
 
   // lf commands
   scanEM410Xtag(3000),
