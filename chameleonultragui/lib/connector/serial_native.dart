@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:chameleonultragui/helpers/general.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_libserialport/flutter_libserialport.dart';
@@ -158,8 +160,19 @@ class NativeSerial extends AbstractSerial {
 
   @override
   Future<bool> write(Uint8List command, {bool firmware = false}) async {
-    port!.write(command);
-    port!.drain();
+    return writeWithTimeout(command, firmware: firmware);
+  }
+
+  @override
+  Future<bool> writeWithTimeout(Uint8List command,
+      {bool firmware = false,
+      Duration timeout = const Duration(seconds: 5)}) async {
+    final written = port!.write(command, timeout: timeout.inMilliseconds);
+    if (written != command.length) {
+      throw TimeoutException(
+          'Serial write timed out after $written of ${command.length} bytes',
+          timeout);
+    }
     return true;
   }
 }

@@ -134,10 +134,17 @@ class DFUCommunicator {
   bool isBLE = false;
   AbstractSerial? _serialInstance;
   Completer<List<int>>? responseCompleter;
+  bool _invalidated = false;
 
   final Logger log;
+  final Duration writeTimeout;
+  final Duration responseTimeout;
 
-  DFUCommunicator(this.log, {AbstractSerial? port, bool viaBLE = false}) {
+  DFUCommunicator(this.log,
+      {AbstractSerial? port,
+      bool viaBLE = false,
+      this.writeTimeout = const Duration(seconds: 5),
+      this.responseTimeout = const Duration(seconds: 10)}) {
     isBLE = viaBLE;
     if (port != null) {
       open(port);
@@ -149,6 +156,21 @@ class DFUCommunicator {
   }
 
   Future<Uint8List?> sendCmd(DFUCommand cmd, Uint8List data) async {
+    if (_invalidated) {
+      throw DFUTransferError(
+          'DFU transport is invalid after a timeout; reconnect before retrying');
+    }
+    try {
+      return await _sendCmd(cmd, data);
+    } on TimeoutException {
+      _invalidated = true;
+      responseCompleter = null;
+      await _serialInstance?.performDisconnect();
+      rethrow;
+    }
+  }
+
+  Future<Uint8List?> _sendCmd(DFUCommand cmd, Uint8List data) async {
     var packet = Uint8List.fromList([cmd.value, ...data]);
     if (!isBLE) {
       packet = Slip.encode(packet);
@@ -169,9 +191,10 @@ class DFUCommunicator {
     await _serialInstance!.registerCallback(responseCompleter?.complete);
 
     log.d("Sending: ${bytesToHex(packet)}");
-    await _serialInstance!.write(packet);
+    await _serialInstance!.writeWithTimeout(packet, timeout: writeTimeout);
 
-    List<int>? readBuffer = await responseCompleter?.future;
+    List<int>? readBuffer =
+        await responseCompleter?.future.timeout(responseTimeout);
 
     if (readBuffer == null || readBuffer.isEmpty) {
       return null;
@@ -231,6 +254,8 @@ class DFUCommunicator {
       mtu = ByteData.view(
               (await sendCmd(DFUCommand.getSerialMTU, Uint8List(0)))!.buffer)
           .getUint16(0, Endian.little);
+    } on TimeoutException {
+      rethrow;
     } catch (_) {
       mtu = 2051;
     }
@@ -341,6 +366,10 @@ class DFUCommunicator {
   }
 
   Future<void> delayedSend(Uint8List packet) async {
+    if (_invalidated) {
+      throw DFUTransferError(
+          'DFU transport is invalid after a timeout; reconnect before retrying');
+    }
     // Windows has some issues with transmitting data
     // We work around it by sending message by parts with delay
     var offsetSize = 128;
@@ -348,20 +377,29 @@ class DFUCommunicator {
       offsetSize = 20;
     }
 
-    if (Platform.isWindows || Platform.isMacOS || isBLE) {
-      for (var offset = 0; offset < packet.length; offset += offsetSize) {
-        await _serialInstance!.write(
-            packet.sublist(
-                offset, offset + min(offsetSize, packet.length - offset)),
-            firmware: true);
-      }
+    try {
+      if (Platform.isWindows || Platform.isMacOS || isBLE) {
+        for (var offset = 0; offset < packet.length; offset += offsetSize) {
+          await _serialInstance!.writeWithTimeout(
+              packet.sublist(
+                  offset, offset + min(offsetSize, packet.length - offset)),
+              firmware: true,
+              timeout: const Duration(seconds: 10));
+        }
 
-      if (isBLE && (Platform.isIOS || Platform.isMacOS)) {
-        await asyncSleep(250);
+        if (isBLE && (Platform.isIOS || Platform.isMacOS)) {
+          await asyncSleep(250);
+        }
+      } else {
+        // Other OS: send as is
+        await _serialInstance!.writeWithTimeout(packet,
+            firmware: true, timeout: const Duration(seconds: 10));
       }
-    } else {
-      // Other OS: send as is
-      await _serialInstance!.write(packet, firmware: true);
+    } on TimeoutException {
+      _invalidated = true;
+      responseCompleter = null;
+      await _serialInstance?.performDisconnect();
+      rethrow;
     }
   }
 }

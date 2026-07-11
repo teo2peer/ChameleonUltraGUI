@@ -54,13 +54,13 @@ class _LfSniffingMenuState extends State<LfSniffingMenu> {
   Future<void> _loadCapabilities() async {
     final appState = context.read<ChameleonGUIState>();
     try {
-      final capabilities = await appState.communicator!.getDeviceCapabilities();
+      final supported = await appState.communicator!
+          .supportsCommand(ChameleonCommand.lfSniff);
       if (!mounted) {
         return;
       }
       setState(() {
-        _capabilitySupported =
-            capabilities.contains(ChameleonCommand.lfSniff.value);
+        _capabilitySupported = supported;
       });
     } catch (_) {
       if (!mounted) {

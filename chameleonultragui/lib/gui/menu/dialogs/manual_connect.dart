@@ -1,4 +1,3 @@
-import 'package:chameleonultragui/bridge/chameleon.dart';
 import 'package:chameleonultragui/connector/serial_abstract.dart';
 import 'package:chameleonultragui/main.dart';
 import 'package:flutter/material.dart';
@@ -51,12 +50,18 @@ class ManualConnectState extends State<ManualConnect> {
               return;
             }
 
-            await appState.connector!
-                .connectSpecificDevice(portController.text);
-            appState.communicator =
-                ChameleonCommunicator(appState.log!, port: appState.connector);
-            appState.connector!.pendingConnection = false;
-            appState.changesMade();
+            try {
+              final connected = await appState.connector!
+                  .connectSpecificDevice(portController.text);
+              if (!connected) return;
+              await appState.attachConnectedCommunicator();
+            } catch (error) {
+              appState.log?.e('Manual connection failed', error: error);
+              await appState.disconnect();
+            } finally {
+              appState.connector!.pendingConnection = false;
+              appState.changesMade();
+            }
           },
           child: Text(localizations.connect),
         )

@@ -53,28 +53,14 @@ class HomePageState extends State<HomePage> {
     // Checks that firmware supports all functions of current app
     // If not, prompt user to update firmware (as outdated firmware might break app)
 
-    int ultraCapability = ChameleonCommand.setIdteckEmulatorID.value;
-    int liteCapability = ChameleonCommand.setIdteckEmulatorID.value;
-
     var appState = context.read<ChameleonGUIState>();
-    List<int> capabilities;
     try {
-      capabilities = await appState.communicator!.getDeviceCapabilities();
+      final supported = await appState.communicator!
+          .supportsCommand(ChameleonCommand.setIdteckEmulatorID);
+      return supported == true;
     } catch (_) {
       return false;
     }
-
-    if (appState.connector!.device == ChameleonDevice.ultra &&
-        !capabilities.contains(ultraCapability)) {
-      return false;
-    }
-
-    if (appState.connector!.device == ChameleonDevice.lite &&
-        !capabilities.contains(liteCapability)) {
-      return false;
-    }
-
-    return true;
   }
 
   Future<(Icon, BatteryCharge)> getBatteryInfo() async {

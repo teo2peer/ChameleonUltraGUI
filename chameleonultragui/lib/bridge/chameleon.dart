@@ -7,6 +7,81 @@ import 'package:chameleonultragui/connector/serial_abstract.dart';
 import 'package:chameleonultragui/helpers/mifare_classic/general.dart';
 import 'package:logger/logger.dart';
 
+const int chameleonStatusSuccess = 0x68;
+
+String _chameleonStatusDescription(int status) {
+  return switch (status) {
+    0x60 => 'invalid parameter',
+    0x66 => 'device is in the wrong mode or BLE radio is unavailable',
+    0x67 => 'unsupported command',
+    0x69 => 'command is not implemented',
+    0x70 => 'flash write failed',
+    0x71 => 'flash read failed',
+    0x73 => 'device memory error',
+    0x74 => 'device could not create a response',
+    0x75 => 'command execution failed',
+    _ => 'unexpected device status',
+  };
+}
+
+class ChameleonCommandException implements Exception {
+  final ChameleonCommand command;
+  final int status;
+
+  const ChameleonCommandException(this.command, this.status);
+
+  @override
+  String toString() {
+    final hex = status.toRadixString(16).padLeft(2, '0').toUpperCase();
+    return 'Command ${command.name} (${command.value}) failed: '
+        '${_chameleonStatusDescription(status)} (status 0x$hex)';
+  }
+}
+
+enum ChameleonCapabilityMode { uninitialized, advertised, legacyUnknown }
+
+class ChameleonUnsupportedCommandException implements Exception {
+  final ChameleonCommand command;
+
+  const ChameleonUnsupportedCommandException(this.command);
+
+  @override
+  String toString() =>
+      'Command ${command.name} (${command.value}) is not advertised by the connected firmware';
+}
+
+class ChameleonResponseTimeoutException implements Exception {
+  final ChameleonCommand command;
+  final Duration timeout;
+
+  const ChameleonResponseTimeoutException(this.command, this.timeout);
+
+  @override
+  String toString() =>
+      'Timed out after ${timeout.inMilliseconds} ms waiting for command ${command.name} (${command.value})';
+}
+
+class ChameleonCommandResponseUncertainException implements Exception {
+  final ChameleonCommand command;
+
+  const ChameleonCommandResponseUncertainException(this.command);
+
+  @override
+  String toString() =>
+      'Command ${command.name} (${command.value}) cannot be retried until its late response arrives or the device reconnects';
+}
+
+class ChameleonCommunicatorClosedException implements Exception {
+  final Object? cause;
+
+  const ChameleonCommunicatorClosedException([this.cause]);
+
+  @override
+  String toString() => cause == null
+      ? 'The device connection is closed'
+      : 'The device connection is closed: $cause';
+}
+
 // Some ChatGPT magic
 // Nobody knows how it works
 
@@ -20,12 +95,23 @@ class ChameleonCommunicator {
   int dataCmd = 0;
   int dataStatus = 0;
   int dataLength = 0;
-  List<ChameleonMessage> messageQueue = [];
   List<int> commandQueue = [];
+  Future<void> _sendTail = Future<void>.value();
+  int? _activeCommandId;
+  Completer<ChameleonMessage>? _activeResponse;
+  final Set<int> _uncertainResponseIds = <int>{};
+  ChameleonCapabilityMode _capabilityMode =
+      ChameleonCapabilityMode.uninitialized;
+  Future<void>? _capabilityInitialization;
+  Set<int> _capabilities = const <int>{};
+  bool _disposed = false;
+  Object? _disposeCause;
 
   final Logger log;
+  final Duration writeTimeout;
 
-  ChameleonCommunicator(this.log, {AbstractSerial? port}) {
+  ChameleonCommunicator(this.log,
+      {AbstractSerial? port, this.writeTimeout = const Duration(seconds: 5)}) {
     if (port != null) {
       open(port);
     }
@@ -105,8 +191,8 @@ class ChameleonCommunicator {
               "Received message: command = ${message.command}, status = ${message.status}, data = ${bytesToHex(message.data)}");
           dataPosition = 0;
           dataBuffer = [];
-          messageQueue.add(message);
-          return;
+          _dispatchResponse(message);
+          continue;
         } else {
           throw ('Data frame finally lrc error.');
         }
@@ -116,66 +202,190 @@ class ChameleonCommunicator {
     }
   }
 
+  void _dispatchResponse(ChameleonMessage message) {
+    if (_disposed) return;
+    if (_uncertainResponseIds.remove(message.command)) {
+      log.w('Discarded late response for command ${message.command}');
+      return;
+    }
+    final response = _activeResponse;
+    if (_activeCommandId == message.command &&
+        response != null &&
+        !response.isCompleted) {
+      response.complete(message);
+      return;
+    }
+    log.w('Discarded unsolicited response for command ${message.command}');
+  }
+
+  Set<int>? get cachedDeviceCapabilities =>
+      _capabilityMode == ChameleonCapabilityMode.advertised
+          ? _capabilities
+          : null;
+
+  bool? supportsCommandSync(ChameleonCommand command) =>
+      switch (_capabilityMode) {
+        ChameleonCapabilityMode.advertised =>
+          _capabilities.contains(command.value),
+        ChameleonCapabilityMode.legacyUnknown => null,
+        ChameleonCapabilityMode.uninitialized => null,
+      };
+
+  Future<bool?> supportsCommand(ChameleonCommand command) async {
+    await initializeCapabilities();
+    return supportsCommandSync(command);
+  }
+
+  Future<void> initializeCapabilities() {
+    return _capabilityInitialization ??= _initializeCapabilities();
+  }
+
+  Future<void> _initializeCapabilities() async {
+    final response = await _enqueueCommand(
+        ChameleonCommand.getDeviceCapabilities,
+        checkCapabilities: false) as ChameleonMessage;
+    if (response.status == chameleonStatusSuccess) {
+      if (response.data.length.isOdd) {
+        throw const FormatException(
+            'Device capability payload must contain 16-bit command IDs');
+      }
+      final capabilities = <int>{};
+      for (var i = 0; i < response.data.length; i += 2) {
+        capabilities.add((response.data[i] << 8) | response.data[i + 1]);
+      }
+      _capabilities = Set<int>.unmodifiable(capabilities);
+      _capabilityMode = ChameleonCapabilityMode.advertised;
+      return;
+    }
+    if (response.status == 0x67 || response.status == 0x69) {
+      _capabilities = const <int>{};
+      _capabilityMode = ChameleonCapabilityMode.legacyUnknown;
+      return;
+    }
+    throw ChameleonCommandException(
+        ChameleonCommand.getDeviceCapabilities, response.status);
+  }
+
   Future<ChameleonMessage?> sendCmd(ChameleonCommand cmd,
       {Uint8List? data,
       Duration timeout = const Duration(seconds: 5),
       bool skipReceive = false,
       bool firstRun = false}) async {
-    var startTime = DateTime.now();
-    var dataFrame = makeDataFrameBytes(cmd, 0x00, data);
-
-    if (!_serialInstance!.isOpen) {
-      await _serialInstance!.open();
-      await _serialInstance!.registerCallback(onSerialMessage);
-      _serialInstance!.isOpen = true;
+    if (cmd != ChameleonCommand.getDeviceCapabilities) {
+      await initializeCapabilities();
     }
+    return _enqueueCommand(cmd,
+        data: data,
+        timeout: timeout,
+        skipReceive: skipReceive,
+        checkCapabilities: cmd != ChameleonCommand.getDeviceCapabilities);
+  }
 
-    while (commandQueue.contains(cmd.value)) {
-      if (startTime.millisecondsSinceEpoch + (timeout.inMilliseconds * 2) <
-          DateTime.now().millisecondsSinceEpoch) {
-        throw ("Timeout waiting for queue for command ${cmd.value}");
+  Future<ChameleonMessage?> _enqueueCommand(ChameleonCommand cmd,
+      {Uint8List? data,
+      Duration timeout = const Duration(seconds: 5),
+      bool skipReceive = false,
+      required bool checkCapabilities}) async {
+    _ensureOpen();
+    final previous = _sendTail;
+    final release = Completer<void>();
+    _sendTail = release.future;
+    await previous;
+    try {
+      _ensureOpen();
+      if (checkCapabilities &&
+          _capabilityMode == ChameleonCapabilityMode.advertised &&
+          !_capabilities.contains(cmd.value)) {
+        throw ChameleonUnsupportedCommandException(cmd);
       }
+      if (_uncertainResponseIds.contains(cmd.value)) {
+        throw ChameleonCommandResponseUncertainException(cmd);
+      }
+      return await _sendCommand(cmd,
+          data: data, timeout: timeout, skipReceive: skipReceive);
+    } finally {
+      commandQueue.remove(cmd.value);
+      release.complete();
+    }
+  }
 
-      await asyncSleep(1);
+  Future<ChameleonMessage?> _sendCommand(ChameleonCommand cmd,
+      {Uint8List? data,
+      required Duration timeout,
+      required bool skipReceive}) async {
+    final serial = _serialInstance;
+    if (serial == null) {
+      throw const ChameleonCommunicatorClosedException('No serial transport');
+    }
+    if (!serial.isOpen) {
+      await serial.open();
+      await serial.registerCallback(onSerialMessage);
+      serial.isOpen = true;
     }
 
+    final dataFrame = makeDataFrameBytes(cmd, 0x00, data);
     commandQueue.add(cmd.value);
-
     log.t("Sending: ${bytesToHex(dataFrame)}");
     log.d(
         "Sending message: command = ${cmd.value}, data = ${bytesToHex(data ?? Uint8List(0))}");
 
     if (skipReceive) {
-      try {
-        await _serialInstance!.write(Uint8List.fromList(dataFrame));
-      } catch (_) {}
+      _uncertainResponseIds.add(cmd.value);
+      await _writeFrame(serial, dataFrame);
       return null;
     }
 
-    await _serialInstance!.write(Uint8List.fromList(dataFrame));
-
-    while (true) {
-      for (var message in messageQueue) {
-        if (message.command == cmd.value) {
-          messageQueue.remove(message);
-          commandQueue.remove(cmd.value);
-          return message;
-        }
+    final response = Completer<ChameleonMessage>();
+    _activeCommandId = cmd.value;
+    _activeResponse = response;
+    try {
+      await _writeFrame(serial, dataFrame);
+      return await response.future.timeout(timeout, onTimeout: () {
+        _uncertainResponseIds.add(cmd.value);
+        throw ChameleonResponseTimeoutException(cmd, timeout);
+      });
+    } finally {
+      if (_activeCommandId == cmd.value) {
+        _activeCommandId = null;
+        _activeResponse = null;
       }
-
-      if (startTime.millisecondsSinceEpoch + timeout.inMilliseconds <
-          DateTime.now().millisecondsSinceEpoch) {
-        commandQueue.remove(cmd.value);
-        if (firstRun) {
-          sendCmd(cmd, data: data, timeout: timeout, firstRun: false);
-        } else {
-          // no luck
-          throw ("Timeout waiting for response for command ${cmd.value}");
-        }
-      }
-
-      await asyncSleep(1);
     }
+  }
+
+  Future<void> _writeFrame(AbstractSerial serial, Uint8List frame) async {
+    try {
+      final written =
+          await serial.writeWithTimeout(frame, timeout: writeTimeout);
+      if (!written) throw StateError('Serial transport rejected the write');
+    } on TimeoutException catch (error) {
+      _activeCommandId = null;
+      _activeResponse = null;
+      dispose(error);
+      unawaited(serial.performDisconnect());
+      rethrow;
+    }
+  }
+
+  void _ensureOpen() {
+    if (_disposed) {
+      throw ChameleonCommunicatorClosedException(_disposeCause);
+    }
+  }
+
+  void dispose([Object? cause]) {
+    if (_disposed) return;
+    _disposed = true;
+    _disposeCause = cause;
+    final response = _activeResponse;
+    if (response != null && !response.isCompleted) {
+      response.completeError(ChameleonCommunicatorClosedException(cause));
+    }
+    _activeCommandId = null;
+    _activeResponse = null;
+    _uncertainResponseIds.clear();
+    commandQueue.clear();
+    dataBuffer = [];
+    dataPosition = 0;
   }
 
   Uint8List _fromInt16BE(int value) {
@@ -414,7 +624,8 @@ class ChameleonCommunicator {
       int block, int keyType, List<Uint8List> keys) async {
     var resp = (await sendCmd(ChameleonCommand.mf1CheckKeysOnBlock,
         data: Uint8List.fromList(
-            [block, keyType, keys.length, ...keys.expand((key) => key)])));
+            [block, keyType, keys.length, ...keys.expand((key) => key)]),
+        timeout: Duration(seconds: (3 + keys.length).clamp(5, 20))));
 
     return resp!.status == 0 ? resp.data.sublist(1) : null;
   }
@@ -467,7 +678,8 @@ class ChameleonCommunicator {
         final shift = 6 - (s % 4) * 2;
         final bits = (d[s ~/ 4] >> shift) & 0x03;
         if (bits & 0x02 != 0) {
-          found[s * 2] = Uint8List.fromList(d.sublist(10 + s * 12, 10 + s * 12 + 6));
+          found[s * 2] =
+              Uint8List.fromList(d.sublist(10 + s * 12, 10 + s * 12 + 6));
         }
         if (bits & 0x01 != 0) {
           found[s * 2 + 1] =
@@ -556,6 +768,10 @@ class ChameleonCommunicator {
                     .setInt32(0, resultList.length, Endian.big)))!
           .data;
 
+      // Guard against a stale/racing count: sendCmd returns the frame regardless
+      // of status, so an out-of-range index yields an empty (PAR_ERR) page. If a
+      // page adds no records, stop instead of looping forever.
+      final int before = resultList.length;
       int pos = 0;
       while (pos < resp.length) {
         resultList.add(DetectionResult(
@@ -568,6 +784,7 @@ class ChameleonCommunicator {
             ar: bytesToU32(resp.sublist(14 + pos, 18 + pos))));
         pos += 18;
       }
+      if (resultList.length == before) break;
     }
 
     // Classify
@@ -1301,14 +1518,8 @@ class ChameleonCommunicator {
   }
 
   Future<List<int>> getDeviceCapabilities() async {
-    var resp = (await sendCmd(ChameleonCommand.getDeviceCapabilities))!.data;
-    List<int> commands = [];
-
-    for (int i = 0; i < resp.length; i += 2) {
-      commands.add(bytesToU16(resp.sublist(i, i + 2)));
-    }
-
-    return commands;
+    await initializeCapabilities();
+    return cachedDeviceCapabilities?.toList(growable: false) ?? const <int>[];
   }
 
   Future<void> manipulateValueBlock(
@@ -1509,357 +1720,5 @@ class ChameleonCommunicator {
         isAntiColl: false,
         writeMode: mode // write mode
         );
-  }
-
-  // -----------------------------------------------------------------------
-  // BLE — passive scanner (listen-only) and directed GATT fuzzing harness.
-  // The scanner never transmits; the fuzzer only ever talks to the single
-  // target you connect to by address. Neither broadcasts to the environment.
-  // -----------------------------------------------------------------------
-
-  // Start a scan. Passive (default) is listen-only; active also sends scan
-  // requests to collect scan responses (e.g. full device names).
-  Future<void> blePassiveScanStart({bool active = false}) async {
-    await sendCmd(ChameleonCommand.bleScanStart,
-        data: Uint8List.fromList([active ? 1 : 0]));
-  }
-
-  Future<void> blePassiveScanStop() async {
-    await sendCmd(ChameleonCommand.bleScanStop);
-  }
-
-  Future<int> blePassiveScanCount() async {
-    var resp = await sendCmd(ChameleonCommand.bleScanGetCount);
-    return (resp!.data.isNotEmpty) ? resp.data[0] : 0;
-  }
-
-  // Fetch discovered devices. Wire per record:
-  // addr[6] | addr_type[1] | rssi[1 signed] | adv_len[1] | adv[adv_len].
-  Future<List<BleScanResult>> blePassiveScanResults({int startIndex = 0}) async {
-    var resp = await sendCmd(ChameleonCommand.bleScanGetResults,
-        data: Uint8List.fromList([startIndex & 0xFF]));
-    List<BleScanResult> out = [];
-    var d = resp!.data;
-    int o = 0;
-    while (o + 9 <= d.length) {
-      var addr = d.sublist(o, o + 6);
-      o += 6;
-      int addrType = d[o];
-      int rssi = d[o + 1].toSigned(8);
-      int advLen = d[o + 2];
-      o += 3;
-      if (o + advLen > d.length) break;
-      var adv = d.sublist(o, o + advLen);
-      o += advLen;
-      out.add(BleScanResult(
-          addr: Uint8List.fromList(addr),
-          addrType: addrType,
-          rssi: rssi,
-          adv: Uint8List.fromList(adv)));
-    }
-    return out;
-  }
-
-  // Query whether the device's own BLE advertising (discoverable) is on.
-  Future<bool> bleAdvertisingGet() async {
-    var resp = await sendCmd(ChameleonCommand.bleAdvertisingGet);
-    return resp!.data.isNotEmpty && resp.data[0] != 0;
-  }
-
-  // Enable/disable the device's own BLE advertising. Returns the new state.
-  Future<bool> bleAdvertisingSet(bool on, {bool eraseBonds = false}) async {
-    var resp = await sendCmd(ChameleonCommand.bleAdvertisingSet,
-        data: Uint8List.fromList([on ? 1 : 0, eraseBonds ? 1 : 0]));
-    return resp!.data.isNotEmpty && resp.data[0] != 0;
-  }
-
-  // Connect to ONE target. addrLe is 6 bytes little-endian (as the scanner
-  // reports). Returns the firmware status byte (0x68 = success/initiated).
-  Future<int> bleConnect(Uint8List addrLe, {int addrType = 0}) async {
-    var payload = Uint8List.fromList([addrType & 0xFF, ...addrLe]);
-    var resp = await sendCmd(ChameleonCommand.bleConnect, data: payload);
-    return resp!.status;
-  }
-
-  Future<void> bleDisconnect() async {
-    await sendCmd(ChameleonCommand.bleDisconnect);
-  }
-
-  Future<BleCentralState> bleCentralState() async {
-    var resp = await sendCmd(ChameleonCommand.bleCentralState);
-    var d = resp!.data;
-    if (d.length < 12) {
-      return BleCentralState(
-          connState: 0,
-          discState: 0,
-          charCount: 0,
-          fuzzState: 0,
-          fuzzSent: 0,
-          targetAlive: false,
-        lastReason: 0,
-        probeState: 0,
-        probeResult: 0,
-        probeIndex: 0,
-        probeTotal: 0);
-    }
-    return BleCentralState(
-        connState: d[0],
-        discState: d[1],
-        charCount: d[2],
-        fuzzState: d[3],
-        fuzzSent: (d[4] << 8) | d[5],
-        targetAlive: d[6] != 0,
-      lastReason: d[7],
-      probeState: d[8],
-      probeResult: d[9],
-      probeIndex: d[10],
-      probeTotal: d[11]);
-  }
-
-  Future<int> bleGattDiscover() async {
-    var resp = await sendCmd(ChameleonCommand.bleGattDiscover);
-    return resp!.status;
-  }
-
-  // Fetch discovered characteristics. Wire per char:
-  // value_handle[2] | props[1] | uuid_type[1] | uuid[2] (big-endian).
-  Future<List<BleCharacteristic>> bleGattChars({int startIndex = 0}) async {
-    var resp = await sendCmd(ChameleonCommand.bleGattGetChars,
-        data: Uint8List.fromList([startIndex & 0xFF]));
-    List<BleCharacteristic> out = [];
-    var d = resp!.data;
-    int o = 0;
-    while (o + 6 <= d.length) {
-      out.add(BleCharacteristic(
-          handle: (d[o] << 8) | d[o + 1],
-          props: d[o + 2],
-          uuidType: d[o + 3],
-          uuid: (d[o + 4] << 8) | d[o + 5]));
-      o += 6;
-    }
-    return out;
-  }
-
-  // Discover the target's primary services. Each map: uuidType, uuid, start, end.
-  Future<List<Map<String, int>>> bleServices(
-      {Duration timeout = const Duration(seconds: 3)}) async {
-    await sendCmd(ChameleonCommand.bleSvcDiscover);
-    var deadline = DateTime.now().add(timeout);
-    while (DateTime.now().isBefore(deadline)) {
-      await Future.delayed(const Duration(milliseconds: 100));
-      var resp = await sendCmd(ChameleonCommand.bleSvcGet,
-          data: Uint8List.fromList([0]));
-      var d = resp!.data;
-      if (d.isEmpty) continue;
-      if (d[0] == 2 || d[0] == 3) {
-        // done / error
-        List<Map<String, int>> out = [];
-        int o = 1;
-        while (o + 7 <= d.length) {
-          out.add({
-            'uuidType': d[o],
-            'uuid': (d[o + 1] << 8) | d[o + 2],
-            'start': (d[o + 3] << 8) | d[o + 4],
-            'end': (d[o + 5] << 8) | d[o + 6],
-          });
-          o += 7;
-        }
-        return out;
-      }
-    }
-    return [];
-  }
-
-  // Enumerate all descriptors of the connected target. Each map: handle, uuidType, uuid.
-  Future<List<Map<String, int>>> bleDescriptors(
-      {Duration timeout = const Duration(seconds: 5)}) async {
-    await sendCmd(ChameleonCommand.bleDescDiscover);
-    var deadline = DateTime.now().add(timeout);
-    while (DateTime.now().isBefore(deadline)) {
-      await Future.delayed(const Duration(milliseconds: 100));
-      var resp = await sendCmd(ChameleonCommand.bleDescGet,
-          data: Uint8List.fromList([0]));
-      var d = resp!.data;
-      if (d.isEmpty) continue;
-      if (d[0] == 2 || d[0] == 3) {
-        List<Map<String, int>> out = [];
-        int o = 1;
-        while (o + 5 <= d.length) {
-          out.add({
-            'handle': (d[o] << 8) | d[o + 1],
-            'uuidType': d[o + 2],
-            'uuid': (d[o + 3] << 8) | d[o + 4],
-          });
-          o += 5;
-        }
-        return out;
-      }
-    }
-    return [];
-  }
-
-  // Start fuzzing value_handle: mutated writes every intervalMs, up to
-  // maxIterations (0 = until stopped). Returns the firmware status byte.
-  Future<int> bleFuzzStart(int valueHandle,
-      {int maxIterations = 0, int intervalMs = 50}) async {
-    var payload = Uint8List.fromList([
-      (valueHandle >> 8) & 0xFF,
-      valueHandle & 0xFF,
-      (maxIterations >> 8) & 0xFF,
-      maxIterations & 0xFF,
-      (intervalMs >> 8) & 0xFF,
-      intervalMs & 0xFF,
-    ]);
-    var resp = await sendCmd(ChameleonCommand.bleFuzzStart, data: payload);
-    return resp!.status;
-  }
-
-  Future<void> bleFuzzStop() async {
-    await sendCmd(ChameleonCommand.bleFuzzStop);
-  }
-
-  Future<int> bleLinkProbe({bool globalMode = false}) async {
-    if (globalMode) {
-      return (await sendCmd(ChameleonCommand.bleLinkProbe,
-          data: Uint8List.fromList([1])))!
-          .status;
-    }
-    return (await sendCmd(ChameleonCommand.bleLinkProbe))!.status;
-  }
-
-  // Fetch the fuzz log. Wire per entry:
-  // index[2] | payload_len[1] | write_status[1] | data[min(payload_len,16)].
-  Future<List<BleFuzzLogEntry>> bleFuzzLog({int startIndex = 0}) async {
-    var resp = await sendCmd(ChameleonCommand.bleFuzzGetLog,
-        data: Uint8List.fromList([(startIndex >> 8) & 0xFF, startIndex & 0xFF]));
-    List<BleFuzzLogEntry> out = [];
-    var d = resp!.data;
-    int o = 0;
-    while (o + 4 <= d.length) {
-      int index = (d[o] << 8) | d[o + 1];
-      int plen = d[o + 2];
-      int status = d[o + 3];
-      o += 4;
-      int dlen = plen < 16 ? plen : 16;
-      if (o + dlen > d.length) break;
-      var data = d.sublist(o, o + dlen);
-      o += dlen;
-      out.add(BleFuzzLogEntry(
-          index: index,
-          length: plen,
-          status: status,
-          data: Uint8List.fromList(data)));
-    }
-    return out;
-  }
-
-  // Read a characteristic value from the connected target. Returns
-  // (gattStatus, value): gattStatus 0 = success, >0 = ATT error, -1 = timeout.
-  Future<(int, Uint8List)> bleGattRead(int valueHandle,
-      {Duration timeout = const Duration(seconds: 2)}) async {
-    var start = await sendCmd(ChameleonCommand.bleGattRead,
-        data:
-            Uint8List.fromList([(valueHandle >> 8) & 0xFF, valueHandle & 0xFF]));
-    if (start!.status != 0x68) {
-      return (-1, Uint8List(0)); // not connected / rejected
-    }
-    var deadline = DateTime.now().add(timeout);
-    while (DateTime.now().isBefore(deadline)) {
-      await Future.delayed(const Duration(milliseconds: 50));
-      var resp = await sendCmd(ChameleonCommand.bleGattGetRead);
-      var d = resp!.data;
-      if (d.length >= 3 && d[0] == 2) {
-        // ready
-        int len = d[2];
-        var value =
-            (d.length >= 3 + len) ? d.sublist(3, 3 + len) : Uint8List(0);
-        return (d[1], Uint8List.fromList(value));
-      }
-    }
-    return (-1, Uint8List(0)); // timed out
-  }
-
-  // Write a value to a characteristic on the connected target (write-with-
-  // response). Returns the target's ATT status: 0 = success, >0 = ATT error,
-  // -1 = timeout / rejected.
-  Future<int> bleGattWrite(int valueHandle, Uint8List data,
-      {Duration timeout = const Duration(seconds: 2)}) async {
-    var payload = Uint8List.fromList(
-        [(valueHandle >> 8) & 0xFF, valueHandle & 0xFF, ...data]);
-    var start = await sendCmd(ChameleonCommand.bleGattWrite, data: payload);
-    if (start!.status != 0x68) {
-      return -1; // not connected / rejected
-    }
-    var deadline = DateTime.now().add(timeout);
-    while (DateTime.now().isBefore(deadline)) {
-      await Future.delayed(const Duration(milliseconds: 50));
-      var resp = await sendCmd(ChameleonCommand.bleGetWrite);
-      var d = resp!.data;
-      if (d.length >= 2 && d[0] == 2) {
-        return d[1]; // done: gatt_status
-      }
-    }
-    return -1; // timed out
-  }
-
-  // Effective ATT MTU of the connected target link (23 until negotiated).
-  Future<int> bleGetMtu() async {
-    var resp = await sendCmd(ChameleonCommand.bleGetMtu);
-    if (resp!.data.length >= 2) {
-      return (resp.data[0] << 8) | resp.data[1];
-    }
-    return 23;
-  }
-
-  // Subscribe to notifications/indications on the connected target by writing its
-  // CCCD. mode: 0 = off, 1 = notifications, 2 = indications. Returns the status.
-  Future<int> bleSubscribe(int cccdHandle, int mode) async {
-    var resp = await sendCmd(ChameleonCommand.bleSubscribe,
-        data: Uint8List.fromList(
-            [(cccdHandle >> 8) & 0xFF, cccdHandle & 0xFF, mode & 0xFF]));
-    return resp!.status;
-  }
-
-  // Fetch received notifications. Wire per entry: handle[2] | len[1] | data[len].
-  Future<List<Map<String, dynamic>>> bleGetNotifications(
-      {int startIndex = 0}) async {
-    var resp = await sendCmd(ChameleonCommand.bleGetNotifications,
-        data:
-            Uint8List.fromList([(startIndex >> 8) & 0xFF, startIndex & 0xFF]));
-    List<Map<String, dynamic>> out = [];
-    var d = resp!.data;
-    int o = 0;
-    while (o + 3 <= d.length) {
-      int handle = (d[o] << 8) | d[o + 1];
-      int len = d[o + 2];
-      o += 3;
-      if (o + len > d.length) break;
-      out.add({'handle': handle, 'data': Uint8List.fromList(d.sublist(o, o + len))});
-      o += len;
-    }
-    return out;
-  }
-
-  // Discover a characteristic's CCCD descriptor handle. Falls back to
-  // valueHandle + 1 (the common layout) if none is found or on timeout.
-  Future<int> bleFindCccd(int valueHandle,
-      {Duration timeout = const Duration(seconds: 2)}) async {
-    var start = await sendCmd(ChameleonCommand.bleFindCccd,
-        data:
-            Uint8List.fromList([(valueHandle >> 8) & 0xFF, valueHandle & 0xFF]));
-    if (start!.status != 0x68) {
-      return valueHandle + 1;
-    }
-    var deadline = DateTime.now().add(timeout);
-    while (DateTime.now().isBefore(deadline)) {
-      await Future.delayed(const Duration(milliseconds: 50));
-      var resp = await sendCmd(ChameleonCommand.bleGetCccd);
-      var d = resp!.data;
-      if (d.length >= 3) {
-        if (d[0] == 2) return (d[1] << 8) | d[2]; // found
-        if (d[0] == 3) break; // not found
-      }
-    }
-    return valueHandle + 1;
   }
 }

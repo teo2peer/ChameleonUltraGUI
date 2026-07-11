@@ -251,6 +251,26 @@ class SettingsMainPageState extends State<SettingsMainPage> {
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
                   Text(
+                    localizations.device_found_notification,
+                    style: const TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(width: 5),
+                  Switch(
+                    value: appState.sharedPreferencesProvider
+                        .getDeviceFoundBanner(),
+                    onChanged: (value) async {
+                      appState.sharedPreferencesProvider
+                          .setDeviceFoundBanner(value);
+                      appState.changesMade();
+                    },
+                  ),
+                ],
+              ),
+              const SizedBox(height: 10),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text(
                     localizations.confirm_deletions,
                     style: const TextStyle(fontWeight: FontWeight.bold),
                   ),

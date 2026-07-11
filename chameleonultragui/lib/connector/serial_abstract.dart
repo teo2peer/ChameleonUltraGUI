@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:logger/logger.dart';
 
@@ -50,6 +52,13 @@ abstract class AbstractSerial {
   Future<void> open() async {}
 
   Future<bool> write(Uint8List command, {bool firmware = false});
+
+  Future<bool> writeWithTimeout(Uint8List command,
+      {bool firmware = false, Duration timeout = const Duration(seconds: 5)}) {
+    return write(command, firmware: firmware).timeout(timeout,
+        onTimeout: () =>
+            throw TimeoutException('Serial write timed out', timeout));
+  }
 
   Future<void> registerCallback(dynamic callback) async {
     messageCallback = callback;

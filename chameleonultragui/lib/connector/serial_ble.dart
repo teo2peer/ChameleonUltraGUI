@@ -22,6 +22,7 @@ class BLESerial extends AbstractSerial {
   QualifiedCharacteristic? rxCharacteristic;
   QualifiedCharacteristic? firmwareCharacteristic;
   Stream<List<int>>? receivedDataStream;
+  StreamSubscription<List<int>>? receivedDataSubscription;
   StreamSubscription<ConnectionStateUpdate>? connection;
   Map<String, Chameleon> chameleonMap = {};
   bool inSearch = false;
@@ -164,7 +165,8 @@ class BLESerial extends AbstractSerial {
               deviceId: connectionState.deviceId);
           receivedDataStream =
               flutterReactiveBle.subscribeToCharacteristic(txCharacteristic!);
-          receivedDataStream!.listen((data) async {
+          await receivedDataSubscription?.cancel();
+          receivedDataSubscription = receivedDataStream!.listen((data) async {
             if (messageCallback != null) {
               try {
                 await messageCallback(Uint8List.fromList(data));
@@ -201,7 +203,8 @@ class BLESerial extends AbstractSerial {
               deviceId: connectionState.deviceId);
           receivedDataStream =
               flutterReactiveBle.subscribeToCharacteristic(txCharacteristic!);
-          receivedDataStream!.listen((data) async {
+          await receivedDataSubscription?.cancel();
+          receivedDataSubscription = receivedDataStream!.listen((data) async {
             if (messageCallback != null) {
               try {
                 await messageCallback(Uint8List.fromList(data));
@@ -269,6 +272,8 @@ class BLESerial extends AbstractSerial {
   @override
   Future<bool> performDisconnect() async {
     final hadState = hasConnectionState || connection != null;
+    await receivedDataSubscription?.cancel();
+    receivedDataSubscription = null;
     resetConnectionState();
     txCharacteristic = null;
     rxCharacteristic = null;

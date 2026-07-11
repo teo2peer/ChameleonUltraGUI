@@ -505,4 +505,12 @@ class SharedPreferencesProvider extends ChangeNotifier {
   void setEthicalHackingAck(bool value) {
     _sharedPreferences.setBool('ethical_hacking_ack', value);
   }
+
+  bool getDeviceFoundBanner() {
+    return _sharedPreferences.getBool('device_found_banner') ?? true;
+  }
+
+  void setDeviceFoundBanner(bool value) {
+    _sharedPreferences.setBool('device_found_banner', value);
+  }
 }

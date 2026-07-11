@@ -179,7 +179,7 @@ enum ChameleonCommand {
   bleAdvertisingGet(7005),
   bleLinkProbe(7006),
 
-  // BLE directed GATT fuzzing harness — point-to-point against ONE target
+  // BLE GATT fuzzing harness — scope selectable per call.
   bleConnect(7010),
   bleDisconnect(7011),
   bleCentralState(7012),
@@ -200,7 +200,26 @@ enum ChameleonCommand {
   bleDescDiscover(7027),
   bleDescGet(7028),
   bleSvcDiscover(7029),
-  bleSvcGet(7030);
+  bleSvcGet(7030),
+  bleDeviceInfo(7031),
+  bleGetDeviceInfo(7032),
+
+  // Own-radio identity / radio power (cybersecurity fork additions).
+  // These are local — they mutate OUR radio (no scope selector).
+  bleSetAddr(7040),
+  bleGetAddr(7041),
+  bleRadioSet(7042),
+  bleRadioGet(7043),
+
+  // Stress / broadcast (cybersecurity fork, operator-authorised).
+  // Per-call scope selectable: single target / scan-buffer-wide /
+  // full environment-wide broadcast on the 2.4 GHz BLE spectrum.
+  bleFloodStart(7044),
+  bleFloodStop(7045),
+  bleFloodCount(7046),
+  bleKick(7047),
+  bleAdvFloodStart(7050),
+  bleAdvFloodStop(7051);
 
   const ChameleonCommand(this.value);
   final int value;
@@ -359,6 +378,12 @@ class BleCentralState {
   int probeResult; // 0 on success, otherwise low byte of nrf error / reason
   int probeIndex;
   int probeTotal;
+  int floodState; // 0 idle,1 running,2 stopped/finished
+  int floodSent;
+  int readState; // 0 idle,1 pending,2 ready,3 failed
+  int writeState; // 0 idle,1 pending,2 done,3 failed
+  int notificationCount;
+  bool hasOperationState;
 
   BleCentralState(
       {required this.connState,
@@ -371,7 +396,13 @@ class BleCentralState {
       this.probeState = 0,
       this.probeResult = 0,
       this.probeIndex = 0,
-      this.probeTotal = 0});
+      this.probeTotal = 0,
+      this.floodState = 0,
+      this.floodSent = 0,
+      this.readState = 0,
+      this.writeState = 0,
+      this.notificationCount = 0,
+      this.hasOperationState = false});
 }
 
 // One entry of the fuzz log (a mutated write that was sent to the target).
