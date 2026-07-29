@@ -500,5 +500,18 @@
   "no_t55xx_dictionaries": "No hay diccionarios compatibles con T55XX. Por favor, descargue algunos en primer lugar.",
   "download_dictionaries": "Descargar diccionarios",
   "enter_new_password": "Introduzca la nueva contrase\u00f1a (se establecer\u00e1 si se encuentra la contrase\u00f1a)",
-  "language_name": "Espa\u00f1ol"
+  "language_name": "Espa\u00f1ol",
+  "pm3_tools": "PM3 Tools",
+  "pm3_tools_description": "Explora el cat\u00e1logo completo de Proxmark3 sin sustituir las herramientas existentes de Chameleon.",
+  "pm3_tools_search": "Buscar comandos, protocolos o motivos",
+  "pm3_tools_all": "Todos",
+  "pm3_tools_mapped": "Mapeado",
+  "pm3_tools_portable": "Adaptaci\u00f3n host pendiente",
+  "pm3_tools_unsupported": "No compatible",
+  "pm3_tools_authorization_required": "Se requiere autorizaci\u00f3n",
+  "pm3_tools_authorization_description": "El cat\u00e1logo puede consultarse; las acciones mapeadas permanecen bloqueadas hasta confirmar la autorizaci\u00f3n.",
+  "pm3_tools_authorized": "Uso autorizado confirmado",
+  "pm3_tools_no_results": "Ninguna herramienta PM3 coincide con la b\u00fasqueda y el filtro.",
+  "pm3_tools_indexed": "{count} indexados",
+  "@pm3_tools_indexed": {"placeholders": {"count": {"type": "int"}}}
 }
