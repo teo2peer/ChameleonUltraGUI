@@ -1,8 +1,8 @@
 import 'package:chameleonultragui/gui/component/error_page.dart';
 import 'package:chameleonultragui/gui/menu/dialogs/dictionary/export.dart';
 import 'package:chameleonultragui/helpers/general.dart';
+import 'package:chameleonultragui/helpers/mifare_classic/reader_key_recovery.dart';
 import 'package:chameleonultragui/main.dart';
-import 'package:chameleonultragui/recovery/recovery.dart';
 import 'package:chameleonultragui/recovery/recovery.dart' as recovery;
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -27,8 +27,7 @@ class Mfkey32MenuState extends State<Mfkey32Menu> {
   bool saveKeys = false;
   bool loading = false;
   String outputUid = "";
-  List<Row> displayKeys = [];
-  List<int> displayedKeys = [];
+  List<Widget> displayKeys = [];
   int progress = -1;
 
   @override
@@ -59,72 +58,63 @@ class Mfkey32MenuState extends State<Mfkey32Menu> {
     var appState = context.read<ChameleonGUIState>();
 
     var count = await appState.communicator!.getMf1DetectionCount();
-    var detections = await appState.communicator!.getMf1DetectionResult(count);
-    for (var item in detections.entries) {
-      var uid = item.key;
-      for (var item in item.value.entries) {
-        var block = item.key;
-        for (var item in item.value.entries) {
-          var key = item.key;
-          for (var i = 0; i < item.value.length; i++) {
-            for (var j = i + 1; j < item.value.length; j++) {
-              var item0 = item.value[i];
-              var item1 = item.value[j];
-              var mfkey = Mfkey32Dart(
-                uid: uid,
-                nt0: item0.nt,
-                nt1: item1.nt,
-                nr0Enc: item0.nr,
-                ar0Enc: item0.ar,
-                nr1Enc: item1.nr,
-                ar1Enc: item1.ar,
-              );
-              var recoveredKey = await recovery.mfkey32(mfkey);
-              keys.add(u64ToBytes((recoveredKey)[0]).sublist(2, 8));
-              outputUid =
-                  bytesToHex(u64ToBytes(uid).sublist(4, 8)).toUpperCase();
-              if (!displayedKeys.contains(Object.hashAll(
-                  u64ToBytes((recoveredKey)[0]).sublist(4, 8)))) {
-                displayKeys.add(Row(
-                  children: [
-                    Text(
-                      bytesToHex(u64ToBytes(uid).sublist(4, 8)).toUpperCase(),
-                      style: const TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    const SizedBox(width: 8.0),
-                    TextButton(
-                      onPressed: () async {
-                        ClipboardData data = ClipboardData(
-                            text: bytesToHex(
-                                    u64ToBytes((recoveredKey)[0]).sublist(2, 8))
-                                .toUpperCase());
-                        await Clipboard.setData(data);
-                      },
-                      child: Text(
-                        "block $block key $key: ${bytesToHex(u64ToBytes((recoveredKey)[0]).sublist(2, 8)).toUpperCase()}",
-                        style: const TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ),
-                  ],
-                ));
-                displayedKeys.add(Object.hashAll(
-                    u64ToBytes((recoveredKey)[0]).sublist(4, 8)));
-              }
-              setState(() {
-                displayKeys = displayKeys;
-                progress = (i * 100 / item.value.length).round();
-              });
-            }
-          }
+    final detections =
+        await appState.communicator!.getMf1DetectionRecords(count);
+    final results = await recoverReaderKeys(
+      detections: detections,
+      solver: (request) async {
+        final recovered = await recovery.mfkey32(request);
+        return recovered.isEmpty ? null : recovered.first;
+      },
+      isCancelled: () => !mounted,
+      onProgress: (completed, total, _) {
+        if (mounted) {
+          setState(() =>
+              progress = total == 0 ? 100 : (completed * 100 / total).round());
         }
+      },
+    );
+    if (!mounted) return;
+
+    final unique = <String, Uint8List>{};
+    final widgets = <Widget>[];
+    for (final result in results) {
+      final uid =
+          result.target.uid.toRadixString(16).padLeft(8, '0').toUpperCase();
+      final key = result.key;
+      if (key != null) {
+        final keyHex = bytesToHex(key).toUpperCase();
+        unique[keyHex] = key;
+        outputUid = outputUid.isEmpty ? uid : outputUid;
+        widgets.add(ListTile(
+          leading: const Icon(Icons.vpn_key),
+          title: Text(keyHex,
+              style: const TextStyle(
+                  fontFamily: 'RobotoMono', fontWeight: FontWeight.bold)),
+          subtitle: Text(
+              'UID $uid | sector ${result.target.sector} | key ${result.target.keyType}'),
+          onTap: () => Clipboard.setData(ClipboardData(text: keyHex)),
+        ));
+      } else {
+        widgets.add(ListTile(
+          leading: const Icon(Icons.key_off),
+          title: const Text('Not enough valid authentication pairs'),
+          subtitle: Text(
+              'UID $uid | sector ${result.target.sector} | key ${result.target.keyType} | ${result.transcriptCount} transcripts'),
+        ));
       }
     }
+    setState(() {
+      keys = unique.values.toList();
+      displayKeys = widgets;
+      saveKeys = keys.isNotEmpty;
+    });
+  }
+
+  @override
+  void dispose() {
+    controller.dispose();
+    super.dispose();
   }
 
   @override
@@ -184,12 +174,23 @@ class Mfkey32MenuState extends State<Mfkey32Menu> {
                                     setState(() {
                                       loading = true;
                                     });
-                                    await handleMfkeyCalculation();
-                                    setState(() {
-                                      saveKeys = true;
-                                      loading = false;
-                                      progress = -1;
-                                    });
+                                    try {
+                                      await handleMfkeyCalculation();
+                                    } catch (error) {
+                                      if (context.mounted) {
+                                        ScaffoldMessenger.of(context)
+                                            .showSnackBar(SnackBar(
+                                                content:
+                                                    Text(error.toString())));
+                                      }
+                                    } finally {
+                                      if (mounted) {
+                                        setState(() {
+                                          loading = false;
+                                          progress = -1;
+                                        });
+                                      }
+                                    }
                                   }
                                 : null,
                             child: Text(localizations

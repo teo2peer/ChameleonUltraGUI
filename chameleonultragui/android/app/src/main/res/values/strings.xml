@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="relay_lab_service_description">Synthetic NFC relay-resistance lab</string>
+    <string name="relay_lab_aid_description">Private non-payment relay lab AID</string>
+    <string name="authorized_relay_service_label">CU GUI Authorized Relay</string>
+    <string name="authorized_relay_service_description">Authorized real-card payment relay</string>
+    <string name="authorized_relay_aid_description">Authorized payment application AIDs</string>
+</resources>

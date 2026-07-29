@@ -83,8 +83,7 @@ class CompareCardsMenuState extends State<CompareCardsMenu> {
       int? o = (other != null && i < other.length) ? other[i] : null;
       for (int n = 0; n < 2; n++) {
         bool differs = o == null ||
-            hex[n] !=
-                o.toRadixString(16).padLeft(2, '0').toUpperCase()[n];
+            hex[n] != o.toRadixString(16).padLeft(2, '0').toUpperCase()[n];
         spans.add(TextSpan(
           text: hex[n],
           style: TextStyle(
@@ -112,10 +111,10 @@ class CompareCardsMenuState extends State<CompareCardsMenu> {
     var localizations = AppLocalizations.of(context)!;
     final typeA = chameleonTagTypeGetMfClassicType(a.tag);
     final typeB = chameleonTagTypeGetMfClassicType(b.tag);
-    final sectorCount = mfClassicGetSectorCount(typeA) >
-            mfClassicGetSectorCount(typeB)
-        ? mfClassicGetSectorCount(typeA)
-        : mfClassicGetSectorCount(typeB);
+    final sectorCount =
+        mfClassicGetSectorCount(typeA) > mfClassicGetSectorCount(typeB)
+            ? mfClassicGetSectorCount(typeA)
+            : mfClassicGetSectorCount(typeB);
 
     int matching = 0;
     int total = 0;
@@ -198,8 +197,8 @@ class CompareCardsMenuState extends State<CompareCardsMenu> {
         padding: const EdgeInsets.symmetric(horizontal: 8.0, vertical: 4.0),
         child: Text(
           "$label: ${key != null ? bytesToHex(key).toUpperCase() : '------------'}",
-          style: TextStyle(
-              fontFamily: 'RobotoMono', fontSize: 13, color: color),
+          style:
+              TextStyle(fontFamily: 'RobotoMono', fontSize: 13, color: color),
         ),
       );
 
@@ -207,10 +206,10 @@ class CompareCardsMenuState extends State<CompareCardsMenu> {
     var localizations = AppLocalizations.of(context)!;
     final typeA = chameleonTagTypeGetMfClassicType(a.tag);
     final typeB = chameleonTagTypeGetMfClassicType(b.tag);
-    final blockCount = mfClassicGetBlockCount(typeA) >
-            mfClassicGetBlockCount(typeB)
-        ? mfClassicGetBlockCount(typeA)
-        : mfClassicGetBlockCount(typeB);
+    final blockCount =
+        mfClassicGetBlockCount(typeA) > mfClassicGetBlockCount(typeB)
+            ? mfClassicGetBlockCount(typeA)
+            : mfClassicGetBlockCount(typeB);
 
     List<TextSpan> spans = [];
     Color numColor = _mutedColor(context);
@@ -223,14 +222,12 @@ class CompareCardsMenuState extends State<CompareCardsMenu> {
 
       String num = block.toString().padLeft(3, ' ');
       if (!differs) {
-        spans.add(TextSpan(
-            text: '$num: ', style: TextStyle(color: numColor)));
+        spans.add(TextSpan(text: '$num: ', style: TextStyle(color: numColor)));
         spans.addAll(_hexSpans(ba, bb));
         continue;
       }
 
-      spans.add(TextSpan(
-          text: '$num: ', style: TextStyle(color: numColor)));
+      spans.add(TextSpan(text: '$num: ', style: TextStyle(color: numColor)));
       spans.addAll(_hexSpans(ba, bb));
       if (bits >= 0) {
         spans.add(TextSpan(
@@ -238,15 +235,13 @@ class CompareCardsMenuState extends State<CompareCardsMenu> {
             style: TextStyle(color: _diffColor(context), fontSize: 11)));
       }
       spans.add(const TextSpan(text: '\n'));
-      spans.add(TextSpan(
-          text: '     ', style: TextStyle(color: numColor)));
+      spans.add(TextSpan(text: '     ', style: TextStyle(color: numColor)));
       spans.addAll(_hexSpans(bb, ba));
     }
 
     return SelectableText.rich(
       TextSpan(
-        style: TextStyle(
-            fontFamily: 'RobotoMono', fontSize: 13, height: 1.35),
+        style: TextStyle(fontFamily: 'RobotoMono', fontSize: 13, height: 1.35),
         children: spans,
       ),
     );
@@ -283,11 +278,13 @@ class CompareCardsMenuState extends State<CompareCardsMenu> {
                 children: [
                   Row(
                     children: [
-                      Expanded(child: _cardDropdown(cards, cardAId, "A",
-                          (v) => setState(() => cardAId = v))),
+                      Expanded(
+                          child: _cardDropdown(cards, cardAId, "A",
+                              (v) => setState(() => cardAId = v))),
                       const SizedBox(width: 8),
-                      Expanded(child: _cardDropdown(cards, cardBId, "B",
-                          (v) => setState(() => cardBId = v))),
+                      Expanded(
+                          child: _cardDropdown(cards, cardBId, "B",
+                              (v) => setState(() => cardBId = v))),
                     ],
                   ),
                   const SizedBox(height: 12),
@@ -301,14 +298,12 @@ class CompareCardsMenuState extends State<CompareCardsMenu> {
                           label: Text(localizations.data)),
                     ],
                     selected: {_view},
-                    onSelectionChanged: (s) =>
-                        setState(() => _view = s.first),
+                    onSelectionChanged: (s) => setState(() => _view = s.first),
                   ),
                   const SizedBox(height: 12),
                   Expanded(
                     child: (cardA == null || cardB == null)
-                        ? Center(
-                            child: Text(localizations.select_two_cards))
+                        ? Center(child: Text(localizations.select_two_cards))
                         : SingleChildScrollView(
                             child: _view == _CompareView.keys
                                 ? _buildKeysView(cardA, cardB)
@@ -332,7 +327,8 @@ class CompareCardsMenuState extends State<CompareCardsMenu> {
     return DropdownButtonFormField<String?>(
       initialValue: value,
       isExpanded: true,
-      decoration: InputDecoration(labelText: label, border: const OutlineInputBorder()),
+      decoration:
+          InputDecoration(labelText: label, border: const OutlineInputBorder()),
       items: cards
           .map((c) => DropdownMenuItem<String?>(
                 value: c.id,

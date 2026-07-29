@@ -5,9 +5,9 @@ import 'package:chameleonultragui/gui/menu/dialogs/dictionary/export.dart';
 import 'package:chameleonultragui/helpers/definitions.dart';
 import 'package:chameleonultragui/helpers/general.dart';
 import 'package:chameleonultragui/helpers/mifare_classic/general.dart';
+import 'package:chameleonultragui/helpers/mifare_classic/reader_key_recovery.dart';
 import 'package:chameleonultragui/main.dart';
 import 'package:chameleonultragui/recovery/recovery.dart' as recovery;
-import 'package:chameleonultragui/recovery/recovery.dart';
 import 'package:chameleonultragui/sharedprefsprovider.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -57,11 +57,11 @@ class ReaderKeysPageState extends State<ReaderKeysPage>
   bool recovering = false;
   int detectionCount = 0;
   final List<Uint8List> keys = [];
-  final List<Widget> displayKeys = [];
-  final Set<String> seenKeys = {}; // dedup by hex (value), not hash
+  final Map<ReaderKeyTarget, ReaderKeyRecoveryResult> recoveryResults = {};
   String outputUid = "";
   int progress = -1;
   Timer? _pollTimer;
+  bool _pollInProgress = false;
 
   @override
   void initState() {
@@ -77,6 +77,22 @@ class ReaderKeysPageState extends State<ReaderKeysPage>
   @override
   void dispose() {
     _pollTimer?.cancel();
+    if (armed) {
+      final communicator = context.read<ChameleonGUIState>().communicator;
+      if (communicator != null) {
+        unawaited(() async {
+          for (final cleanup in <Future<void> Function()>[
+            () => communicator.setMf1ReaderKeysAnim(false),
+            () => communicator.setMf1DetectionStatus(false),
+            () => communicator.setMf1RandomUidMode(false),
+          ]) {
+            try {
+              await cleanup();
+            } catch (_) {}
+          }
+        }());
+      }
+    }
     _tab.dispose();
     _uidCtl.dispose();
     super.dispose();
@@ -87,7 +103,10 @@ class ReaderKeysPageState extends State<ReaderKeysPage>
 
   void _startPolling() {
     _pollTimer?.cancel();
-    _pollTimer = Timer.periodic(const Duration(seconds: 2), (_) => _refreshCount());
+    _pollTimer = Timer.periodic(
+      const Duration(seconds: 2),
+      (_) => _refreshCount(),
+    );
   }
 
   Future<void> _refreshStatus() async {
@@ -105,7 +124,8 @@ class ReaderKeysPageState extends State<ReaderKeysPage>
   }
 
   Future<void> _refreshCount() async {
-    if (!_connected) return;
+    if (!_connected || _pollInProgress) return;
+    _pollInProgress = true;
     try {
       final count = await _app.communicator!.getMf1DetectionCount();
       String uid = _currentRandomUid;
@@ -121,7 +141,10 @@ class ReaderKeysPageState extends State<ReaderKeysPage>
           _currentRandomUid = uid;
         });
       }
-    } catch (_) {}
+    } catch (_) {
+    } finally {
+      _pollInProgress = false;
+    }
   }
 
   Future<void> _loadSlots() async {
@@ -129,12 +152,14 @@ class ReaderKeysPageState extends State<ReaderKeysPage>
     try {
       final names = await _app.communicator!.getSlotTagNames();
       final types = await _app.communicator!.getSlotTagTypes();
+      final enabled = await _app.communicator!.getEnabledSlots();
       final slots = <_SlotEntry>[];
       for (int i = 0; i < 8 && i < types.length; i++) {
-        if (isMifareClassic(types[i].hf)) {
+        if (isMifareClassic(types[i].hf) &&
+            i < enabled.length &&
+            enabled[i].hf) {
           final name = (i < names.length) ? names[i].hf : '';
-          slots.add(_SlotEntry(
-              i, name.isEmpty ? types[i].hf.name : name));
+          slots.add(_SlotEntry(i, name.isEmpty ? types[i].hf.name : name));
         }
       }
       if (mounted) setState(() => _slots = slots);
@@ -143,8 +168,9 @@ class ReaderKeysPageState extends State<ReaderKeysPage>
 
   void _showMessage(String message) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context)
-        .showSnackBar(SnackBar(content: Text(message)));
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
   }
 
   String _randomUidHex([int bytes = 4]) {
@@ -164,8 +190,10 @@ class ReaderKeysPageState extends State<ReaderKeysPage>
     });
     if (!_connected) return;
     try {
-      await _app.communicator!.activateSlot(index);
-      final ac = await _app.communicator!.mf1GetAntiCollData();
+      final ac = await _app.runSlotOperation(() async {
+        await _app.communicator!.activateSlot(index);
+        return _app.communicator!.mf1GetAntiCollData();
+      });
       if (mounted) {
         setState(() => _selectedSlotUid = bytesToHex(ac.uid).toUpperCase());
       }
@@ -184,38 +212,46 @@ class ReaderKeysPageState extends State<ReaderKeysPage>
     await _app.communicator!.activateSlot(slot);
     await _app.communicator!.setSlotType(slot, tag);
     await _app.communicator!.setDefaultDataToSlot(slot, tag);
-    await _app.communicator!.setMf1AntiCollision(CardData(
+    await _app.communicator!.setMf1AntiCollision(
+      CardData(
         uid: hexToBytes(card.uid),
         atqa: card.atqa,
         sak: card.sak,
-        ats: card.ats));
+        ats: card.ats,
+      ),
+    );
 
     List<int> blockChunk = [];
-    int lastSend = 0;
-    final blockCount =
-        mfClassicGetBlockCount(chameleonTagTypeGetMfClassicType(tag));
+    int? chunkStart;
+    Future<void> flushChunk() async {
+      if (chunkStart == null || blockChunk.isEmpty) return;
+      await _app.communicator!.setMf1BlockData(
+        chunkStart!,
+        Uint8List.fromList(blockChunk),
+      );
+      blockChunk = [];
+      chunkStart = null;
+    }
+
+    final blockCount = mfClassicGetBlockCount(
+      chameleonTagTypeGetMfClassicType(tag),
+    );
     for (var blockOffset = 0; blockOffset < blockCount; blockOffset++) {
-      if ((card.data.length > blockOffset && card.data[blockOffset].isEmpty) ||
-          blockChunk.length >= 128) {
-        if (blockChunk.isNotEmpty) {
-          await _app.communicator!
-              .setMf1BlockData(lastSend, Uint8List.fromList(blockChunk));
-          blockChunk = [];
-          lastSend = blockOffset;
-        }
-      }
-      if (card.data.length > blockOffset &&
-          card.data[blockOffset].length == 16) {
+      final valid =
+          card.data.length > blockOffset && card.data[blockOffset].length == 16;
+      if (!valid || blockChunk.length >= 128) await flushChunk();
+      if (valid) {
+        chunkStart ??= blockOffset;
         blockChunk.addAll(card.data[blockOffset]);
       }
       await asyncSleep(1);
     }
-    if (blockChunk.isNotEmpty) {
-      await _app.communicator!
-          .setMf1BlockData(lastSend, Uint8List.fromList(blockChunk));
-    }
-    await _app.communicator!.setSlotTagName(slot,
-        card.name.isEmpty ? localizations.no_name : card.name, TagFrequency.hf);
+    await flushChunk();
+    await _app.communicator!.setSlotTagName(
+      slot,
+      card.name.isEmpty ? localizations.no_name : card.name,
+      TagFrequency.hf,
+    );
     await _app.communicator!.saveSlotData();
     _app.changesMade();
   }
@@ -223,77 +259,119 @@ class ReaderKeysPageState extends State<ReaderKeysPage>
   Future<void> _arm() async {
     final localizations = AppLocalizations.of(context)!;
     setState(() => busy = true);
+    var detectionEnabled = false;
+    var animationEnabled = false;
     try {
-      final mode = _tab.index; // 0 card, 1 fixed UID, 2 random
+      await _app.runSlotOperation(() async {
+        final mode = _tab.index; // 0 card, 1 fixed UID, 2 random
 
-      // Establish which card / slot is emulated.
-      if (mode == 0 && _cardSource == _CardSource.saved) {
-        if (_selectedCardId == null) {
-          _showMessage(localizations.select_a_card);
-          setState(() => busy = false);
-          return;
-        }
-        final card = _app.sharedPreferencesProvider
-            .getCards()
-            .firstWhere((c) => c.id == _selectedCardId);
-        await _loadDumpIntoActiveSlot(card);
-      } else if (mode == 0 && _cardSource == _CardSource.slot) {
-        if (_selectedSlot == null) {
-          _showMessage(localizations.select_a_card);
-          setState(() => busy = false);
-          return;
-        }
-        await _app.communicator!.activateSlot(_selectedSlot!);
-      }
-
-      // The active slot must be MIFARE Classic. In Fixed-UID / Random modes we
-      // reuse whatever slot is active, so if it isn't MFC, fall back to any
-      // configured MIFARE Classic slot instead of failing.
-      final slotTypes = await _app.communicator!.getSlotTagTypes();
-      final activeSlot = await _app.communicator!.getActiveSlot();
-      final bool activeIsMfc = activeSlot < slotTypes.length &&
-          isMifareClassic(slotTypes[activeSlot].hf);
-      if (!activeIsMfc) {
-        final int mfcSlot = slotTypes
-            .indexWhere((t) => isMifareClassic(t.hf));
-        if (mfcSlot < 0) {
-          _showMessage(localizations.no_mifare_classic_slot_hint);
-          setState(() => busy = false);
-          return;
-        }
-        await _app.communicator!.activateSlot(mfcSlot);
-      }
-
-      // UID handling per mode.
-      if (mode == 2) {
-        await _app.communicator!.setMf1RandomUidMode(true);
-      } else {
-        await _app.communicator!.setMf1RandomUidMode(false);
-        if (mode == 1) {
-          final uid = hexToBytes(_uidCtl.text.replaceAll(' ', ''));
-          if (![4, 7, 10].contains(uid.length)) {
-            _showMessage(localizations.invalid_uid_bytes);
+        // Establish which card / slot is emulated.
+        if (mode == 0 && _cardSource == _CardSource.saved) {
+          if (_selectedCardId == null) {
+            _showMessage(localizations.select_a_card);
             setState(() => busy = false);
             return;
           }
-          final current = await _app.communicator!.mf1GetAntiCollData();
-          await _app.communicator!.setMf1AntiCollision(CardData(
-              uid: uid,
-              atqa: current.atqa,
-              sak: current.sak,
-              ats: current.ats));
+          final card = _app.sharedPreferencesProvider.getCards().firstWhere(
+            (c) => c.id == _selectedCardId,
+          );
+          await _loadDumpIntoActiveSlot(card);
+        } else if (mode == 0 && _cardSource == _CardSource.slot) {
+          if (_selectedSlot == null) {
+            _showMessage(localizations.select_a_card);
+            setState(() => busy = false);
+            return;
+          }
+          await _app.communicator!.activateSlot(_selectedSlot!);
         }
-      }
 
-      await _app.communicator!.setMf1DetectionStatus(true);
-      await _app.communicator!.setMf1ReaderKeysAnim(true);
-      if (!mounted) return;
-      setState(() {
-        armed = true;
-        detectionCount = 0;
+        // The active slot must be MIFARE Classic. In Fixed-UID / Random modes we
+        // reuse whatever slot is active, so if it isn't MFC, fall back to any
+        // configured MIFARE Classic slot instead of failing.
+        final slotTypes = await _app.communicator!.getSlotTagTypes();
+        final enabledSlots = await _app.communicator!.getEnabledSlots();
+        final activeSlot = await _app.communicator!.getActiveSlot();
+        final bool activeIsMfc =
+            activeSlot < slotTypes.length &&
+            activeSlot < enabledSlots.length &&
+            enabledSlots[activeSlot].hf &&
+            isMifareClassic(slotTypes[activeSlot].hf);
+        if (!activeIsMfc) {
+          var mfcSlot = -1;
+          for (
+            var slot = 0;
+            slot < slotTypes.length && slot < enabledSlots.length;
+            slot++
+          ) {
+            if (enabledSlots[slot].hf && isMifareClassic(slotTypes[slot].hf)) {
+              mfcSlot = slot;
+              break;
+            }
+          }
+          if (mfcSlot < 0) {
+            _showMessage(localizations.no_mifare_classic_slot_hint);
+            setState(() => busy = false);
+            return;
+          }
+          await _app.communicator!.activateSlot(mfcSlot);
+        }
+
+        // UID handling per mode.
+        if (mode == 2) {
+          await _app.communicator!.setMf1RandomUidMode(true);
+        } else {
+          await _app.communicator!.setMf1RandomUidMode(false);
+          if (mode == 1) {
+            final uid = hexToBytes(_uidCtl.text.replaceAll(' ', ''));
+            if (![4, 7, 10].contains(uid.length)) {
+              _showMessage(localizations.invalid_uid_bytes);
+              setState(() => busy = false);
+              return;
+            }
+            final current = await _app.communicator!.mf1GetAntiCollData();
+            await _app.communicator!.setMf1AntiCollision(
+              CardData(
+                uid: uid,
+                atqa: current.atqa,
+                sak: current.sak,
+                ats: current.ats,
+              ),
+            );
+          }
+        }
+
+        // Force the device into emulator/tag mode. Without this, if the device
+        // was left in reader mode (the default after any HF read/scan/autopwn) it
+        // never emulates a card, so no reader ever authenticates against it and
+        // zero nonces are captured. Only the saved-card path set this before (via
+        // _loadDumpIntoActiveSlot); slot / fixed-UID / random modes did not.
+        await _app.communicator!.setReaderDeviceMode(false);
+
+        await _app.communicator!.setMf1DetectionStatus(true);
+        detectionEnabled = true;
+        await _app.communicator!.setMf1ReaderKeysAnim(true);
+        animationEnabled = true;
+        if (!mounted) return;
+        setState(() {
+          armed = true;
+          detectionCount = 0;
+        });
+        _startPolling();
       });
-      _startPolling();
     } catch (e) {
+      if (animationEnabled) {
+        try {
+          await _app.communicator!.setMf1ReaderKeysAnim(false);
+        } catch (_) {}
+      }
+      if (detectionEnabled) {
+        try {
+          await _app.communicator!.setMf1DetectionStatus(false);
+        } catch (_) {}
+      }
+      try {
+        await _app.communicator!.setMf1RandomUidMode(false);
+      } catch (_) {}
       _showMessage(e.toString());
     } finally {
       if (mounted) setState(() => busy = false);
@@ -303,10 +381,25 @@ class ReaderKeysPageState extends State<ReaderKeysPage>
   Future<void> _stop() async {
     setState(() => busy = true);
     _pollTimer?.cancel();
+    Object? cleanupError;
     try {
-      await _app.communicator!.setMf1ReaderKeysAnim(false);
-      await _app.communicator!.setMf1DetectionStatus(false);
-      await _app.communicator!.setMf1RandomUidMode(false);
+      // Current firmware preserves the log when detection is disabled. Freeze
+      // capture first so count and paged records form one stable snapshot.
+      for (final cleanup in <Future<void> Function()>[
+        () => _app.communicator!.setMf1ReaderKeysAnim(false),
+        () => _app.communicator!.setMf1DetectionStatus(false),
+        () => _app.communicator!.setMf1RandomUidMode(false),
+      ]) {
+        try {
+          await cleanup();
+        } catch (error) {
+          cleanupError ??= error;
+        }
+      }
+      if (!recovering) {
+        await _recoverKeys();
+      }
+      if (cleanupError != null) _showMessage(cleanupError.toString());
     } catch (e) {
       _showMessage(e.toString());
     } finally {
@@ -322,91 +415,56 @@ class ReaderKeysPageState extends State<ReaderKeysPage>
   Future<void> _recoverKeys() async {
     setState(() {
       recovering = true;
-      displayKeys.clear();
-      seenKeys.clear();
-      keys.clear();
+      progress = 0;
     });
     try {
       final count = await _app.communicator!.getMf1DetectionCount();
-      final detections =
-          await _app.communicator!.getMf1DetectionResult(count);
+      final detections = await _app.communicator!.getMf1DetectionRecords(count);
       if (!mounted) return;
-      // Count (uid,block,keyType) groups up front for a monotonic progress bar.
-      var total = 0;
-      for (final u in detections.entries) {
-        for (final b in u.value.entries) {
-          total += b.value.length;
-        }
-      }
-      var done = 0;
-      for (var uidEntry in detections.entries) {
-        final uid = uidEntry.key;
-        final uidHex =
-            bytesToHex(u64ToBytes(uid).sublist(4, 8)).toUpperCase();
-        for (var blockEntry in uidEntry.value.entries) {
-          final block = blockEntry.key;
-          for (var keyEntry in blockEntry.value.entries) {
-            final keyType = keyEntry.key;
-            final records = keyEntry.value;
-            // Every record in this group authenticates the SAME sector key, so
-            // one recovered nonce pair suffices — stop after the first success
-            // instead of computing all n(n-1)/2 pairs (huge speedup).
-            Uint8List? keyBytes;
-            outer:
-            for (var i = 0; i < records.length; i++) {
-              for (var j = i + 1; j < records.length; j++) {
-                // Identical nonces (static-nonce card / replay) give a garbage
-                // key — skip them.
-                if (records[i].nt == records[j].nt) continue;
-                try {
-                  final recovered = await recovery.mfkey32(Mfkey32Dart(
-                    uid: uid,
-                    nt0: records[i].nt,
-                    nt1: records[j].nt,
-                    nr0Enc: records[i].nr,
-                    ar0Enc: records[i].ar,
-                    nr1Enc: records[j].nr,
-                    ar1Enc: records[j].ar,
-                  ));
-                  keyBytes = u64ToBytes(recovered[0]).sublist(2, 8);
-                  break outer;
-                } catch (_) {
-                  continue; // bad pair — try the next one
-                }
-              }
-            }
-            done++;
-            if (!mounted) return; // user left the page mid-recovery
-            if (keyBytes != null) {
-              outputUid = uidHex;
-              final keyHex = bytesToHex(keyBytes).toUpperCase();
-              if (seenKeys.add(keyHex)) {
-                keys.add(keyBytes);
-                displayKeys.add(Card(
-                  clipBehavior: Clip.antiAlias,
-                  child: ListTile(
-                    dense: true,
-                    leading: const Icon(Icons.vpn_key),
-                    title: Text(keyHex,
-                        style: const TextStyle(
-                            fontFamily: 'RobotoMono',
-                            fontSize: 16,
-                            fontWeight: FontWeight.bold)),
-                    subtitle: Text("UID $uidHex · block $block · key $keyType"),
-                    trailing: const Icon(Icons.copy, size: 18),
-                    onTap: () {
-                      Clipboard.setData(ClipboardData(text: keyHex));
-                      _showMessage("$keyHex ✓");
-                    },
-                  ),
-                ));
-              }
-            }
-            setState(() =>
-                progress = total == 0 ? 100 : (done * 100 / total).round());
+      final results = await recoverReaderKeys(
+        detections: detections,
+        solver: (request) async {
+          final recovered = await recovery.mfkey32(request);
+          return recovered.isEmpty ? null : recovered.first;
+        },
+        isCancelled: () => !mounted,
+        onProgress: (completed, total, _) {
+          if (mounted) {
+            setState(
+              () => progress = total == 0
+                  ? 100
+                  : (completed * 100 / total).round(),
+            );
+          }
+        },
+      );
+      if (!mounted) return;
+      setState(() {
+        for (final result in results) {
+          final previous = recoveryResults[result.target];
+          if (result.key != null || previous?.key == null) {
+            recoveryResults[result.target] = result;
           }
         }
-      }
+        final unique = <String, Uint8List>{};
+        for (final result in recoveryResults.values) {
+          if (result.key != null) {
+            unique[bytesToHex(result.key!)] = result.key!;
+          }
+        }
+        keys
+          ..clear()
+          ..addAll(unique.values);
+        final recovered = recoveryResults.values
+            .where((result) => result.key != null)
+            .toList();
+        if (recovered.isNotEmpty) {
+          outputUid = recovered.first.target.uid
+              .toRadixString(16)
+              .padLeft(8, '0')
+              .toUpperCase();
+        }
+      });
     } catch (e) {
       _showMessage(e.toString());
     } finally {
@@ -425,11 +483,12 @@ class ReaderKeysPageState extends State<ReaderKeysPage>
   Future<void> _saveRecoveredKeysDialog() async {
     final localizations = AppLocalizations.of(context)!;
     final appState = context.read<ChameleonGUIState>();
-    final deduped = <int, Uint8List>{
-      for (var k in keys.where((k) => k.isNotEmpty)) Object.hashAll(k): k
+    final deduped = <String, Uint8List>{
+      for (var k in keys.where((k) => k.isNotEmpty)) bytesToHex(k): k,
     }.values.toList();
     final nameCtl = TextEditingController(
-        text: outputUid.isEmpty ? 'reader-keys' : 'reader-$outputUid');
+      text: outputUid.isEmpty ? 'reader-keys' : 'reader-$outputUid',
+    );
     await showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -442,8 +501,9 @@ class ReaderKeysPageState extends State<ReaderKeysPage>
               controller: nameCtl,
               autofocus: true,
               decoration: InputDecoration(
-                  labelText: localizations.enter_name_of_dictionary,
-                  border: const OutlineInputBorder()),
+                labelText: localizations.enter_name_of_dictionary,
+                border: const OutlineInputBorder(),
+              ),
             ),
             const SizedBox(height: 8),
             Text("${deduped.length} keys"),
@@ -455,7 +515,7 @@ class ReaderKeysPageState extends State<ReaderKeysPage>
             child: Text(localizations.cancel),
           ),
           TextButton(
-            onPressed: () {
+            onPressed: () async {
               Navigator.pop(ctx);
               showDialog<String>(
                 context: context,
@@ -467,20 +527,25 @@ class ReaderKeysPageState extends State<ReaderKeysPage>
           ),
           ElevatedButton.icon(
             icon: const Icon(Icons.save),
-            onPressed: () {
+            onPressed: () async {
               final name = nameCtl.text.trim();
               if (name.isEmpty) return;
-              final dicts = appState.sharedPreferencesProvider.getDictionaries();
+              final dicts = appState.sharedPreferencesProvider
+                  .getDictionaries();
               // MFKey32 keys are 6 bytes -> keyLength 12 (hex chars), so the
               // dictionary shows up in the MIFARE Classic pickers that filter
               // by keyLength; without it the keys save but stay invisible.
-              dicts.add(Dictionary(
+              dicts.add(
+                Dictionary(
                   name: name,
                   color: Colors.blue,
                   keys: deduped,
-                  keyLength: deduped.isNotEmpty ? deduped.first.length * 2 : 12));
-              appState.sharedPreferencesProvider.setDictionaries(dicts);
+                  keyLength: deduped.isNotEmpty ? deduped.first.length * 2 : 12,
+                ),
+              );
+              await appState.sharedPreferencesProvider.setDictionaries(dicts);
               appState.changesMade();
+              if (!ctx.mounted) return;
               Navigator.pop(ctx);
               _showMessage('✓ $name (${deduped.length} keys)');
             },
@@ -507,13 +572,15 @@ class ReaderKeysPageState extends State<ReaderKeysPage>
         SegmentedButton<_CardSource>(
           segments: [
             ButtonSegment(
-                value: _CardSource.saved,
-                icon: const Icon(Icons.sd_card),
-                label: Text(localizations.simulated_card)),
+              value: _CardSource.saved,
+              icon: const Icon(Icons.sd_card),
+              label: Text(localizations.simulated_card),
+            ),
             ButtonSegment(
-                value: _CardSource.slot,
-                icon: const Icon(Icons.widgets),
-                label: Text(localizations.slot_manager)),
+              value: _CardSource.slot,
+              icon: const Icon(Icons.widgets),
+              label: Text(localizations.slot_manager),
+            ),
           ],
           selected: {_cardSource},
           onSelectionChanged: armed
@@ -526,32 +593,42 @@ class ReaderKeysPageState extends State<ReaderKeysPage>
             initialValue: _selectedCardId,
             isExpanded: true,
             decoration: InputDecoration(
-                labelText: localizations.simulated_card,
-                border: const OutlineInputBorder()),
+              labelText: localizations.simulated_card,
+              border: const OutlineInputBorder(),
+            ),
             items: cards
-                .map((c) => DropdownMenuItem<String?>(
-                      value: c.id,
-                      child: Text(
-                          c.name.isEmpty ? c.uid.toUpperCase() : c.name,
-                          overflow: TextOverflow.ellipsis),
-                    ))
+                .map(
+                  (c) => DropdownMenuItem<String?>(
+                    value: c.id,
+                    child: Text(
+                      c.name.isEmpty ? c.uid.toUpperCase() : c.name,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                )
                 .toList(),
-            onChanged:
-                armed ? null : (v) => setState(() => _selectedCardId = v),
+            onChanged: armed
+                ? null
+                : (v) => setState(() => _selectedCardId = v),
           )
         else ...[
           DropdownButtonFormField<int?>(
             initialValue: _selectedSlot,
             isExpanded: true,
             decoration: InputDecoration(
-                labelText: localizations.slot_manager,
-                border: const OutlineInputBorder()),
+              labelText: localizations.slot_manager,
+              border: const OutlineInputBorder(),
+            ),
             items: _slots
-                .map((e) => DropdownMenuItem<int?>(
-                      value: e.index,
-                      child: Text("${localizations.slot} ${e.index + 1}: ${e.label}",
-                          overflow: TextOverflow.ellipsis),
-                    ))
+                .map(
+                  (e) => DropdownMenuItem<int?>(
+                    value: e.index,
+                    child: Text(
+                      "${localizations.slot} ${e.index + 1}: ${e.label}",
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                )
                 .toList(),
             onChanged: armed
                 ? null
@@ -562,8 +639,10 @@ class ReaderKeysPageState extends State<ReaderKeysPage>
           if (_selectedSlotUid.isNotEmpty)
             Padding(
               padding: const EdgeInsets.only(top: 6.0),
-              child: Text("UID: $_selectedSlotUid",
-                  style: const TextStyle(fontFamily: 'RobotoMono')),
+              child: Text(
+                "UID: $_selectedSlotUid",
+                style: const TextStyle(fontFamily: 'RobotoMono'),
+              ),
             ),
         ],
       ],
@@ -609,21 +688,103 @@ class ReaderKeysPageState extends State<ReaderKeysPage>
       children: [
         Text(
           localizations.random_uid_warning,
-          style:
-              TextStyle(color: Theme.of(context).colorScheme.error, fontSize: 12),
+          style: TextStyle(
+            color: Theme.of(context).colorScheme.error,
+            fontSize: 12,
+          ),
         ),
         const SizedBox(height: 8),
         Text(
-          _currentRandomUid.isEmpty
-              ? "UID: —"
-              : "UID: $_currentRandomUid",
+          _currentRandomUid.isEmpty ? "UID: —" : "UID: $_currentRandomUid",
           style: const TextStyle(
-              fontFamily: 'RobotoMono',
-              fontSize: 16,
-              fontWeight: FontWeight.bold),
+            fontFamily: 'RobotoMono',
+            fontSize: 16,
+            fontWeight: FontWeight.bold,
+          ),
         ),
       ],
     );
+  }
+
+  List<Widget> _buildRecoveryResults() {
+    if (recoveryResults.isEmpty) return const [];
+    final results = recoveryResults.values.toList()
+      ..sort((a, b) {
+        final uidOrder = a.target.uid.compareTo(b.target.uid);
+        if (uidOrder != 0) return uidOrder;
+        final sectorOrder = a.target.sector.compareTo(b.target.sector);
+        if (sectorOrder != 0) return sectorOrder;
+        return a.target.keyB == b.target.keyB ? 0 : (a.target.keyB ? 1 : -1);
+      });
+    final recovered = results.where((result) => result.key != null).length;
+
+    String failureText(ReaderKeyRecoveryResult result) {
+      return switch (result.failure) {
+        ReaderKeyRecoveryFailure.needsMoreRecords =>
+          'Needs another authentication capture',
+        ReaderKeyRecoveryFailure.noKey =>
+          'No valid key from ${result.attemptedPairs} candidate pairs',
+        ReaderKeyRecoveryFailure.solverError =>
+          result.error ?? 'Recovery solver error',
+        ReaderKeyRecoveryFailure.cancelled => 'Recovery cancelled',
+        null => '',
+      };
+    }
+
+    return [
+      Padding(
+        padding: const EdgeInsets.only(top: 12, bottom: 4),
+        child: Text(
+          'Recovered $recovered/${results.length} sector keys '
+          '(${keys.length} unique values)',
+          style: const TextStyle(fontWeight: FontWeight.bold),
+        ),
+      ),
+      for (final result in results)
+        Builder(
+          builder: (context) {
+            final uid = result.target.uid
+                .toRadixString(16)
+                .padLeft(8, '0')
+                .toUpperCase();
+            final keyHex = result.key == null
+                ? null
+                : bytesToHex(result.key!).toUpperCase();
+            final blockList = result.blocks.toList()..sort();
+            return Card(
+              clipBehavior: Clip.antiAlias,
+              child: ListTile(
+                dense: true,
+                leading: Icon(
+                  keyHex == null ? Icons.key_off : Icons.vpn_key,
+                  color: keyHex == null ? null : Colors.green,
+                ),
+                title: Text(
+                  keyHex ?? failureText(result),
+                  style: TextStyle(
+                    fontFamily: keyHex == null ? null : 'RobotoMono',
+                    fontSize: keyHex == null ? null : 16,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                subtitle: Text(
+                  'UID $uid | sector ${result.target.sector} | key ${result.target.keyType} | '
+                  'blocks ${blockList.join(', ')} | ${result.transcriptCount} transcripts',
+                ),
+                trailing: keyHex == null
+                    ? null
+                    : const Icon(Icons.copy, size: 18),
+                onTap: keyHex == null
+                    ? null
+                    : () {
+                        Clipboard.setData(ClipboardData(text: keyHex));
+                        _showMessage('$keyHex copied');
+                      },
+              ),
+            );
+          },
+        ),
+    ];
   }
 
   Widget _buildCaptureSection() {
@@ -635,23 +796,32 @@ class ReaderKeysPageState extends State<ReaderKeysPage>
             onPressed: busy ? null : (armed ? _stop : _arm),
             icon: Icon(armed ? Icons.stop : Icons.wifi_tethering),
             label: Text(
-                armed ? localizations.stop_capture : localizations.arm_capture),
+              armed ? localizations.stop_capture : localizations.arm_capture,
+            ),
           ),
         ),
         const SizedBox(height: 10),
         if (armed) ...[
-          Text(localizations.capture_armed_hint,
-              textAlign: TextAlign.center,
-              style: const TextStyle(fontStyle: FontStyle.italic)),
+          Text(
+            localizations.capture_armed_hint,
+            textAlign: TextAlign.center,
+            style: const TextStyle(fontStyle: FontStyle.italic),
+          ),
           const SizedBox(height: 6),
-          Text(localizations.captured_auth_attempts(detectionCount),
-              style: const TextStyle(
-                  fontSize: 18, fontWeight: FontWeight.bold)),
+          Text(
+            localizations.captured_auth_attempts(detectionCount),
+            style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+          ),
+          if (detectionCount >= 1000)
+            Text(
+              'Capture buffer is full. Stop and recover before starting a new session.',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: Theme.of(context).colorScheme.error),
+            ),
           const SizedBox(height: 10),
         ],
         ElevatedButton(
-          onPressed:
-              (recovering || detectionCount <= 0) ? null : _recoverKeys,
+          onPressed: (recovering || detectionCount <= 0) ? null : _recoverKeys,
           child: Text(localizations.recover_keys_nonce(detectionCount)),
         ),
         if (progress != -1) ...[
@@ -663,7 +833,7 @@ class ReaderKeysPageState extends State<ReaderKeysPage>
             padding: const EdgeInsets.only(top: 8.0),
             child: Text(localizations.recovery_in_progress),
           ),
-        ...displayKeys,
+        ..._buildRecoveryResults(),
         if (keys.isNotEmpty)
           Padding(
             padding: const EdgeInsets.only(top: 8.0),

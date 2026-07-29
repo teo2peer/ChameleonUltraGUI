@@ -53,8 +53,8 @@ class AuthTracePageState extends State<AuthTracePage> {
       if (!await _app.communicator!.isReaderDeviceMode()) {
         await _app.communicator!.setReaderDeviceMode(true);
       }
-      final data = await _app.communicator!
-          .hf14aAuthTrace(block, 0x60 + _keyType, key);
+      final data =
+          await _app.communicator!.hf14aAuthTrace(block, 0x60 + _keyType, key);
       final frames = annotateHf14aSniffFrames(parseHf14aSniffFrames(data));
       setState(() => _frames = frames);
       if (frames.isEmpty) {

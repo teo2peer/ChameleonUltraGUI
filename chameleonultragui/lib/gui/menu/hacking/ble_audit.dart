@@ -519,7 +519,7 @@ class BleAuditPageState extends State<BleAuditPage>
     } else if (status < 0) {
       text = localizations.ble_operation_timeout;
     } else {
-      text = localizations.ble_att_error('0x${status.toRadixString(16)}');
+      text = localizations.ble_att_error(bleAttStatusDescription(status));
     }
     setState(() => _readValues[handle] = text);
   }
@@ -581,7 +581,7 @@ class BleAuditPageState extends State<BleAuditPage>
             '0x${c.handle.toRadixString(16).padLeft(4, '0')}')
         : status < 0
             ? localizations.ble_write_timeout
-            : localizations.ble_write_rejected('0x${status.toRadixString(16)}');
+            : localizations.ble_write_rejected(bleAttStatusDescription(status));
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
   }
 
@@ -640,8 +640,8 @@ class BleAuditPageState extends State<BleAuditPage>
   String _localizedDeviceInfoValue(
       AppLocalizations localizations, int uuid, int status, Uint8List data) {
     if (status != 0) {
-      return localizations.ble_device_info_read_failed(
-          '0x${status.toRadixString(16).padLeft(2, '0')}');
+      return localizations
+          .ble_device_info_read_failed(bleAttStatusDescription(status));
     }
     final value = bleDeviceInfoValue(uuid, status, data);
     return value == '(empty)' ? localizations.ble_empty_value : value;
@@ -795,7 +795,7 @@ class BleAuditPageState extends State<BleAuditPage>
       setState(() => _error = localizations.ble_count_range_error);
       return;
     }
-    if (interval < 1 || interval > 0xFFFF) {
+    if (interval < 10 || interval > 0xFFFF) {
       setState(() => _error = localizations.ble_interval_range_error);
       return;
     }
@@ -905,7 +905,12 @@ class BleAuditPageState extends State<BleAuditPage>
       await _bestEffortStopDeviceActivity(communicator,
           stopScan: stopScan, stopFuzz: wasFuzzing, cccd: cccd);
       await communicator.bleDisconnect();
-      await _refreshState();
+      for (var attempt = 0; attempt < 30 && mounted; attempt++) {
+        final state = await communicator.bleCentralState();
+        setState(() => _state = state);
+        if (state.connState == 0 || state.connState == 3) break;
+        await Future.delayed(const Duration(milliseconds: 100));
+      }
       if (mounted) {
         setState(() {
           _chars = [];

@@ -59,6 +59,45 @@ class DebugPage extends StatelessWidget {
                   '${localizations.chameleon_connected}: ${appState.connector!.connected}'),
               Text(
                   '${localizations.chameleon_device_type}: ${appState.connector!.device}'),
+              if (appState.communicator != null &&
+                  appState.communicator!.supportsCommandSync(
+                          ChameleonCommand.hf14a4DebugCounters) !=
+                      false)
+                ElevatedButton.icon(
+                  icon: const Icon(Icons.analytics_outlined),
+                  label: const Text('Read ISO-DEP debug counters'),
+                  onPressed: () async {
+                    try {
+                      final counters =
+                          await appState.communicator!.hf14a4DebugCounters();
+                      if (!context.mounted) return;
+                      await showDialog<void>(
+                        context: context,
+                        builder: (context) => AlertDialog(
+                          title: const Text('ISO-DEP debug counters'),
+                          content: SelectableText(
+                            'I-blocks received: ${counters.receivedIBlocks}\n'
+                            'I-blocks transmitted: ${counters.transmittedIBlocks}\n'
+                            'Last RX PCB: 0x${counters.lastReceivedPcb.toRadixString(16).padLeft(2, '0').toUpperCase()}\n'
+                            'Last static response match: ${counters.lastStaticResponseMatch}',
+                            style: const TextStyle(fontFamily: 'RobotoMono'),
+                          ),
+                          actions: [
+                            TextButton(
+                              onPressed: () => Navigator.pop(context),
+                              child: Text(localizations.close),
+                            ),
+                          ],
+                        ),
+                      );
+                    } catch (error) {
+                      if (!context.mounted) return;
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(content: Text(error.toString())),
+                      );
+                    }
+                  },
+                ),
               Text(
                   '${localizations.shared_preferences_logging}: ${appState.sharedPreferencesProvider.isDebugLogging()} with ${appState.sharedPreferencesProvider.getLogLines().length} lines'),
               const SizedBox(height: 10),

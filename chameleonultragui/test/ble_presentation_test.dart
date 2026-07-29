@@ -4,6 +4,10 @@ import 'package:chameleonultragui/helpers/ble/ble_presentation.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('ATT security statuses are presented with actionable names', () {
+    expect(bleAttStatusDescription(0x05), 'insufficient authentication (0x05)');
+    expect(bleAttStatusDescription(0x0F), 'insufficient encryption (0x0F)');
+  });
   group('BLE advertising presentation', () {
     test('handles malformed structure bounds without throwing', () {
       final truncated = Uint8List.fromList([0x08, 0x09, 0x43, 0x55]);

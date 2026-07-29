@@ -25,7 +25,19 @@ class MfkeyManualMenuState extends State<MfkeyManualMenu> {
   String? _error;
 
   final Map<String, TextEditingController> _c = {
-    for (final k in ['uid', 'nt', 'nt0', 'nt1', 'nr0', 'ar0', 'nr1', 'ar1', 'nr', 'ar', 'at'])
+    for (final k in [
+      'uid',
+      'nt',
+      'nt0',
+      'nt1',
+      'nr0',
+      'ar0',
+      'nr1',
+      'ar1',
+      'nr',
+      'ar',
+      'at'
+    ])
       k: TextEditingController(),
   };
 
@@ -108,8 +120,10 @@ class MfkeyManualMenuState extends State<MfkeyManualMenu> {
             children: [
               SegmentedButton<_MfkeyMode>(
                 segments: const [
-                  ButtonSegment(value: _MfkeyMode.mfkey32, label: Text("MFKey32")),
-                  ButtonSegment(value: _MfkeyMode.mfkey64, label: Text("MFKey64")),
+                  ButtonSegment(
+                      value: _MfkeyMode.mfkey32, label: Text("MFKey32")),
+                  ButtonSegment(
+                      value: _MfkeyMode.mfkey64, label: Text("MFKey64")),
                 ],
                 selected: {_mode},
                 onSelectionChanged: (s) => setState(() {
@@ -136,7 +150,8 @@ class MfkeyManualMenuState extends State<MfkeyManualMenu> {
               const SizedBox(height: 8),
               if (_error != null)
                 Text(_error!,
-                    style: TextStyle(color: Theme.of(context).colorScheme.error)),
+                    style:
+                        TextStyle(color: Theme.of(context).colorScheme.error)),
               if (_result != null)
                 Row(
                   mainAxisAlignment: MainAxisAlignment.center,
@@ -148,8 +163,8 @@ class MfkeyManualMenuState extends State<MfkeyManualMenu> {
                             fontSize: 18)),
                     IconButton(
                       icon: const Icon(Icons.copy, size: 18),
-                      onPressed: () => Clipboard.setData(
-                          ClipboardData(text: _result!)),
+                      onPressed: () =>
+                          Clipboard.setData(ClipboardData(text: _result!)),
                     ),
                   ],
                 ),

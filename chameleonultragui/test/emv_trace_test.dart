@@ -35,6 +35,46 @@ void main() {
         '0101020304000000051000',
       );
     });
+
+    test('encodes the Express Transit ECP2 option', () {
+      final request = EmvTraceRequest.readOnly(expressTransit: true);
+      expect(request.encode().length, 25);
+      expect(request.encode()[1] & 0x40, 0x40);
+    });
+
+    test('encodes bounded and custom terminal profiles', () {
+      final sweep = EmvTraceRequest.readOnly(
+        expressTransit: true,
+        terminalProfile: EmvTerminalProfile.compatibilitySweep,
+      ).encode();
+      expect(sweep.length, 30);
+      expect(_hex(sweep.sublist(0, 2)), '01e6');
+      expect(_hex(sweep.sublist(25)), 'ff00000000');
+
+      final custom = EmvTraceRequest(
+        terminalProfile: EmvTerminalProfile.custom,
+        customTtq: const [0x12, 0x34, 0x56, 0x78],
+        amount: Uint8List(6),
+        country: Uint8List(2),
+        currency: Uint8List(2),
+        date: Uint8List(3),
+      ).encode();
+      expect(_hex(custom.sublist(25)), 'fe12345678');
+
+      final adaptive = EmvTraceRequest(
+        terminalProfile: EmvTerminalProfile.compatibilitySweep,
+        pollingProfile: EmvPollingProfile.patient,
+        directAidFallback: true,
+        adaptiveProfiles: true,
+        reacquireBetweenProfiles: true,
+        amount: Uint8List(6),
+        country: Uint8List(2),
+        currency: Uint8List(2),
+        date: Uint8List(3),
+      ).encode();
+      expect(adaptive.length, 35);
+      expect(_hex(adaptive.sublist(25)), 'ff000000000307000000');
+    });
   });
 
   group('EMV trace strict parsing', () {

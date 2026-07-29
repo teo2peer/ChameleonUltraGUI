@@ -14,10 +14,20 @@ class QrCodeImport extends StatefulWidget {
 }
 
 class QrCodeImportState extends State<QrCodeImport> {
+  static const int _maxChunks = 64;
+  static const int _maxChunkBytes = 4096;
+  static const int _maxTotalBytes = 16 * 1024;
   String? shasum;
   int? qrCodeChunks;
-  String resultingJson = "";
-  int currentChunk = 0;
+  List<String?> chunks = [];
+
+  int get currentChunk => chunks.whereType<String>().length;
+  String get resultingJson => chunks.whereType<String>().join();
+  bool get checksumMatches =>
+      shasum != null &&
+      sha256.convert(utf8.encode(resultingJson)).toString() == shasum;
+  bool get isComplete =>
+      qrCodeChunks != null && currentChunk == qrCodeChunks && checksumMatches;
 
   @override
   Widget build(BuildContext context) {
@@ -32,33 +42,63 @@ class QrCodeImportState extends State<QrCodeImport> {
         ),
         TextButton(
           onPressed: () async {
-            if (qrCodeChunks == currentChunk) {
+            if (isComplete) {
               Navigator.pop(context, resultingJson);
               return;
             }
 
-            String qrCodeData = await showDialog(
+            String? qrCodeData = await showDialog<String>(
                 context: context,
                 builder: (BuildContext context) {
                   return const QrCodeScanner();
                 });
-            if (qrCodeData
-                .contains("\"Info\":\"Chameleon Ultra GUI Settings\"")) {
-              Map<String, dynamic>? data = jsonDecode(qrCodeData);
-              if (data == null) {
+            if (qrCodeData == null) return;
+            Object? decoded;
+            try {
+              decoded = jsonDecode(qrCodeData);
+            } on FormatException {
+              return;
+            }
+            if (decoded is! Map<String, dynamic>) return;
+            if (decoded["Info"] == "Chameleon Ultra GUI Settings") {
+              final digest = decoded["sha256"];
+              final count = decoded["chunks"];
+              if (decoded.keys
+                      .toSet()
+                      .difference({"Info", "sha256", "chunks"}).isNotEmpty ||
+                  digest is! String ||
+                  !RegExp(r'^[0-9a-f]{64}$').hasMatch(digest) ||
+                  count is! int ||
+                  count < 1 ||
+                  count > _maxChunks) {
                 return;
               }
               setState(() {
-                shasum = data["sha256"];
-                qrCodeChunks = data["chunks"];
+                shasum = digest;
+                qrCodeChunks = count;
+                chunks = List<String?>.filled(count, null);
               });
-              currentChunk = 0;
-              resultingJson = "";
             } else {
-              resultingJson += qrCodeData;
-              setState(() {
-                currentChunk++;
-              });
+              final digest = decoded["sha256"];
+              final count = decoded["chunks"];
+              final index = decoded["index"];
+              final value = decoded["data"];
+              if (decoded["Info"] != "Chameleon Ultra GUI Settings Chunk" ||
+                  digest != shasum ||
+                  count != qrCodeChunks ||
+                  index is! int ||
+                  index < 0 ||
+                  index >= chunks.length ||
+                  value is! String ||
+                  utf8.encode(value).length > _maxChunkBytes) {
+                return;
+              }
+              final next = chunks.toList()..[index] = value;
+              if (utf8.encode(next.whereType<String>().join()).length >
+                  _maxTotalBytes) {
+                return;
+              }
+              setState(() => chunks = next);
             }
           },
           child: Row(
@@ -66,15 +106,12 @@ class QrCodeImportState extends State<QrCodeImport> {
             children: [
               qrCodeChunks == null
                   ? Text(AppLocalizations.of(context)!.startScanning)
-                  : qrCodeChunks == currentChunk
+                  : isComplete
                       ? Text(AppLocalizations.of(context)!.finishImport)
                       : Text(AppLocalizations.of(context)!.scan_next_qr_code(
                           "${currentChunk + 1}", "${qrCodeChunks! + 1}")),
               const SizedBox(width: 5),
-              if (sha256
-                      .convert(const Utf8Encoder().convert(resultingJson))
-                      .toString() ==
-                  shasum)
+              if (checksumMatches)
                 Tooltip(
                   message: AppLocalizations.of(context)!.checksumOk,
                   child: const Icon(Icons.check),

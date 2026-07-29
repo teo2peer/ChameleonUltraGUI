@@ -1,7 +1,8 @@
 import 'package:chameleonultragui/gui/component/error_message.dart';
 import 'package:chameleonultragui/gui/component/key_check_marks.dart';
 import 'package:chameleonultragui/gui/menu/dialogs/dictionary/export.dart';
-import 'package:chameleonultragui/gui/page/read_card.dart' show MifareClassicInfo;
+import 'package:chameleonultragui/gui/page/read_card.dart'
+    show MifareClassicInfo;
 import 'package:chameleonultragui/helpers/general.dart';
 import 'package:chameleonultragui/helpers/mifare_classic/general.dart';
 import 'package:flutter/material.dart';
@@ -89,7 +90,8 @@ class BackdoorPageState extends State<BackdoorPage> {
               KeyCheckMarks(
                 checkMarks: recovery.checkMarks,
                 validKeys: recovery.validKeys,
-                checkmarkCount: mfClassicGetSectorCount(recovery.mifareClassicType,
+                checkmarkCount: mfClassicGetSectorCount(
+                    recovery.mifareClassicType,
                     isEV1: recovery.isMifareClassicEV1),
               ),
               if (recovery.error.isNotEmpty) ...[

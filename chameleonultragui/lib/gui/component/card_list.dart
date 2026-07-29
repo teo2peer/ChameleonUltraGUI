@@ -165,7 +165,16 @@ class CardSearchDelegate extends SearchDelegate<String> {
             overflow: TextOverflow.ellipsis,
           ),
           onTap: () async {
-            onTap(card, close, localizations);
+            final messenger = ScaffoldMessenger.maybeOf(context);
+            try {
+              await onTap(card, close, localizations);
+            } catch (error) {
+              if (messenger?.mounted ?? false) {
+                messenger!.showSnackBar(
+                  SnackBar(content: Text(error.toString())),
+                );
+              }
+            }
           },
         );
       },

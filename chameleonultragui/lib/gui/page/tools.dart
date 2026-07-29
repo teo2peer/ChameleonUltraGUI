@@ -1,6 +1,7 @@
 import 'package:chameleonultragui/generated/i18n/app_localizations.dart';
 import 'package:chameleonultragui/gui/menu/tools/compare_cards.dart';
 import 'package:chameleonultragui/gui/menu/tools/dictionary_download.dart';
+import 'package:chameleonultragui/gui/menu/tools/emulation_change_history.dart';
 import 'package:chameleonultragui/gui/menu/tools/hf_sniffing.dart';
 import 'package:chameleonultragui/gui/menu/tools/lf_sniffing.dart';
 import 'package:chameleonultragui/gui/menu/tools/t55xx_password_cleaner.dart';
@@ -8,6 +9,7 @@ import 'package:chameleonultragui/main.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_staggered_grid_view/flutter_staggered_grid_view.dart';
 import 'package:chameleonultragui/gui/component/element_button.dart';
+import 'package:chameleonultragui/gui/component/status_badge.dart';
 import 'package:provider/provider.dart';
 
 class ToolItem {
@@ -52,6 +54,12 @@ class ToolsPageState extends State<ToolsPage> {
           description: localizations.dictionary_download_description,
           icon: Icons.key,
           onPressed: const DictionaryDownloadMenu()),
+      ToolItem(
+          name: 'Emulated tag history',
+          description:
+              'Monitor reader-written MIFARE Classic changes and keep block-level history on this phone.',
+          icon: Icons.history,
+          onPressed: const EmulationChangeHistoryMenu()),
       ToolItem(
           name: localizations.t55xx_password_cleaner,
           description: localizations.t55xx_password_cleaner_description,
@@ -122,43 +130,13 @@ class ToolsPageState extends State<ToolsPage> {
                     Positioned(
                       top: 8,
                       right: 8,
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 6, vertical: 2),
-                        decoration: BoxDecoration(
-                          color: Theme.of(context).colorScheme.primary,
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: Text(
-                          localizations.wip,
-                          style: TextStyle(
-                            color: Theme.of(context).colorScheme.inversePrimary,
-                            fontSize: 10,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ),
+                      child: StatusBadge(localizations.wip),
                     ),
                   if (disconnected)
                     Positioned(
                       top: tool.showWipBadge || tool.onPressed == null ? 32 : 8,
                       right: 8,
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 6, vertical: 2),
-                        decoration: BoxDecoration(
-                          color: Theme.of(context).colorScheme.primary,
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: Text(
-                          localizations.device_required,
-                          style: TextStyle(
-                            color: Theme.of(context).colorScheme.inversePrimary,
-                            fontSize: 10,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ),
+                      child: StatusBadge(localizations.device_required),
                     ),
                 ],
               );

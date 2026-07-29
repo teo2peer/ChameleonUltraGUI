@@ -228,6 +228,7 @@ class EmvReaderPageState extends State<EmvReaderPage> {
             content: const Text(
               'Maximum mode reselects every discovered AID and performs the '
               'record grid, standard-data, and transaction-log probes. It can '
+              'run GPO, advance ATC or other card state, and '
               'take up to 30 seconds. Use it only on cards you are authorised '
               'to examine and keep the card on the antenna.',
             ),
@@ -428,7 +429,8 @@ class EmvReaderPageState extends State<EmvReaderPage> {
             Text(
               '${meta.storedRecords}/${meta.observedRecords} records | '
               '${meta.storedBytes}/${meta.requiredBytes} bytes | '
-              '${meta.elapsedMs} ms | ${meta.applicationCount} AIDs',
+              '${meta.elapsedMs} ms | ${meta.applicationCount} AIDs | '
+              'result 0x${meta.resultStatus.toRadixString(16).padLeft(2, '0').toUpperCase()}',
             ),
             if (warnings.isNotEmpty) ...[
               const SizedBox(height: 4),
@@ -489,6 +491,11 @@ class EmvReaderPageState extends State<EmvReaderPage> {
     final scopedAip = _selectedApplication == -1
         ? r?.aip
         : emvDecodeAip(emvLeafMapFromTrace(scopedTraces));
+    final scopedAid = _selectedApplication == -1
+        ? (r?.applicationAids.length == 1
+            ? r!.applicationAids.values.single
+            : null)
+        : r?.applicationAids[_selectedApplication];
     final scopedRf = r?.capture?.rfRecords
             .where((record) =>
                 _selectedApplication == -1 ||
@@ -602,7 +609,7 @@ class EmvReaderPageState extends State<EmvReaderPage> {
                     else
                       ...scopedFields.entries
                           .map((e) => _field(e.key, e.value)),
-                    relayAssessmentCard(context, scopedAip),
+                    relayAssessmentCard(context, scopedAip, aid: scopedAid),
                     const SizedBox(height: 8),
                     ExpansionTile(
                       title: Text("EMV TLV (${scopedTlvs.length})"),

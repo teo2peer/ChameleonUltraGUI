@@ -225,6 +225,17 @@ bool bleCanWriteWithResponse(int properties) => properties & 0x08 != 0;
 
 bool bleCanFuzzWithoutResponse(int properties) => properties & 0x04 != 0;
 
+String bleAttStatusDescription(int status) {
+  final name = switch (status) {
+    0x05 => 'insufficient authentication',
+    0x08 => 'insufficient authorization',
+    0x0C => 'insufficient encryption key size',
+    0x0F => 'insufficient encryption',
+    _ => 'ATT error',
+  };
+  return '$name (0x${status.toRadixString(16).padLeft(2, '0').toUpperCase()})';
+}
+
 Uint8List bleParseHexBytes(String value) {
   if (value.isEmpty || value.length.isOdd) {
     throw const FormatException('need an even number of hex digits');

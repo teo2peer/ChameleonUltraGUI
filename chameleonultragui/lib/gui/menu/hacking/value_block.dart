@@ -22,7 +22,8 @@ class ValueBlockMenuState extends State<ValueBlockMenu> {
   final _value = TextEditingController(text: '0');
   final _dstBlock = TextEditingController();
   int _keyType = 0; // 0=A, 1=B
-  MifareClassicValueBlockOperator _op = MifareClassicValueBlockOperator.increment;
+  MifareClassicValueBlockOperator _op =
+      MifareClassicValueBlockOperator.increment;
   bool _busy = false;
 
   ChameleonGUIState get _app => context.read<ChameleonGUIState>();
@@ -86,7 +87,8 @@ class ValueBlockMenuState extends State<ValueBlockMenu> {
             children: [
               if (!_connected)
                 Text(localizations.no_device,
-                    style: TextStyle(color: Theme.of(context).colorScheme.error)),
+                    style:
+                        TextStyle(color: Theme.of(context).colorScheme.error)),
               TextField(
                 controller: _block,
                 keyboardType: TextInputType.number,

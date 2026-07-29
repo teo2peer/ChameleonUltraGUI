@@ -120,8 +120,9 @@ class DictionaryViewMenuState extends State<DictionaryViewMenu> {
                       padding: const EdgeInsets.all(8.0),
                       child: TextButton.icon(
                         onPressed: () async {
-                          await Clipboard.setData(ClipboardData(
-                              text: currentDictionary.toString()));
+                          await Clipboard.setData(
+                            ClipboardData(text: currentDictionary.toString()),
+                          );
                         },
                         icon: const Icon(Icons.copy),
                         label: Text(localizations.copy_all_keys),
@@ -174,14 +175,15 @@ class DictionaryViewMenuState extends State<DictionaryViewMenu> {
               }
             }
 
-            var dictionaries =
-                appState.sharedPreferencesProvider.getDictionaries();
+            var dictionaries = appState.sharedPreferencesProvider
+                .getDictionaries();
             var updatedDictionaries = dictionaries
                 .where((dict) => dict.id != currentDictionary.id)
                 .toList();
 
-            appState.sharedPreferencesProvider
-                .setDictionaries(updatedDictionaries);
+            await appState.sharedPreferencesProvider.setDictionaries(
+              updatedDictionaries,
+            );
             appState.changesMade();
           },
           icon: const Icon(Icons.delete_outline),

@@ -16,20 +16,84 @@ Uuid dfuUUID = Uuid.parse("FE59");
 Uuid dfuControl = Uuid.parse("8EC90001-F315-4F60-9FB8-838830DAEA50");
 Uuid dfuFirmware = Uuid.parse("8EC90002-F315-4F60-9FB8-838830DAEA50");
 
+typedef BleWriteRequester = Future<void> Function(
+  QualifiedCharacteristic characteristic,
+  Uint8List value,
+  bool withResponse,
+);
+
 class BLESerial extends AbstractSerial {
-  FlutterReactiveBle flutterReactiveBle = FlutterReactiveBle();
+  FlutterReactiveBle? _flutterReactiveBle;
+  final Future<void> Function(String, ConnectionPriority)?
+      connectionPriorityRequester;
+  final Future<int> Function(String, int)? mtuRequester;
+  final BleWriteRequester? writeRequester;
+  final Duration connectionAttemptTimeout;
+  final Duration scanDuration;
   QualifiedCharacteristic? txCharacteristic;
   QualifiedCharacteristic? rxCharacteristic;
   QualifiedCharacteristic? firmwareCharacteristic;
+  Characteristic? _resolvedRxCharacteristic;
+  Characteristic? _resolvedFirmwareCharacteristic;
   Stream<List<int>>? receivedDataStream;
   StreamSubscription<List<int>>? receivedDataSubscription;
   StreamSubscription<ConnectionStateUpdate>? connection;
+  int _connectRetryGeneration = 0;
+  StreamSubscription<DiscoveredDevice>? _scanSubscription;
+  Timer? _scanTimer;
+  Completer<bool>? _connectionCompleter;
+  int _connectionGeneration = 0;
+  int _effectiveAttPayload = 20;
   Map<String, Chameleon> chameleonMap = {};
   bool inSearch = false;
 
-  BLESerial({required super.log});
+  BLESerial({
+    required super.log,
+    FlutterReactiveBle? reactiveBle,
+    this.connectionPriorityRequester,
+    this.mtuRequester,
+    this.writeRequester,
+    this.connectionAttemptTimeout = const Duration(seconds: 10),
+    this.scanDuration = const Duration(seconds: 2),
+  }) : _flutterReactiveBle = reactiveBle;
 
-  Future<List> availableDevices() async {
+  FlutterReactiveBle get flutterReactiveBle =>
+      _flutterReactiveBle ??= FlutterReactiveBle();
+
+  Future<void> optimizeConnection(
+    String deviceId, {
+    bool? isAndroid,
+  }) async {
+    _effectiveAttPayload = 20;
+    if (!(isAndroid ?? Platform.isAndroid)) return;
+    try {
+      final requester = connectionPriorityRequester;
+      if (requester == null) {
+        await flutterReactiveBle.requestConnectionPriority(
+          deviceId: deviceId,
+          priority: ConnectionPriority.highPerformance,
+        );
+      } else {
+        await requester(deviceId, ConnectionPriority.highPerformance);
+      }
+    } catch (error) {
+      log.w('Could not request high-performance BLE connection: $error');
+    }
+    try {
+      final requester = mtuRequester;
+      final mtu = requester == null
+          ? await flutterReactiveBle.requestMtu(deviceId: deviceId, mtu: 247)
+          : await requester(deviceId, 247);
+      if (mtu >= 23) {
+        _effectiveAttPayload = mtu - 3;
+      }
+      log.d('Negotiated BLE ATT MTU: $mtu');
+    } catch (error) {
+      log.w('Could not negotiate BLE ATT MTU 247: $error');
+    }
+  }
+
+  Future<List> availableDevices({bool? isIOS}) async {
     if (inSearch) {
       log.w("Multiple searches in one time not allowed! FIXME");
       return [];
@@ -38,41 +102,92 @@ class BLESerial extends AbstractSerial {
     List<DiscoveredDevice> foundDevices = [];
     await performDisconnect();
 
-    Completer<List<DiscoveredDevice>> completer =
-        Completer<List<DiscoveredDevice>>();
-    StreamSubscription<DiscoveredDevice> subscription;
+    final completer = Completer<List<DiscoveredDevice>>();
+    StreamSubscription<DiscoveredDevice>? subscription;
+    var finished = false;
 
-    inSearch = true;
-    subscription = flutterReactiveBle.scanForDevices(
-      withServices: [nrfUUID, dfuUUID],
-      scanMode: ScanMode.lowLatency,
-    ).listen((device) {
-      if (!foundDevices.contains(device)) {
-        for (var foundDevice in foundDevices) {
-          if (foundDevice.id == device.id) {
-            return;
-          }
-        }
-        foundDevices.add(device);
+    Future<void> finishScan({
+      List<DiscoveredDevice>? result,
+      Object? error,
+      StackTrace? stackTrace,
+    }) async {
+      if (finished) return;
+      finished = true;
+      final timer = _scanTimer;
+      final activeSubscription = subscription;
+      if (identical(_scanTimer, timer)) _scanTimer = null;
+      if (identical(_scanSubscription, activeSubscription)) {
+        _scanSubscription = null;
       }
-    }, onError: (e) {
-      log.e("Got BLE search error: $e");
-      inSearch = false;
-      if (Platform.isIOS) {
-        throw (e); // BLE is primary there, throw exception
-      } else {
-        completer.complete([]); // Other platforms: we don't care
-      }
-    });
-
-    Timer(const Duration(seconds: 2), () {
-      subscription.cancel();
+      timer?.cancel();
       inSearch = false;
       try {
-        completer.complete(foundDevices);
-        log.d('Found BLE devices: ${foundDevices.length}');
-      } catch (_) {}
-    });
+        await activeSubscription?.cancel();
+      } catch (cancelError, cancelStackTrace) {
+        log.e(
+          'Could not cancel BLE scan',
+          error: cancelError,
+          stackTrace: cancelStackTrace,
+        );
+      }
+      if (completer.isCompleted) return;
+      if (error != null) {
+        completer.completeError(error, stackTrace ?? StackTrace.current);
+      } else {
+        final devices = result ?? foundDevices;
+        completer.complete(devices);
+        log.d('Found BLE devices: ${devices.length}');
+      }
+    }
+
+    inSearch = true;
+    try {
+      subscription = flutterReactiveBle.scanForDevices(
+        withServices: [nrfUUID, dfuUUID],
+        scanMode: ScanMode.lowLatency,
+      ).listen((device) {
+        if (!foundDevices.contains(device)) {
+          for (var foundDevice in foundDevices) {
+            if (foundDevice.id == device.id) {
+              return;
+            }
+          }
+          foundDevices.add(device);
+        }
+      }, onError: (Object error, StackTrace stackTrace) {
+        log.e("Got BLE search error: $error");
+        if (isIOS ?? Platform.isIOS) {
+          unawaited(finishScan(error: error, stackTrace: stackTrace));
+        } else {
+          unawaited(finishScan(result: []));
+        }
+      }, onDone: () {
+        unawaited(finishScan());
+      });
+      _scanSubscription = subscription;
+      if (!finished) {
+        _scanTimer = Timer(scanDuration, () {
+          unawaited(finishScan());
+        });
+      } else {
+        final completedSubscription = subscription;
+        if (identical(_scanSubscription, completedSubscription)) {
+          _scanSubscription = null;
+        }
+        await completedSubscription.cancel();
+      }
+    } catch (error, stackTrace) {
+      log.e(
+        'Could not start BLE scan',
+        error: error,
+        stackTrace: stackTrace,
+      );
+      if (isIOS ?? Platform.isIOS) {
+        await finishScan(error: error, stackTrace: stackTrace);
+      } else {
+        await finishScan(result: []);
+      }
+    }
 
     return completer.future;
   }
@@ -127,9 +242,12 @@ class BLESerial extends AbstractSerial {
   Future<bool> connectSpecificDevice(dynamic devicePort) async {
     // As BLE is unstable, we try to connect 5 times
     // And fail only then
+    final retryGeneration = ++_connectRetryGeneration;
     bool ret = false;
     for (var i = 0; i < 5; i++) {
+      if (retryGeneration != _connectRetryGeneration) return false;
       ret = await connectSpecificInternal(devicePort);
+      if (retryGeneration != _connectRetryGeneration) return false;
       if (ret) {
         break;
       }
@@ -139,173 +257,319 @@ class BLESerial extends AbstractSerial {
   }
 
   Future<bool> connectSpecificInternal(dynamic devicePort) async {
-    Completer<bool> completer = Completer<bool>();
+    final completer = Completer<bool>();
+    void completeAttempt(bool value) {
+      if (!completer.isCompleted) completer.complete(value);
+      if (identical(_connectionCompleter, completer)) {
+        _connectionCompleter = null;
+      }
+    }
+
     List<Uuid> services = [nrfUUID, uartRX, uartTX];
     if (chameleonMap[devicePort]!.dfu) {
       services = [dfuUUID, dfuControl, dfuFirmware];
     }
 
-    await performDisconnect();
+    await _performDisconnect(cancelRetryLoop: false);
+    final generation = ++_connectionGeneration;
+    _connectionCompleter = completer;
     pendingConnection = true;
-    connection = flutterReactiveBle
-        .connectToAdvertisingDevice(
-      id: devicePort,
-      withServices: services,
-      prescanDuration: const Duration(seconds: 5),
-    )
-        .listen((connectionState) async {
-      log.w(connectionState);
-      if (connectionState.connectionState == DeviceConnectionState.connected) {
-        if (chameleonMap[devicePort]!.dfu) {
-          connected = true;
-          pendingConnection = false;
-          txCharacteristic = QualifiedCharacteristic(
-              serviceId: dfuUUID,
-              characteristicId: dfuControl,
-              deviceId: connectionState.deviceId);
-          receivedDataStream =
-              flutterReactiveBle.subscribeToCharacteristic(txCharacteristic!);
-          await receivedDataSubscription?.cancel();
-          receivedDataSubscription = receivedDataStream!.listen((data) async {
-            if (messageCallback != null) {
-              try {
-                await messageCallback(Uint8List.fromList(data));
-              } catch (_) {
-                log.w(
-                    "Received unexpected data: ${bytesToHex(Uint8List.fromList(data))}");
-              }
-            }
-          }, onError: (dynamic error) async {
-            await performDisconnect();
-            log.e(error);
-          });
-
-          rxCharacteristic = QualifiedCharacteristic(
-              serviceId: dfuUUID,
-              characteristicId: dfuControl,
-              deviceId: connectionState.deviceId);
-
-          firmwareCharacteristic = QualifiedCharacteristic(
-              serviceId: dfuUUID,
-              characteristicId: dfuFirmware,
-              deviceId: connectionState.deviceId);
-
-          portName = devicePort;
-          device = chameleonMap[devicePort]!.device;
-          activeDevicePort = devicePort;
-
-          isDFU = true;
-          completer.complete(true);
-        } else {
-          txCharacteristic = QualifiedCharacteristic(
-              serviceId: nrfUUID,
-              characteristicId: uartTX,
-              deviceId: connectionState.deviceId);
-          receivedDataStream =
-              flutterReactiveBle.subscribeToCharacteristic(txCharacteristic!);
-          await receivedDataSubscription?.cancel();
-          receivedDataSubscription = receivedDataStream!.listen((data) async {
-            if (messageCallback != null) {
-              try {
-                await messageCallback(Uint8List.fromList(data));
-              } catch (_) {
-                log.w(
-                    "Received unexpected data: ${bytesToHex(Uint8List.fromList(data))}");
-              }
-            }
-          }, onError: (dynamic error) async {
-            await performDisconnect();
-            log.e(error);
-          });
-
-          rxCharacteristic = QualifiedCharacteristic(
-              serviceId: nrfUUID,
-              characteristicId: uartRX,
-              deviceId: connectionState.deviceId);
-
-          try {
-            await flutterReactiveBle.writeCharacteristicWithResponse(
-                rxCharacteristic!,
-                value: Uint8List.fromList([
-                  0x11,
-                  0xef,
-                  0x03,
-                  0xfb,
-                  0x00,
-                  0x00,
-                  0x00,
-                  0x00,
-                  0x02,
-                  0x00
-                ]));
-
-            connected = true;
-            portName = devicePort;
-            device = chameleonMap[devicePort]!.device;
-            activeDevicePort = devicePort;
-
-            connectionType = ConnectionType.ble;
-            isDFU = false;
-
-            completer.complete(true);
-          } catch (_) {
-            try {
-              completer.complete(false);
-            } catch (_) {}
-          }
-        }
-      } else if (connectionState.connectionState ==
-          DeviceConnectionState.disconnected) {
-        await performDisconnect();
-        try {
-          completer.complete(false);
-        } catch (_) {}
-      }
-    }, onError: (Object error) {
-      log.e(error);
-      completer.complete(false);
+    final timeoutTimer = Timer(connectionAttemptTimeout, () {
+      unawaited(_disconnectGeneration(
+        generation,
+        error: TimeoutException(
+          'BLE connection attempt timed out',
+          connectionAttemptTimeout,
+        ),
+      ));
     });
 
-    return completer.future;
+    try {
+      final candidateConnection = flutterReactiveBle
+          .connectToAdvertisingDevice(
+        id: devicePort,
+        withServices: services,
+        prescanDuration: const Duration(seconds: 5),
+        connectionTimeout: connectionAttemptTimeout,
+      )
+          .listen((connectionState) async {
+        if (generation != _connectionGeneration) return;
+        log.w(connectionState);
+        if (connectionState.connectionState ==
+            DeviceConnectionState.connected) {
+          try {
+            await optimizeConnection(connectionState.deviceId);
+            if (generation != _connectionGeneration) return;
+            if (chameleonMap[devicePort]!.dfu) {
+              txCharacteristic = QualifiedCharacteristic(
+                  serviceId: dfuUUID,
+                  characteristicId: dfuControl,
+                  deviceId: connectionState.deviceId);
+              receivedDataStream = flutterReactiveBle
+                  .subscribeToCharacteristic(txCharacteristic!);
+              await receivedDataSubscription?.cancel();
+              if (generation != _connectionGeneration) return;
+              receivedDataSubscription =
+                  receivedDataStream!.listen((data) async {
+                if (generation != _connectionGeneration) return;
+                if (messageCallback != null) {
+                  try {
+                    await messageCallback(Uint8List.fromList(data));
+                  } catch (_) {
+                    log.w(
+                        "Received unexpected data: ${bytesToHex(Uint8List.fromList(data))}");
+                  }
+                }
+              }, onError: (Object error, StackTrace stackTrace) {
+                unawaited(_disconnectGeneration(
+                  generation,
+                  error: error,
+                  stackTrace: stackTrace,
+                ));
+              }, onDone: () {
+                unawaited(_disconnectGeneration(generation));
+              });
+
+              rxCharacteristic = QualifiedCharacteristic(
+                  serviceId: dfuUUID,
+                  characteristicId: dfuControl,
+                  deviceId: connectionState.deviceId);
+
+              firmwareCharacteristic = QualifiedCharacteristic(
+                  serviceId: dfuUUID,
+                  characteristicId: dfuFirmware,
+                  deviceId: connectionState.deviceId);
+
+              portName = devicePort;
+              device = chameleonMap[devicePort]!.device;
+              activeDevicePort = devicePort;
+
+              connected = true;
+              pendingConnection = false;
+              connectionType = ConnectionType.ble;
+              isDFU = true;
+              completeAttempt(true);
+            } else {
+              txCharacteristic = QualifiedCharacteristic(
+                  serviceId: nrfUUID,
+                  characteristicId: uartTX,
+                  deviceId: connectionState.deviceId);
+              receivedDataStream = flutterReactiveBle
+                  .subscribeToCharacteristic(txCharacteristic!);
+              await receivedDataSubscription?.cancel();
+              if (generation != _connectionGeneration) return;
+              receivedDataSubscription =
+                  receivedDataStream!.listen((data) async {
+                if (generation != _connectionGeneration) return;
+                if (messageCallback != null) {
+                  try {
+                    await messageCallback(Uint8List.fromList(data));
+                  } catch (_) {
+                    log.w(
+                        "Received unexpected data: ${bytesToHex(Uint8List.fromList(data))}");
+                  }
+                }
+              }, onError: (Object error, StackTrace stackTrace) {
+                unawaited(_disconnectGeneration(
+                  generation,
+                  error: error,
+                  stackTrace: stackTrace,
+                ));
+              }, onDone: () {
+                unawaited(_disconnectGeneration(generation));
+              });
+
+              rxCharacteristic = QualifiedCharacteristic(
+                  serviceId: nrfUUID,
+                  characteristicId: uartRX,
+                  deviceId: connectionState.deviceId);
+
+              await write(Uint8List.fromList([
+                0x11,
+                0xef,
+                0x03,
+                0xfb,
+                0x00,
+                0x00,
+                0x00,
+                0x00,
+                0x02,
+                0x00
+              ]));
+              if (generation != _connectionGeneration) return;
+
+              connected = true;
+              pendingConnection = false;
+              portName = devicePort;
+              device = chameleonMap[devicePort]!.device;
+              activeDevicePort = devicePort;
+
+              connectionType = ConnectionType.ble;
+              isDFU = false;
+
+              completeAttempt(true);
+            }
+          } catch (error, stackTrace) {
+            await _disconnectGeneration(
+              generation,
+              error: error,
+              stackTrace: stackTrace,
+            );
+            completeAttempt(false);
+          }
+        } else if (connectionState.connectionState ==
+            DeviceConnectionState.disconnected) {
+          await _disconnectGeneration(generation);
+          completeAttempt(false);
+        }
+      }, onError: (Object error, StackTrace stackTrace) {
+        unawaited(_disconnectGeneration(
+          generation,
+          error: error,
+          stackTrace: stackTrace,
+        ));
+      }, onDone: () {
+        unawaited(_disconnectGeneration(generation));
+      });
+      if (generation == _connectionGeneration) {
+        connection = candidateConnection;
+      } else {
+        await candidateConnection.cancel();
+      }
+    } catch (error, stackTrace) {
+      await _disconnectGeneration(
+        generation,
+        error: error,
+        stackTrace: stackTrace,
+      );
+      completeAttempt(false);
+    }
+
+    return completer.future.whenComplete(timeoutTimer.cancel);
+  }
+
+  Future<void> _disconnectGeneration(
+    int generation, {
+    Object? error,
+    StackTrace? stackTrace,
+  }) async {
+    if (generation != _connectionGeneration) return;
+    if (error != null) {
+      log.e('BLE connection failed', error: error, stackTrace: stackTrace);
+    }
+    try {
+      await _performDisconnect(cancelRetryLoop: false);
+    } catch (cancelError, cancelStackTrace) {
+      log.e(
+        'Could not fully cancel BLE subscriptions',
+        error: cancelError,
+        stackTrace: cancelStackTrace,
+      );
+    }
   }
 
   @override
-  Future<bool> performDisconnect() async {
+  Future<bool> performDisconnect() => _performDisconnect(cancelRetryLoop: true);
+
+  Future<bool> _performDisconnect({required bool cancelRetryLoop}) async {
+    if (cancelRetryLoop) _connectRetryGeneration++;
     final hadState = hasConnectionState || connection != null;
-    await receivedDataSubscription?.cancel();
+    _connectionGeneration++;
+    final pendingCompleter = _connectionCompleter;
+    _connectionCompleter = null;
+    final receiveSubscription = receivedDataSubscription;
+    final activeConnection = connection;
     receivedDataSubscription = null;
+    connection = null;
     resetConnectionState();
     txCharacteristic = null;
     rxCharacteristic = null;
     firmwareCharacteristic = null;
+    _resolvedRxCharacteristic = null;
+    _resolvedFirmwareCharacteristic = null;
     receivedDataStream = null;
-    if (connection != null) {
-      await connection!.cancel();
-      connection = null;
-      connected = false;
-      if (hadState) {
-        notifyConnectionStateChanged();
+    _effectiveAttPayload = 20;
+    try {
+      await receiveSubscription?.cancel();
+    } finally {
+      try {
+        await activeConnection?.cancel();
+      } finally {
+        if (pendingCompleter != null && !pendingCompleter.isCompleted) {
+          pendingCompleter.complete(false);
+        }
+        if (hadState) {
+          notifyConnectionStateChanged();
+        }
       }
-      return true;
     }
-    connected = false; // For debug button
-    if (hadState) {
-      notifyConnectionStateChanged();
-    }
-    return false;
+    return activeConnection != null;
   }
 
   @override
   Future<bool> write(Uint8List command, {bool firmware = false}) async {
-    if (firmware) {
-      await flutterReactiveBle.writeCharacteristicWithoutResponse(
-          firmwareCharacteristic!,
-          value: command);
+    final requested = firmware ? firmwareCharacteristic : rxCharacteristic;
+    if (requested == null) {
+      throw StateError(
+          'BLE ${firmware ? 'firmware' : 'RX'} characteristic unavailable');
+    }
+    final requester = writeRequester;
+    final characteristic = requester == null
+        ? firmware
+            ? await _resolveFirmwareCharacteristic()
+            : await _resolveRxCharacteristic()
+        : null;
+
+    Future<void> writeChunk(Uint8List chunk) async {
+      if (requester != null) {
+        await requester(requested, chunk, !firmware);
+      } else {
+        await characteristic!.write(chunk, withResponse: !firmware);
+      }
+    }
+
+    if (command.isEmpty) {
+      await writeChunk(command);
     } else {
-      await flutterReactiveBle
-          .writeCharacteristicWithResponse(rxCharacteristic!, value: command);
+      for (var offset = 0; offset < command.length;) {
+        final candidateEnd = offset + _effectiveAttPayload;
+        final end =
+            candidateEnd < command.length ? candidateEnd : command.length;
+        await writeChunk(Uint8List.fromList(command.sublist(offset, end)));
+        offset = end;
+      }
     }
 
     return true;
+  }
+
+  Future<Characteristic> _resolveRxCharacteristic() async {
+    final cached = _resolvedRxCharacteristic;
+    if (cached != null) return cached;
+    final requested = rxCharacteristic;
+    if (requested == null) {
+      throw StateError('BLE RX characteristic unavailable');
+    }
+    final resolved = await flutterReactiveBle.resolveSingle(requested);
+    if (!identical(rxCharacteristic, requested)) {
+      throw StateError('BLE connection changed while resolving RX');
+    }
+    _resolvedRxCharacteristic = resolved;
+    return resolved;
+  }
+
+  Future<Characteristic> _resolveFirmwareCharacteristic() async {
+    final cached = _resolvedFirmwareCharacteristic;
+    if (cached != null) return cached;
+    final requested = firmwareCharacteristic;
+    if (requested == null) {
+      throw StateError('BLE firmware characteristic unavailable');
+    }
+    final resolved = await flutterReactiveBle.resolveSingle(requested);
+    if (!identical(firmwareCharacteristic, requested)) {
+      throw StateError('BLE connection changed while resolving firmware');
+    }
+    _resolvedFirmwareCharacteristic = resolved;
+    return resolved;
   }
 }

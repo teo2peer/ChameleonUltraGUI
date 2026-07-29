@@ -11,8 +11,9 @@ const int emvTraceFlagAppLimit = 0x00000020;
 const int emvTraceFlagTimingValid = 0x00000040;
 const int emvTraceFlagMaximumProcessing = 0x00000080;
 const int emvTraceFlagTransportError = 0x00000100;
+const int emvTraceFlagExpressTransit = 0x00000200;
 
-const int _knownTraceFlags = 0x000001ff;
+const int _knownTraceFlags = 0x000003ff;
 const int _noDroppedRecord = 0xffffffff;
 
 enum EmvTraceState {
@@ -68,6 +69,36 @@ const Map<int, String> emvTraceStageNames = {
   0xff: 'summary',
 };
 
+enum EmvTerminalProfile {
+  automatic(0x00, 'Automatic', null),
+  appleTransit(0x01, 'Apple transit', '33804000'),
+  onlineNoOda(0x02, 'Online, no ODA', '32804000'),
+  broadMobile(0x03, 'Broad mobile', '3600C000'),
+  qvsdcOnline(0x04, 'qVSDC online', '26804000'),
+  minimalOnline(0x05, 'Minimal online', '22804000'),
+  msdQvsdc(0x06, 'MSD + qVSDC', 'B600C000'),
+  custom(0xfe, 'Custom TTQ', null),
+  compatibilitySweep(0xff, 'Compatibility sweep', null);
+
+  const EmvTerminalProfile(this.value, this.label, this.ttqHex);
+
+  final int value;
+  final String label;
+  final String? ttqHex;
+}
+
+enum EmvPollingProfile {
+  automatic(0x00, 'Automatic'),
+  fast(0x01, 'Fast'),
+  balanced(0x02, 'Balanced'),
+  patient(0x03, 'Patient');
+
+  const EmvPollingProfile(this.value, this.label);
+
+  final int value;
+  final String label;
+}
+
 class EmvTraceRequest {
   const EmvTraceRequest({
     this.maximumProcessing = false,
@@ -76,6 +107,16 @@ class EmvTraceRequest {
     this.scanRecordGrid = false,
     this.readTransactionLogs = false,
     this.usePdolFallback = true,
+    this.expressTransit = false,
+    this.terminalProfile = EmvTerminalProfile.automatic,
+    this.customTtq = const [0, 0, 0, 0],
+    this.pollingProfile = EmvPollingProfile.automatic,
+    this.directAidFallback = false,
+    this.adaptiveProfiles = false,
+    this.reacquireBetweenProfiles = false,
+    this.pollRetries = 0,
+    this.pollDelayMs = 0,
+    this.pollTimeoutMs = 0,
     this.maxAids = 8,
     this.maxRecords = 32,
     this.maxApdus = 128,
@@ -93,6 +134,10 @@ class EmvTraceRequest {
     bool includeRf = true,
     bool scanRecordGrid = false,
     bool readTransactionLogs = false,
+    bool expressTransit = false,
+    EmvTerminalProfile terminalProfile = EmvTerminalProfile.automatic,
+    EmvPollingProfile pollingProfile = EmvPollingProfile.automatic,
+    bool directAidFallback = false,
     int maxAids = 8,
     int maxRecords = 32,
     int maxApdus = 128,
@@ -106,6 +151,10 @@ class EmvTraceRequest {
       includeRf: includeRf,
       scanRecordGrid: scanRecordGrid,
       readTransactionLogs: readTransactionLogs,
+      expressTransit: expressTransit,
+      terminalProfile: terminalProfile,
+      pollingProfile: pollingProfile,
+      directAidFallback: directAidFallback,
       maxAids: maxAids,
       maxRecords: maxRecords,
       maxApdus: maxApdus,
@@ -123,6 +172,16 @@ class EmvTraceRequest {
   final bool scanRecordGrid;
   final bool readTransactionLogs;
   final bool usePdolFallback;
+  final bool expressTransit;
+  final EmvTerminalProfile terminalProfile;
+  final List<int> customTtq;
+  final EmvPollingProfile pollingProfile;
+  final bool directAidFallback;
+  final bool adaptiveProfiles;
+  final bool reacquireBetweenProfiles;
+  final int pollRetries;
+  final int pollDelayMs;
+  final int pollTimeoutMs;
   final int maxAids;
   final int maxRecords;
   final int maxApdus;
@@ -134,13 +193,32 @@ class EmvTraceRequest {
   final int transactionType;
   final int cryptogramType;
 
+  int get behavior =>
+      (directAidFallback ? 0x01 : 0) |
+      (adaptiveProfiles ? 0x02 : 0) |
+      (reacquireBetweenProfiles ? 0x04 : 0);
+
+  bool get hasBehavior =>
+      pollingProfile != EmvPollingProfile.automatic ||
+      behavior != 0 ||
+      pollRetries != 0 ||
+      pollDelayMs != 0 ||
+      pollTimeoutMs != 0;
+
+  bool get hasTerminalProfile =>
+      terminalProfile != EmvTerminalProfile.automatic ||
+      customTtq.any((value) => value != 0) ||
+      hasBehavior;
+
   int get flags =>
       (maximumProcessing ? 0x01 : 0) |
       (includeRf ? 0x02 : 0) |
       (includeTiming ? 0x04 : 0) |
       (scanRecordGrid ? 0x08 : 0) |
       (readTransactionLogs ? 0x10 : 0) |
-      (usePdolFallback ? 0x20 : 0);
+      (usePdolFallback ? 0x20 : 0) |
+      (expressTransit ? 0x40 : 0) |
+      (hasTerminalProfile ? 0x80 : 0);
 
   Uint8List encode() {
     if (maxAids < 0 || maxAids > 16) {
@@ -167,8 +245,26 @@ class EmvTraceRequest {
       throw ArgumentError.value(
           cryptogramType, 'cryptogramType', 'must be FF, 00, 40, or 80');
     }
+    if (customTtq.length != 4 ||
+        customTtq.any((value) => value < 0 || value > 0xff)) {
+      throw ArgumentError.value(customTtq, 'customTtq', 'must be 4 bytes');
+    }
+    if (terminalProfile != EmvTerminalProfile.custom &&
+        customTtq.any((value) => value != 0)) {
+      throw ArgumentError('Custom TTQ requires the custom terminal profile');
+    }
+    if (pollRetries < 0 || pollRetries > 100) {
+      throw ArgumentError.value(pollRetries, 'pollRetries', 'must be 0..100');
+    }
+    if (pollDelayMs < 0 || pollDelayMs > 20) {
+      throw ArgumentError.value(pollDelayMs, 'pollDelayMs', 'must be 0..20');
+    }
+    if (pollTimeoutMs < 0 || pollTimeoutMs > 10) {
+      throw ArgumentError.value(
+          pollTimeoutMs, 'pollTimeoutMs', 'must be 0..10');
+    }
 
-    final output = Uint8List(25);
+    final output = Uint8List(hasBehavior ? 35 : (hasTerminalProfile ? 30 : 25));
     final data = ByteData.sublistView(output);
     output[0] = emvTraceProtocolVersion;
     output[1] = flags;
@@ -182,6 +278,17 @@ class EmvTraceRequest {
     output.setRange(20, 23, date);
     output[23] = transactionType;
     output[24] = cryptogramType;
+    if (hasTerminalProfile) {
+      output[25] = terminalProfile.value;
+      output.setRange(26, 30, customTtq);
+      if (hasBehavior) {
+        output[30] = pollingProfile.value;
+        output[31] = behavior;
+        output[32] = pollRetries;
+        output[33] = pollDelayMs;
+        output[34] = pollTimeoutMs;
+      }
+    }
     return output;
   }
 }
@@ -197,11 +304,13 @@ class EmvTraceStartResponse {
     required this.state,
     required this.scanId,
     required this.flags,
+    required this.rawBytes,
   });
 
   final EmvTraceState state;
   final int scanId;
   final int flags;
+  final Uint8List rawBytes;
 
   factory EmvTraceStartResponse.parse(Uint8List bytes) {
     if (bytes.length != 10) {
@@ -219,6 +328,7 @@ class EmvTraceStartResponse {
       state: EmvTraceState.fromValue(bytes[1]),
       scanId: scanId,
       flags: flags,
+      rawBytes: Uint8List.fromList(bytes),
     );
   }
 }
@@ -241,6 +351,7 @@ class EmvTraceMeta {
     required this.atqa,
     required this.sak,
     required this.ats,
+    required this.rawBytes,
   });
 
   final EmvTraceState state;
@@ -259,6 +370,7 @@ class EmvTraceMeta {
   final Uint8List atqa;
   final int sak;
   final Uint8List ats;
+  final Uint8List rawBytes;
 
   bool get isComplete =>
       state == EmvTraceState.complete && (flags & emvTraceFlagComplete) != 0;
@@ -271,9 +383,10 @@ class EmvTraceMeta {
       storedRecords != observedRecords ||
       storedBytes != requiredBytes;
   bool get maximumProcessing => (flags & emvTraceFlagMaximumProcessing) != 0;
+  bool get expressTransit => (flags & emvTraceFlagExpressTransit) != 0;
 
   factory EmvTraceMeta.parse(Uint8List bytes) {
-    if (bytes.length < 43) {
+    if (bytes.length < 47) {
       throw const FormatException('Truncated EMV trace META response');
     }
     _requireVersion(bytes[0]);
@@ -330,6 +443,7 @@ class EmvTraceMeta {
       atqa: atqa,
       sak: sak,
       ats: Uint8List.fromList(bytes.sublist(offset)),
+      rawBytes: Uint8List.fromList(bytes),
     );
   }
 
@@ -352,6 +466,7 @@ class EmvTraceMeta {
         'atqaHex': _hex(atqa),
         'sak': sak,
         'atsHex': _hex(ats),
+        'rawHex': _hex(rawBytes),
       };
 }
 
@@ -591,6 +706,7 @@ class EmvTracePage {
     required this.nextRecord,
     required this.recordBytes,
     required this.records,
+    required this.rawBytes,
   });
 
   final int flags;
@@ -599,6 +715,7 @@ class EmvTracePage {
   final int nextRecord;
   final Uint8List recordBytes;
   final List<EmvTraceRecord> records;
+  final Uint8List rawBytes;
 
   bool get hasMore => (flags & 0x01) != 0;
   bool get isEnd => (flags & 0x02) != 0;
@@ -646,10 +763,6 @@ class EmvTracePage {
     if (records.length != count) {
       throw const FormatException('EMV trace page record count mismatch');
     }
-    if (count == 0) {
-      throw const FormatException('EMV trace page made no cursor progress');
-    }
-
     return EmvTracePage(
       flags: flags,
       scanId: scanId,
@@ -657,6 +770,7 @@ class EmvTracePage {
       nextRecord: next,
       recordBytes: recordBytes,
       records: List.unmodifiable(records),
+      rawBytes: Uint8List.fromList(bytes),
     );
   }
 }
@@ -667,12 +781,14 @@ class EmvTraceCapture {
     required this.pages,
     required this.records,
     required this.recordBytes,
+    required this.start,
   });
 
   final EmvTraceMeta meta;
   final List<EmvTracePage> pages;
   final List<EmvTraceRecord> records;
   final Uint8List recordBytes;
+  final EmvTraceStartResponse? start;
 
   Iterable<EmvTraceRecord> get apduRecords =>
       records.where((record) => record.type == EmvTraceRecordType.apdu);
@@ -681,8 +797,18 @@ class EmvTraceCapture {
   Iterable<EmvTraceRecord> get applicationRecords =>
       records.where((record) => record.type == EmvTraceRecordType.application);
 
-  factory EmvTraceCapture.assemble(
-      EmvTraceMeta meta, List<EmvTracePage> pages) {
+  factory EmvTraceCapture.assemble(EmvTraceMeta meta, List<EmvTracePage> pages,
+      {EmvTraceStartResponse? start}) {
+    if (meta.state != EmvTraceState.complete &&
+        meta.state != EmvTraceState.aborted) {
+      throw const FormatException('EMV trace META session is not terminal');
+    }
+    if (start != null &&
+        (start.scanId != meta.scanId ||
+            start.state != meta.state ||
+            start.flags != meta.flags)) {
+      throw const FormatException('EMV trace START/META mismatch');
+    }
     final records = <EmvTraceRecord>[];
     final builder = BytesBuilder(copy: false);
     var cursor = 0;
@@ -725,13 +851,26 @@ class EmvTraceCapture {
       pages: List.unmodifiable(pages),
       records: List.unmodifiable(records),
       recordBytes: bytes,
+      start: start,
     );
   }
 
   Map<String, Object?> toJson() => {
         'protocol': 'chameleon-emv-trace',
         'version': emvTraceProtocolVersion,
+        if (start != null) 'startRawHex': _hex(start!.rawBytes),
         'meta': meta.toJson(),
+        'pages': pages
+            .map((page) => {
+                  'flags': page.flags,
+                  'scanId': page.scanId,
+                  'startRecord': page.startRecord,
+                  'nextRecord': page.nextRecord,
+                  'returnedCount': page.records.length,
+                  'recordsBytes': page.recordBytes.length,
+                  'rawHex': _hex(page.rawBytes),
+                })
+            .toList(),
         'recordStreamHex': _hex(recordBytes),
         'records': records.map((record) => record.toJson()).toList(),
       };

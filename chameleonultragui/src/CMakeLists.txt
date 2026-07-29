@@ -8,6 +8,9 @@ endif()
 
 project(recovery_library VERSION 0.0.1 LANGUAGES C)
 
+option(RECOVERY_ENABLE_SANITIZERS
+       "Build recovery and minlzlib with AddressSanitizer and UBSan" OFF)
+
 set(COMMON_FILES
     ${SRC_DIR}/crapto1.c
     ${SRC_DIR}/crypto1.c
@@ -46,7 +49,27 @@ add_library(recovery SHARED
   "hardnested/hardnested_bf_core.c"
 )
 
-add_compile_options(-O3 -Ofast)
+if (RECOVERY_ENABLE_SANITIZERS)
+  if (NOT CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
+    message(FATAL_ERROR "Recovery sanitizers require Clang or GCC")
+  endif()
+  foreach(target recovery minlzlib)
+    target_compile_options(${target} PRIVATE
+      -O1 -g -fno-omit-frame-pointer -fsanitize=address,undefined)
+  endforeach()
+  set_property(TARGET recovery APPEND_STRING PROPERTY
+    LINK_FLAGS " -fsanitize=address,undefined")
+  add_executable(recovery_sanitizer_smoke "recovery_sanitizer_smoke.c")
+  target_compile_options(recovery_sanitizer_smoke PRIVATE
+    -O1 -g -fno-omit-frame-pointer -fsanitize=address,undefined)
+  set_property(TARGET recovery_sanitizer_smoke APPEND_STRING PROPERTY
+    LINK_FLAGS " -fsanitize=address,undefined")
+  target_link_libraries(recovery_sanitizer_smoke PRIVATE recovery)
+  enable_testing()
+  add_test(NAME recovery_sanitizer_smoke COMMAND recovery_sanitizer_smoke)
+else()
+  target_compile_options(recovery PRIVATE -O3 -ffast-math)
+endif()
 
 set_target_properties(recovery PROPERTIES
   PUBLIC_HEADER recovery.h

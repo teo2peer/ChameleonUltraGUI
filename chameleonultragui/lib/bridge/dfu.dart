@@ -120,6 +120,58 @@ class Slip {
   }
 }
 
+class SlipDecoder {
+  final int maxPacketLength;
+  int _state = Slip.slipStateDecoding;
+  final List<int> _decoded = [];
+
+  SlipDecoder({this.maxPacketLength = 4096});
+
+  List<Uint8List> add(Uint8List data) {
+    final packets = <Uint8List>[];
+    for (final byte in data) {
+      if (_state == Slip.slipStateClearingInvalidPacket) {
+        if (byte == Slip.slipByteEnd) {
+          _state = Slip.slipStateDecoding;
+          _decoded.clear();
+        }
+        continue;
+      }
+      if (_state == Slip.slipStateEscReceived) {
+        if (byte == Slip.slipByteEscEnd) {
+          _decoded.add(Slip.slipByteEnd);
+          _state = Slip.slipStateDecoding;
+        } else if (byte == Slip.slipByteEscEsc) {
+          _decoded.add(Slip.slipByteEsc);
+          _state = Slip.slipStateDecoding;
+        } else {
+          _decoded.clear();
+          _state = Slip.slipStateClearingInvalidPacket;
+        }
+      } else if (byte == Slip.slipByteEnd) {
+        if (_decoded.isNotEmpty) {
+          packets.add(Uint8List.fromList(_decoded));
+          _decoded.clear();
+        }
+      } else if (byte == Slip.slipByteEsc) {
+        _state = Slip.slipStateEscReceived;
+      } else {
+        _decoded.add(byte);
+      }
+      if (_decoded.length > maxPacketLength) {
+        _decoded.clear();
+        _state = Slip.slipStateClearingInvalidPacket;
+      }
+    }
+    return packets;
+  }
+
+  void reset() {
+    _state = Slip.slipStateDecoding;
+    _decoded.clear();
+  }
+}
+
 class DFUTransferError implements Exception {
   String cause;
   DFUTransferError(this.cause);
@@ -135,6 +187,7 @@ class DFUCommunicator {
   AbstractSerial? _serialInstance;
   Completer<List<int>>? responseCompleter;
   bool _invalidated = false;
+  final SlipDecoder _slipDecoder = SlipDecoder();
 
   final Logger log;
   final Duration writeTimeout;
@@ -153,6 +206,18 @@ class DFUCommunicator {
 
   dynamic open(AbstractSerial port) {
     _serialInstance = port;
+  }
+
+  Future<void> _onSerialData(Uint8List data) async {
+    final packets = isBLE ? [data] : _slipDecoder.add(data);
+    for (final packet in packets) {
+      final completer = responseCompleter;
+      if (completer != null && !completer.isCompleted) {
+        completer.complete(packet);
+      } else {
+        log.w('Discarding unexpected DFU response');
+      }
+    }
   }
 
   Future<Uint8List?> sendCmd(DFUCommand cmd, Uint8List data) async {
@@ -177,38 +242,39 @@ class DFUCommunicator {
     }
 
     if (responseCompleter != null && !responseCompleter!.isCompleted) {
-      responseCompleter?.complete([]);
+      throw DFUTransferError('Another DFU command is already in progress');
     }
 
-    responseCompleter = Completer<List<int>>();
+    final completer = Completer<List<int>>();
+    responseCompleter = completer;
+    late List<int> readBuffer;
+    try {
+      if (!_serialInstance!.isOpen) {
+        await _serialInstance!.open();
+        _serialInstance!.isOpen = true;
+      }
+      await _serialInstance!.registerCallback(_onSerialData);
 
-    if (!_serialInstance!.isOpen) {
-      await _serialInstance!.open();
-      _serialInstance!.isOpen = true;
+      log.d("Sending: ${bytesToHex(packet)}");
+      final written = await _serialInstance!
+          .writeWithTimeout(packet, timeout: writeTimeout);
+      if (!written) throw DFUTransferError('DFU transport rejected the write');
+      readBuffer = await completer.future.timeout(responseTimeout);
+    } finally {
+      if (identical(responseCompleter, completer)) responseCompleter = null;
     }
 
-    // we initialize completer each time in DFU, because it being recreated on each message
-    await _serialInstance!.registerCallback(responseCompleter?.complete);
-
-    log.d("Sending: ${bytesToHex(packet)}");
-    await _serialInstance!.writeWithTimeout(packet, timeout: writeTimeout);
-
-    List<int>? readBuffer =
-        await responseCompleter?.future.timeout(responseTimeout);
-
-    if (readBuffer == null || readBuffer.isEmpty) {
+    if (readBuffer.isEmpty) {
       return null;
     }
 
     log.d("Received: ${bytesToHex(Uint8List.fromList(readBuffer))}");
 
-    if (!isBLE) {
-      readBuffer = Slip.decode(Uint8List.fromList(readBuffer)).toList();
-      log.d("Slip decoded: ${bytesToHex(Uint8List.fromList(readBuffer))}");
+    if (readBuffer.length < 3) {
+      throw DFUTransferError('Truncated DFU response');
     }
-
     if (readBuffer[0] != DFUCommand.response.value) {
-      throw ("DFU sent not response");
+      throw DFUTransferError('DFU sent a non-response packet');
     }
 
     if (readBuffer[1] != cmd.value) {
@@ -219,18 +285,29 @@ class DFUCommunicator {
       return Uint8List.fromList(readBuffer).sublist(3);
     } else {
       if (readBuffer[2] == DFUResponseCode.extendedError.value) {
-        throw ("DFU error: ${DFUResponseCode.fromValue(readBuffer[3])}");
+        if (readBuffer.length < 4) {
+          throw DFUTransferError('Truncated extended DFU error');
+        }
+        throw DFUTransferError(
+            'DFU error: ${DFUResponseCode.fromValue(readBuffer[3])}');
       }
-      throw ("DFU error: ${DFUResponseCode.fromValue(readBuffer[2])}");
+      throw DFUTransferError(
+          'DFU error: ${DFUResponseCode.fromValue(readBuffer[2])}');
     }
   }
 
   Future<dynamic> selectObject(int objectType) async {
     var response = (await sendCmd(DFUCommand.readObject,
         Uint8List.fromList([objectType, 0x00, 0x00, 0x00])))!;
+    if (response.length != 12) {
+      throw DFUTransferError('Invalid select-object response length');
+    }
     var maxSize = ByteData.view(response.buffer).getUint32(0, Endian.little);
     var offset = ByteData.view(response.buffer).getUint32(4, Endian.little);
     var crc = ByteData.view(response.buffer).getUint32(8, Endian.little);
+    if (maxSize <= 0) {
+      throw DFUTransferError('DFU object size must be positive');
+    }
     return {'maxSize': maxSize, 'offset': offset, 'crc': crc};
   }
 
@@ -250,18 +327,13 @@ class DFUCommunicator {
   }
 
   Future<int> getMTU() async {
-    try {
-      mtu = ByteData.view(
-              (await sendCmd(DFUCommand.getSerialMTU, Uint8List(0)))!.buffer)
-          .getUint16(0, Endian.little);
-    } on TimeoutException {
-      rethrow;
-    } catch (_) {
-      mtu = 2051;
+    final response = await sendCmd(DFUCommand.getSerialMTU, Uint8List(0));
+    if (response == null || response.length != 2) {
+      throw DFUTransferError('Invalid DFU MTU response length');
     }
-
-    if (mtu == 0) {
-      mtu = 2051;
+    mtu = ByteData.view(response.buffer).getUint16(0, Endian.little);
+    if (mtu < 5) {
+      throw DFUTransferError('Invalid DFU MTU: $mtu');
     }
 
     return mtu;
@@ -269,7 +341,10 @@ class DFUCommunicator {
 
   Future<Map<String, int>> calculateChecksum() async {
     var response = await sendCmd(DFUCommand.calcChecSum, Uint8List(0));
-    var offset = ByteData.view(response!.buffer).getUint32(0, Endian.little);
+    if (response == null || response.length != 8) {
+      throw DFUTransferError('Invalid DFU checksum response length');
+    }
+    var offset = ByteData.view(response.buffer).getUint32(0, Endian.little);
     var crc = ByteData.view(response.buffer).getUint32(4, Endian.little);
 
     return {'offset': offset, 'crc': crc};
@@ -334,9 +409,12 @@ class DFUCommunicator {
     }
 
     var currentPrn = 0;
-    for (int i = 0; i < data.length; i += (mtu - 1) ~/ 2 - 1) {
-      List<int> toTransmit =
-          data.sublist(i, min(i + (mtu - 1) ~/ 2 - 1, data.length));
+    final chunkSize = (mtu - 1) ~/ 2 - 1;
+    if (chunkSize <= 0) {
+      throw DFUTransferError('DFU MTU cannot make forward progress');
+    }
+    for (int i = 0; i < data.length; i += chunkSize) {
+      List<int> toTransmit = data.sublist(i, min(i + chunkSize, data.length));
 
       var packet = Uint8List.fromList([...toTransmit]);
 

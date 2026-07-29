@@ -42,6 +42,42 @@ void main() {
     await expectLater(communicator.getMTU(), throwsA(isA<TimeoutException>()));
     expect(serial.disconnected, isTrue);
   });
+
+  test('DFU incrementally decodes a fragmented SLIP response', () async {
+    final serial = _DfuSerial();
+    final communicator = DFUCommunicator(
+      Logger(level: Level.off),
+      port: serial,
+    );
+
+    final resultFuture = communicator.sendCmd(DFUCommand.ping, Uint8List(0));
+    await Future<void>.delayed(Duration.zero);
+    final encoded = Slip.encode(Uint8List.fromList(
+        [DFUCommand.response.value, DFUCommand.ping.value, 0x01, 0x42]));
+    await serial.emit(encoded.sublist(0, 2));
+    await serial.emit(encoded.sublist(2));
+
+    expect(await resultFuture, [0x42]);
+  });
+
+  test('DFU rejects concurrent commands instead of completing the first',
+      () async {
+    final serial = _DfuSerial();
+    final communicator = DFUCommunicator(
+      Logger(level: Level.off),
+      port: serial,
+      viaBLE: true,
+    );
+
+    final first = communicator.sendCmd(DFUCommand.ping, Uint8List(0));
+    await Future<void>.delayed(Duration.zero);
+    await expectLater(
+      communicator.sendCmd(DFUCommand.getHW, Uint8List(0)),
+      throwsA(isA<DFUTransferError>()),
+    );
+    await serial.emit([0x60, DFUCommand.ping.value, 0x01]);
+    expect(await first, isEmpty);
+  });
 }
 
 class _DfuSerial extends AbstractSerial {

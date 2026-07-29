@@ -127,4 +127,35 @@ void main() {
     expect(find.text('last disconnect reason : 0x13'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets('status renders disconnect transition and operation counters',
+      (tester) async {
+    await pumpLocalized(
+      tester,
+      BleAuditStatus(
+        state: BleCentralState(
+          connState: 5,
+          discState: 0,
+          charCount: 0,
+          fuzzState: 0,
+          fuzzSent: 0,
+          targetAlive: false,
+          lastReason: 0,
+          floodState: 1,
+          floodSent: 123,
+          readState: 2,
+          writeState: 3,
+          notificationCount: 4,
+          hasOperationState: true,
+        ),
+        mtu: 23,
+      ),
+    );
+
+    expect(find.text('connection : disconnecting'), findsOneWidget);
+    expect(find.text('flood      : running (123 writes)'), findsOneWidget);
+    expect(find.text('read       : done'), findsOneWidget);
+    expect(find.text('write      : error'), findsOneWidget);
+    expect(find.text('notifications: 4'), findsOneWidget);
+  });
 }

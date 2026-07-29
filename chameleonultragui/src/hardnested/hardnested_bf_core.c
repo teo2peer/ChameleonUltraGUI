@@ -281,7 +281,7 @@ uint64_t CRACK_STATES_BITSLICED(uint32_t cuid, uint8_t *best_first_bytes, statel
         }
         memset(lstate_p, 0x00, STATE_SIZE / 2 * sizeof(bitslice_t)); // zero even bits
         // bitslice even half-states
-        const uint32_t max_slices = (p_even_end - p_even) < MAX_BITSLICES ? p_even_end - p_even : MAX_BITSLICES;
+        const uint32_t max_slices = (uint32_t)((p_even_end - p_even) < MAX_BITSLICES ? p_even_end - p_even : MAX_BITSLICES);
         bucket_size[bitsliced_blocks] = max_slices;
 #ifdef DEBUG_KEY_ELIMINATION
         bucket_contains_test_key[bitsliced_blocks] = false;

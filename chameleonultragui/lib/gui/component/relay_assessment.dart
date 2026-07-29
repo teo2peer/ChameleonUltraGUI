@@ -4,11 +4,9 @@ import 'package:flutter/material.dart';
 // Localizations
 import 'package:chameleonultragui/generated/i18n/app_localizations.dart';
 
-// Defensive relay-resistance readout from the AIP (tag 82): tells you whether a
-// card would block a relay attack (RRP) and whether it resists cloning
-// (DDA/CDA), plus remediation guidance. Shared by the EMV reader and the
-// purchase-simulation pages.
-Widget relayAssessmentCard(BuildContext context, EmvAip? aip) {
+// Scheme-aware AIP readout. Mastercard Kernel 2 defines its RRP support bit in
+// AIP byte 2; applying that bit to another scheme would produce a false finding.
+Widget relayAssessmentCard(BuildContext context, EmvAip? aip, {String? aid}) {
   final l = AppLocalizations.of(context)!;
   if (aip == null) {
     return Padding(
@@ -18,26 +16,48 @@ Widget relayAssessmentCard(BuildContext context, EmvAip? aip) {
     );
   }
   final scheme = Theme.of(context).colorScheme;
-  final protected = aip.rrp;
-  final bg = protected ? scheme.primaryContainer : scheme.errorContainer;
-  final fg = protected ? scheme.onPrimaryContainer : scheme.onErrorContainer;
+  final assessment = emvAssessRrp(aip, aid);
+  final protected = assessment == EmvRrpAssessment.advertised;
+  final missing = assessment == EmvRrpAssessment.notAdvertised;
+  final bg = protected
+      ? scheme.primaryContainer
+      : missing
+          ? scheme.tertiaryContainer
+          : scheme.secondaryContainer;
+  final fg = protected
+      ? scheme.onPrimaryContainer
+      : missing
+          ? scheme.onTertiaryContainer
+          : scheme.onSecondaryContainer;
+  final message = switch (assessment) {
+    EmvRrpAssessment.advertised => l.relay_protected,
+    EmvRrpAssessment.notAdvertised => l.relay_exposed,
+    EmvRrpAssessment.notApplicable => l.relay_rrp_not_applicable,
+    EmvRrpAssessment.unknownScheme => l.relay_rrp_unknown,
+  };
   return Container(
     margin: const EdgeInsets.symmetric(vertical: 10),
     padding: const EdgeInsets.all(12),
-    decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(10)),
+    decoration:
+        BoxDecoration(color: bg, borderRadius: BorderRadius.circular(10)),
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Row(children: [
-          Icon(protected ? Icons.verified_user : Icons.gpp_bad, color: fg),
+          Icon(
+              protected
+                  ? Icons.verified_user
+                  : missing
+                      ? Icons.gpp_maybe
+                      : Icons.info_outline,
+              color: fg),
           const SizedBox(width: 8),
           Expanded(
               child: Text(l.relay_assessment,
                   style: TextStyle(fontWeight: FontWeight.bold, color: fg))),
         ]),
         const SizedBox(height: 6),
-        Text(protected ? l.relay_protected : l.relay_exposed,
-            style: TextStyle(color: fg)),
+        Text(message, style: TextStyle(color: fg)),
         const SizedBox(height: 6),
         Text(aip.dda || aip.cda ? l.relay_clone_ok : l.relay_clone_weak,
             style: TextStyle(color: fg, fontSize: 12)),

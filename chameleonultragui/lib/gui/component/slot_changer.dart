@@ -107,9 +107,10 @@ class SlotChangerState extends State<SlotChanger> {
                 IconButton(
                   onPressed: () async {
                     if (selectedSlot > 1) {
-                      await appState.communicator!
-                          .activateSlot(selectedSlot - 2);
-                      setState(() {});
+                      await appState.runSlotOperation(() => appState
+                          .communicator!
+                          .activateSlot(selectedSlot - 2));
+                      if (mounted) setState(() {});
                       appState.changesMade();
                     }
                   },
@@ -119,8 +120,9 @@ class SlotChangerState extends State<SlotChanger> {
                 IconButton(
                   onPressed: () async {
                     if (selectedSlot < 8) {
-                      await appState.communicator!.activateSlot(selectedSlot);
-                      setState(() {});
+                      await appState.runSlotOperation(() =>
+                          appState.communicator!.activateSlot(selectedSlot));
+                      if (mounted) setState(() {});
                       appState.changesMade();
                     }
                   },

@@ -283,7 +283,7 @@ static void init_bitflip_bitarrays(void)
     qsort(all_effective_bitflip, num_1st_byte_effective_bitflips, sizeof(uint16_t), compare_count_bitflip_bitarrays);
     qsort(all_effective_bitflip + num_1st_byte_effective_bitflips, num_all_effective_bitflips - num_1st_byte_effective_bitflips, sizeof(uint16_t), compare_count_bitflip_bitarrays);
     char progress_text[80];
-    sprintf(progress_text, "Using %d precalculated bitflip state tables", num_all_effective_bitflips);
+    snprintf(progress_text, sizeof(progress_text), "Using %d precalculated bitflip state tables", num_all_effective_bitflips);
     hardnested_print_progress(0, progress_text, (float)(1LL << 47), 0);
 }
 
@@ -1136,17 +1136,17 @@ static int read_nonces(char *nonces_char, uint32_t length)
              "Reading nonces from memory buffer");
     hardnested_print_progress(0, progress_text, (float)(1LL << 47), 0);
 
-    cuid = bytes_to_num(read_buf, 4);
-    uint8_t trgBlockNo = bytes_to_num(read_buf + 4, 1);
-    uint8_t trgKeyType = bytes_to_num(read_buf + 5, 1);
+    cuid = (uint32_t)bytes_to_num(read_buf, 4);
+    uint8_t trgBlockNo = (uint8_t)bytes_to_num(read_buf + 4, 1);
+    uint8_t trgKeyType = (uint8_t)bytes_to_num(read_buf + 5, 1);
 
     while (pos + 9 <= length)
     {
         memcpy(read_buf, nonces_char + pos, 9);
         pos += 9;
-        uint32_t nt_enc1 = bytes_to_num(read_buf, 4);
-        uint32_t nt_enc2 = bytes_to_num(read_buf + 4, 4);
-        uint8_t par_enc = bytes_to_num(read_buf + 8, 1);
+        uint32_t nt_enc1 = (uint32_t)bytes_to_num(read_buf, 4);
+        uint32_t nt_enc2 = (uint32_t)bytes_to_num(read_buf + 4, 4);
+        uint8_t par_enc = (uint8_t)bytes_to_num(read_buf + 8, 1);
         add_nonce(nt_enc1, par_enc >> 4);
         add_nonce(nt_enc2, par_enc & 0x0f);
         num_acquired_nonces += 2;
@@ -1597,7 +1597,7 @@ static void bitarray_to_list(uint8_t byte, uint32_t *bitarray, uint32_t *state_l
     }
     // add End Of List marker
     *p = 0xffffffff;
-    *len = p - state_list;
+    *len = (uint32_t)(p - state_list);
 }
 
 static void add_cached_states(statelist_t *cands, uint16_t part_sum_a0, uint16_t part_sum_a8, odd_even_t odd_even)

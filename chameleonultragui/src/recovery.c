@@ -60,15 +60,37 @@ FFI_PLUGIN_EXPORT uint64_t hardnested(HardNested *data)
   return foundkey;
 }
 
+FFI_PLUGIN_EXPORT void recovery_free(void *pointer)
+{
+  free(pointer);
+}
+
 FFI_PLUGIN_EXPORT uint64_t *darkside(Darkside *data, uint32_t *outputKeyCount)
 {
-  uint32_t uid = data->uid;
+  uint32_t uid;
   uint32_t count = 0, i = 0;
   uint64_t keycount = 0;
   uint64_t *keylist = NULL, *last_keylist = NULL;
-  DarksideParam *dps = calloc(1, sizeof(DarksideParam) * data->count);
-  uint64_t *keys = (uint64_t *)calloc(1, KEY_SPACE_SIZE * sizeof(uint64_t));
-  bool no_key_recover = true;
+  uint64_t *keys = NULL, *result = NULL;
+  DarksideParam *dps = NULL;
+
+  if (outputKeyCount == NULL)
+  {
+    return NULL;
+  }
+  *outputKeyCount = 0;
+  if (data == NULL || data->count == 0)
+  {
+    return calloc(1, sizeof(uint64_t));
+  }
+
+  uid = data->uid;
+  dps = calloc(data->count, sizeof(DarksideParam));
+  keys = calloc(KEY_SPACE_SIZE, sizeof(uint64_t));
+  if (dps == NULL || keys == NULL)
+  {
+    goto cleanup;
+  }
 
   for (count = 0; count < data->count; count++)
   {
@@ -79,7 +101,7 @@ FFI_PLUGIN_EXPORT uint64_t *darkside(Darkside *data, uint32_t *outputKeyCount)
     dps[count].ar = data->items[count].ar;
   }
 
-  for (i = 0; i < count && *outputKeyCount == 0; i++)
+  for (i = 0; i < count; i++)
   {
     uint32_t nt = dps[i].nt;
     uint32_t nr = dps[i].nr;
@@ -87,10 +109,13 @@ FFI_PLUGIN_EXPORT uint64_t *darkside(Darkside *data, uint32_t *outputKeyCount)
     uint64_t par_list = dps[i].par_list;
     uint64_t ks_list = dps[i].ks_list;
 
+    keylist = NULL;
     keycount = nonce2key(uid, nt, nr, ar, par_list, ks_list, &keylist);
 
     if (keycount == 0)
     {
+      free(keylist);
+      keylist = NULL;
       continue;
     }
 
@@ -98,53 +123,52 @@ FFI_PLUGIN_EXPORT uint64_t *darkside(Darkside *data, uint32_t *outputKeyCount)
     if (par_list == 0)
     {
       qsort(keylist, keycount, sizeof(*keylist), compare_uint64);
+      if (last_keylist == NULL)
+      {
+        last_keylist = keylist;
+        keylist = NULL;
+        continue;
+      }
       keycount = intersection(last_keylist, keylist);
       if (keycount == 0)
       {
         free(last_keylist);
         last_keylist = keylist;
+        keylist = NULL;
         continue;
       }
     }
 
-    if (keycount > 0)
+    *outputKeyCount = (uint32_t)keycount;
+    for (uint32_t keyIndex = 0; keyIndex < *outputKeyCount; keyIndex++)
     {
-      no_key_recover = false;
-      *outputKeyCount = keycount;
-      for (i = 0; i < *outputKeyCount; i++)
+      if (par_list == 0)
       {
-        if (par_list == 0)
-        {
-          keys[i] = last_keylist[i];
-        }
-        else
-        {
-          keys[i] = keylist[i];
-        }
+        keys[keyIndex] = last_keylist[keyIndex];
       }
-
-      return keys;
-    }
-
-    if (last_keylist == keylist && last_keylist != NULL)
-    {
-      free(keylist);
-    }
-    else
-    {
-      if (last_keylist)
+      else
       {
-        free(last_keylist);
-      }
-      if (keylist)
-      {
-        free(keylist);
+        keys[keyIndex] = keylist[keyIndex];
       }
     }
-    free(dps);
+    result = keys;
+    keys = NULL;
+    break;
   }
 
-  return malloc(8);
+cleanup:
+  free(dps);
+  if (keylist != last_keylist)
+  {
+    free(keylist);
+  }
+  free(last_keylist);
+  free(keys);
+  if (result == NULL)
+  {
+    result = calloc(1, sizeof(uint64_t));
+  }
+  return result;
 }
 
 int uint64_compare(const void *a, const void *b)
@@ -154,8 +178,17 @@ int uint64_compare(const void *a, const void *b)
 
 uint64_t *most_frequent_uint64(uint64_t *keys, uint32_t size, uint32_t *outputKeyCount)
 {
+  if (size == 0)
+  {
+    return NULL;
+  }
+
   uint64_t i, maxFreq = 1, currentFreq = 1, currentItem = keys[0];
   uint64_t *output = calloc(size, sizeof(uint64_t));
+  if (output == NULL)
+  {
+    return NULL;
+  }
   qsort(keys, size, sizeof(uint64_t), uint64_compare);
 
   for (i = 1; i < size; i++)
@@ -176,6 +209,15 @@ uint64_t *most_frequent_uint64(uint64_t *keys, uint32_t size, uint32_t *outputKe
   if (currentFreq > maxFreq)
   {
     maxFreq = currentFreq;
+  }
+
+  // No repeated key means the nonce pair produced no usable consensus. Returning
+  // every unique state can create hundreds of thousands of false candidates and
+  // must be treated as an invalid sample instead.
+  if (maxFreq < 2)
+  {
+    free(output);
+    return NULL;
   }
 
   currentItem = keys[0];
@@ -225,7 +267,17 @@ static int bin_to_uint8_arr(uint32_t bin_val, uint8_t bit_arr[], uint8_t arr_siz
 
 FFI_PLUGIN_EXPORT uint64_t *static_encrypted_nested(StaticEncryptedNested *data, uint32_t *outputKeyCount)
 {
-  uint64_t authuid = data->uid;
+  if (outputKeyCount == NULL)
+  {
+    return NULL;
+  }
+  *outputKeyCount = 0;
+  if (data == NULL)
+  {
+    return NULL;
+  }
+
+  uint32_t authuid = data->uid;
   uint32_t nt = data->nt;
   uint32_t nt_enc = data->nt_enc;
 
@@ -238,6 +290,10 @@ FFI_PLUGIN_EXPORT uint64_t *static_encrypted_nested(StaticEncryptedNested *data,
                        ((nt_par_err_arr[3] ^ oddparity8((nt_enc >> 0) & 0xFF)) << 0);
 
   uint64_t *result_keys = (uint64_t *)calloc(1, KEY_SPACE_SIZE * sizeof(uint64_t));
+  if (result_keys == NULL)
+  {
+    return NULL;
+  }
 
   struct Crypto1State *revstate, *revstate_start = NULL, *s = NULL;
   uint64_t lfsr = 0;
@@ -245,8 +301,17 @@ FFI_PLUGIN_EXPORT uint64_t *static_encrypted_nested(StaticEncryptedNested *data,
 
   revstate = lfsr_recovery32(ks1, nt ^ authuid);
   revstate_start = revstate;
+  if (revstate == NULL)
+  {
+    return result_keys;
+  }
 
   s = crypto1_create(0);
+  if (s == NULL)
+  {
+    crypto1_destroy(revstate_start);
+    return result_keys;
+  }
 
   while ((revstate->odd != 0x0) || (revstate->even != 0x0))
   {
@@ -283,7 +348,7 @@ FFI_PLUGIN_EXPORT uint64_t *static_encrypted_nested(StaticEncryptedNested *data,
 // nested decrypt
 static void nested_recover(RecPar *rp)
 {
-  struct Crypto1State *revstate, *revstate_start = NULL;
+  struct Crypto1State *revstate, *revstate_start;
   uint64_t lfsr = 0;
   uint32_t i, kcount = 0;
 
@@ -295,54 +360,53 @@ static void nested_recover(RecPar *rp)
     uint32_t nt_probe = rp->pNK[i].ntp;
     uint32_t ks1 = rp->pNK[i].ks1;
     // And finally recover the first 32 bits of the key
-    revstate = lfsr_recovery32(ks1, nt_probe ^ rp->authuid);
+    revstate_start = lfsr_recovery32(ks1, nt_probe ^ rp->authuid);
     if (revstate_start == NULL)
     {
-      revstate_start = revstate;
+      continue;
     }
+    revstate = revstate_start;
     while ((revstate->odd != 0x0) || (revstate->even != 0x0))
     {
       lfsr_rollback_word(revstate, nt_probe ^ rp->authuid, 0);
       crypto1_get_lfsr(revstate, &lfsr);
       // Allocate a new space for keys
-      if (((kcount % MEM_CHUNK) == 0) || (kcount >= rp->keyCount))
+      if (kcount >= rp->keyCount)
       {
-        rp->keyCount += MEM_CHUNK;
-        // printf("New chunk by %d, sizeof %lu\n", kcount, key_count * sizeof(uint64_t));
-        void *tmp = realloc(rp->keys, rp->keyCount * sizeof(uint64_t));
+        uint32_t newKeyCount = rp->keyCount + MEM_CHUNK;
+        void *tmp = realloc(rp->keys, newKeyCount * sizeof(uint64_t));
         if (tmp == NULL)
         {
           printf("Memory allocation error for pk->possibleKeys");
-          // exit(EXIT_FAILURE);
+          crypto1_destroy(revstate_start);
+          free(rp->keys);
+          rp->keys = NULL;
           rp->keyCount = 0;
           return;
         }
         rp->keys = (uint64_t *)tmp;
+        rp->keyCount = newKeyCount;
       }
       rp->keys[kcount] = lfsr;
       kcount++;
       revstate++;
     }
-    free(revstate_start);
-    revstate_start = NULL;
+    crypto1_destroy(revstate_start);
   }
-  // Truncate
-  if (kcount != 0)
+
+  rp->keyCount = kcount;
+  if (kcount == 0)
   {
-    rp->keyCount = --kcount;
-    void *tmp = (uint64_t *)realloc(rp->keys, rp->keyCount * sizeof(uint64_t));
-    if (tmp == NULL)
-    {
-      printf("Memory allocation error for pk->possibleKeys");
-      // exit(EXIT_FAILURE);
-      rp->keyCount = 0;
-      return;
-    }
-    rp->keys = tmp;
+    free(rp->keys);
+    rp->keys = NULL;
     return;
   }
-  rp->keyCount = 0;
-  return;
+
+  void *tmp = realloc(rp->keys, kcount * sizeof(uint64_t));
+  if (tmp != NULL)
+  {
+    rp->keys = tmp;
+  }
 }
 
 uint64_t *nested_run(NtpKs1 *pNK, uint32_t sizePNK, uint32_t authuid, uint32_t *keyCount, uint32_t *outputKeyCount)
@@ -368,14 +432,9 @@ uint64_t *nested_run(NtpKs1 *pNK, uint32_t sizePNK, uint32_t authuid, uint32_t *
   uint64_t *keys = NULL;
   if (*keyCount != 0)
   {
-    keys = malloc(*keyCount * sizeof(uint64_t));
-    if (keys != NULL)
-    {
-      memcpy(keys, pRPs->keys, pRPs->keyCount * sizeof(uint64_t));
-      free(pRPs->keys);
-      keys = most_frequent_uint64(keys, *keyCount, outputKeyCount);
-    }
+    keys = most_frequent_uint64(pRPs->keys, *keyCount, outputKeyCount);
   }
+  free(pRPs->keys);
   free(pRPs);
 
   return keys;
@@ -399,6 +458,16 @@ FFI_PLUGIN_EXPORT uint64_t *nested(Nested *data, uint32_t *outputKeyCount)
   uint32_t nt1, nt2, nttest, ks1;
   uint8_t par_int;
   uint8_t par_arr[3] = {0x00};
+
+  if (outputKeyCount == NULL)
+  {
+    return NULL;
+  }
+  *outputKeyCount = 0;
+  if (data == NULL)
+  {
+    return NULL;
+  }
 
   uint32_t authuid = data->uid;
   uint32_t dist = data->dist;
@@ -432,7 +501,12 @@ FFI_PLUGIN_EXPORT uint64_t *nested(Nested *data, uint32_t *outputKeyCount)
       {
         ++j;
         // append to list
-        void *tmp = realloc(pNK, sizeof(NtpKs1) * j);
+        NtpKs1 *tmp = realloc(pNK, sizeof(NtpKs1) * j);
+        if (tmp == NULL)
+        {
+          free(pNK);
+          return NULL;
+        }
         pNK = tmp;
         pNK[j - 1].ntp = nttest;
         pNK[j - 1].ks1 = ks1;
@@ -443,6 +517,7 @@ FFI_PLUGIN_EXPORT uint64_t *nested(Nested *data, uint32_t *outputKeyCount)
 
   uint32_t keyCount = 0;
   uint64_t *keys = nested_run(pNK, j, authuid, &keyCount, outputKeyCount);
+  free(pNK);
   return keys;
 }
 
@@ -452,6 +527,16 @@ FFI_PLUGIN_EXPORT uint64_t *static_nested(StaticNested *data, uint32_t *outputKe
   uint32_t i;
   uint32_t j = 0;
   uint32_t nt1, nt2, nttest, ks1, dist = 0;
+
+  if (outputKeyCount == NULL)
+  {
+    return NULL;
+  }
+  *outputKeyCount = 0;
+  if (data == NULL)
+  {
+    return NULL;
+  }
 
   uint32_t authuid = data->uid;
   uint8_t type = (uint8_t)data->key_type; // target key type
@@ -491,11 +576,13 @@ FFI_PLUGIN_EXPORT uint64_t *static_nested(StaticNested *data, uint32_t *outputKe
         }
         else
         {
+          free(pNK);
           return NULL;
         }
       }
       else
       {
+        free(pNK);
         return NULL;
       }
       check_st_level_at_first_run = true;
@@ -506,9 +593,10 @@ FFI_PLUGIN_EXPORT uint64_t *static_nested(StaticNested *data, uint32_t *outputKe
     ++j;
     dist += 160;
 
-    void *tmp = realloc(pNK, sizeof(NtpKs1) * j);
+    NtpKs1 *tmp = realloc(pNK, sizeof(NtpKs1) * j);
     if (tmp == NULL)
     {
+      free(pNK);
       return NULL;
     }
 
@@ -519,6 +607,7 @@ FFI_PLUGIN_EXPORT uint64_t *static_nested(StaticNested *data, uint32_t *outputKe
 
   uint32_t keyCount = 0;
   uint64_t *keys = nested_run(pNK, j, authuid, &keyCount, outputKeyCount);
+  free(pNK);
   return keys;
 }
 

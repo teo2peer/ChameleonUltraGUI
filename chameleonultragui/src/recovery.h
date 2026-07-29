@@ -87,6 +87,8 @@ typedef struct
     uint32_t length;
 } HardNested;
 
+FFI_PLUGIN_EXPORT void recovery_free(void *pointer);
+
 FFI_PLUGIN_EXPORT uint64_t *darkside(Darkside *data, uint32_t *keyCount);
 
 FFI_PLUGIN_EXPORT uint64_t *nested(Nested *data, uint32_t *keyCount);

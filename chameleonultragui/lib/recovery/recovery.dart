@@ -126,75 +126,41 @@ class Mfkey64Dart {
 }
 
 Future<List<int>> darkside(DarksideDart darkside) async {
-  final SendPort helperIsolateSendPort = await _helperIsolateSendPort;
-  final int requestId = _nextSumRequestId++;
-  final DarksideRequest request = DarksideRequest(requestId, darkside);
-  final Completer<List<int>> completer = Completer<List<int>>();
-  requests[requestId] = completer;
-  helperIsolateSendPort.send(request);
-  return completer.future;
+  return _sendRecoveryRequest(
+      (int requestId) => DarksideRequest(requestId, darkside));
 }
 
 Future<List<int>> nested(NestedDart nested) async {
-  final SendPort helperIsolateSendPort = await _helperIsolateSendPort;
-  final int requestId = _nextSumRequestId++;
-  final NestedRequest request = NestedRequest(requestId, nested);
-  final Completer<List<int>> completer = Completer<List<int>>();
-  requests[requestId] = completer;
-  helperIsolateSendPort.send(request);
-  return completer.future;
+  return _sendRecoveryRequest(
+      (int requestId) => NestedRequest(requestId, nested));
 }
 
 Future<List<int>> hardNested(HardNestedDart nested) async {
-  final SendPort helperIsolateSendPort = await _helperIsolateSendPort;
-  final int requestId = _nextSumRequestId++;
-  final HardNestedRequest request = HardNestedRequest(requestId, nested);
-  final Completer<List<int>> completer = Completer<List<int>>();
-  requests[requestId] = completer;
-  helperIsolateSendPort.send(request);
-  return completer.future;
+  return _sendRecoveryRequest(
+    (int requestId) => HardNestedRequest(requestId, nested),
+    timeout: const Duration(minutes: 30),
+  );
 }
 
 Future<List<int>> staticNested(StaticNestedDart nested) async {
-  final SendPort helperIsolateSendPort = await _helperIsolateSendPort;
-  final int requestId = _nextSumRequestId++;
-  final StaticNestedRequest request = StaticNestedRequest(requestId, nested);
-  final Completer<List<int>> completer = Completer<List<int>>();
-  requests[requestId] = completer;
-  helperIsolateSendPort.send(request);
-  return completer.future;
+  return _sendRecoveryRequest(
+      (int requestId) => StaticNestedRequest(requestId, nested));
 }
 
 Future<List<int>> staticEncryptedNested(
     StaticEncryptedNestedDart nested) async {
-  final SendPort helperIsolateSendPort = await _helperIsolateSendPort;
-  final int requestId = _nextSumRequestId++;
-  final StaticEncryptedNestedRequest request =
-      StaticEncryptedNestedRequest(requestId, nested);
-  final Completer<List<int>> completer = Completer<List<int>>();
-  requests[requestId] = completer;
-  helperIsolateSendPort.send(request);
-  return completer.future;
+  return _sendRecoveryRequest(
+      (int requestId) => StaticEncryptedNestedRequest(requestId, nested));
 }
 
 Future<List<int>> mfkey32(Mfkey32Dart mfkey) async {
-  final SendPort helperIsolateSendPort = await _helperIsolateSendPort;
-  final int requestId = _nextSumRequestId++;
-  final Mfkey32Request request = Mfkey32Request(requestId, mfkey);
-  final Completer<List<int>> completer = Completer<List<int>>();
-  requests[requestId] = completer;
-  helperIsolateSendPort.send(request);
-  return completer.future;
+  return _sendRecoveryRequest(
+      (int requestId) => Mfkey32Request(requestId, mfkey));
 }
 
 Future<List<int>> mfkey64(Mfkey64Dart mfkey) async {
-  final SendPort helperIsolateSendPort = await _helperIsolateSendPort;
-  final int requestId = _nextSumRequestId++;
-  final Mfkey64Request request = Mfkey64Request(requestId, mfkey);
-  final Completer<List<int>> completer = Completer<List<int>>();
-  requests[requestId] = completer;
-  helperIsolateSendPort.send(request);
-  return completer.future;
+  return _sendRecoveryRequest(
+      (int requestId) => Mfkey64Request(requestId, mfkey));
 }
 
 String resolvePath() {
@@ -292,46 +258,180 @@ int _nextSumRequestId = 0;
 
 /// Mapping from request `id`s to the completers corresponding to the correct future of the pending request.
 final Map<int, Completer<List<int>>> requests = <int, Completer<List<int>>>{};
+final Map<int, Timer> _requestTimeouts = <int, Timer>{};
+const Duration _recoveryRequestTimeout = Duration(minutes: 5);
+const Duration _workerStartupTimeout = Duration(seconds: 10);
+Object? _helperIsolateFailure;
+Isolate? _recoveryWorkerIsolate;
+void Function(Object, [StackTrace?])? _failRecoveryWorker;
+Future<SendPort>? _helperIsolateSendPort;
+int _recoveryWorkerGeneration = 0;
 
-/// The SendPort belonging to the helper isolate.
-Future<SendPort> _helperIsolateSendPort = () async {
-  // The helper isolate is going to send us back a SendPort, which we want to
-  // wait for.
+Future<List<int>> _sendRecoveryRequest(
+  Object Function(int requestId) createRequest, {
+  Duration timeout = _recoveryRequestTimeout,
+}) async {
+  final SendPort helperIsolateSendPort = await _getRecoveryWorker();
+  if (_helperIsolateFailure case final Object failure) {
+    throw failure;
+  }
+  if (requests.isNotEmpty) {
+    throw StateError('Another recovery operation is already in progress');
+  }
+
+  final int requestId = _nextSumRequestId++;
+  final Completer<List<int>> completer = Completer<List<int>>();
+  requests[requestId] = completer;
+  _requestTimeouts[requestId] = Timer(timeout, () {
+    final TimeoutException error =
+        TimeoutException('Recovery request $requestId timed out', timeout);
+    _recoveryWorkerIsolate?.kill(priority: Isolate.immediate);
+    _failRecoveryWorker?.call(error);
+  });
+
+  try {
+    helperIsolateSendPort.send(createRequest(requestId));
+  } catch (_) {
+    requests.remove(requestId);
+    _requestTimeouts.remove(requestId)?.cancel();
+    rethrow;
+  }
+  return completer.future;
+}
+
+void _failPendingRecoveryRequests(Object error, [StackTrace? stackTrace]) {
+  final List<MapEntry<int, Completer<List<int>>>> pending =
+      requests.entries.toList(growable: false);
+  requests.clear();
+  for (final MapEntry<int, Completer<List<int>>> request in pending) {
+    _requestTimeouts.remove(request.key)?.cancel();
+    if (!request.value.isCompleted) {
+      request.value.completeError(error, stackTrace);
+    }
+  }
+}
+
+Future<SendPort> _getRecoveryWorker() {
+  final current = _helperIsolateSendPort;
+  if (current != null) return current;
+  _helperIsolateFailure = null;
+  final generation = ++_recoveryWorkerGeneration;
+  final worker = _startRecoveryWorker(generation);
+  _helperIsolateSendPort = worker;
+  return worker;
+}
+
+/// Starts one generation of the native recovery isolate.
+Future<SendPort> _startRecoveryWorker(int generation) async {
   final Completer<SendPort> completer = Completer<SendPort>();
+  final ReceivePort receivePort = ReceivePort();
+  final ReceivePort errorPort = ReceivePort();
+  final ReceivePort exitPort = ReceivePort();
+  bool outputPortsClosed = false;
+  bool workerFailed = false;
 
-  // Receive port on the main isolate to receive messages from the helper.
-  // We receive two types of messages:
-  // 1. A port to send messages on.
-  // 2. Responses to requests we sent.
-  final ReceivePort receivePort = ReceivePort()
-    ..listen((dynamic data) {
-      if (data is SendPort) {
-        // The helper isolate sent us the port on which we can sent it requests.
+  void closeOutputPorts() {
+    if (outputPortsClosed) return;
+    outputPortsClosed = true;
+    receivePort.close();
+    errorPort.close();
+  }
+
+  void failWorker(Object error, [StackTrace? stackTrace]) {
+    if (generation != _recoveryWorkerGeneration || workerFailed) return;
+    workerFailed = true;
+    _helperIsolateFailure = error;
+    if (!completer.isCompleted) {
+      completer.completeError(error, stackTrace);
+    }
+    _failPendingRecoveryRequests(error, stackTrace);
+    closeOutputPorts();
+  }
+
+  _failRecoveryWorker = failWorker;
+
+  receivePort.listen((dynamic data) {
+    if (data is SendPort) {
+      if (!completer.isCompleted) {
         completer.complete(data);
-        return;
       }
-      if (data is KeyResponse) {
-        // The helper isolate sent us a response to a request we sent.
-        final Completer<List<int>> completer = requests[data.id]!;
-        requests.remove(data.id);
-        completer.complete(data.result);
-        return;
+      return;
+    }
+    if (data is KeyResponse) {
+      final Completer<List<int>>? request = requests.remove(data.id);
+      _requestTimeouts.remove(data.id)?.cancel();
+      if (request != null && !request.isCompleted) {
+        request.complete(data.result);
       }
-      throw UnsupportedError('Unsupported message type: ${data.runtimeType}');
-    });
+      return;
+    }
+    _recoveryWorkerIsolate?.kill(priority: Isolate.immediate);
+    failWorker(
+        UnsupportedError('Unsupported message type: ${data.runtimeType}'));
+  });
+  errorPort.listen((dynamic data) {
+    final Object error = data is List && data.isNotEmpty
+        ? StateError('Recovery isolate error: ${data.first}')
+        : StateError('Recovery isolate error: $data');
+    final StackTrace? stackTrace = data is List && data.length > 1
+        ? StackTrace.fromString(data[1].toString())
+        : null;
+    failWorker(error, stackTrace);
+  });
+  exitPort.listen((dynamic _) {
+    if (generation != _recoveryWorkerGeneration) {
+      exitPort.close();
+      return;
+    }
+    if (!workerFailed) failWorker(StateError('Recovery isolate exited'));
+    _helperIsolateSendPort = null;
+    _recoveryWorkerIsolate = null;
+    _failRecoveryWorker = null;
+    exitPort.close();
+  });
 
-  // Start the helper isolate.
-  await Isolate.spawn((SendPort sendPort) async {
-    final ReceivePort helperReceivePort = ReceivePort()
-      ..listen((dynamic data) {
-        // On the helper isolate listen to requests and respond to them.
-        if (data is DarksideRequest) {
-          Pointer<Darkside> pointer = calloc();
-          final itemPointer = calloc<DarksideItem>(data.darkside.items.length);
+  Isolate helperIsolate;
+  try {
+    helperIsolate = await Isolate.spawn(
+      _runRecoveryWorker,
+      receivePort.sendPort,
+      onError: errorPort.sendPort,
+      onExit: exitPort.sendPort,
+      errorsAreFatal: true,
+    );
+    _recoveryWorkerIsolate = helperIsolate;
+  } catch (error, stackTrace) {
+    failWorker(error, stackTrace);
+    _helperIsolateSendPort = null;
+    _recoveryWorkerIsolate = null;
+    _failRecoveryWorker = null;
+    exitPort.close();
+    return completer.future;
+  }
+
+  try {
+    return await completer.future.timeout(_workerStartupTimeout);
+  } on TimeoutException catch (error, stackTrace) {
+    helperIsolate.kill(priority: Isolate.immediate);
+    failWorker(error, stackTrace);
+    rethrow;
+  }
+}
+
+void _runRecoveryWorker(SendPort sendPort) {
+  final ReceivePort helperReceivePort = ReceivePort()
+    ..listen((dynamic data) {
+      if (data is DarksideRequest) {
+        final Pointer<Darkside> pointer = calloc<Darkside>();
+        Pointer<DarksideItem>? itemPointer;
+        Pointer<Uint32>? count;
+        Pointer<Uint64>? result;
+        try {
+          itemPointer = calloc<DarksideItem>(data.darkside.items.length);
           pointer.ref.uid = data.darkside.uid;
-          var i = 0;
-          for (var item in data.darkside.items) {
-            var value = itemPointer[i];
+          int i = 0;
+          for (final DarksideItemDart item in data.darkside.items) {
+            final DarksideItem value = itemPointer[i];
             value.ar = item.ar;
             value.ks1 = item.ks1;
             value.nr = item.nr;
@@ -342,18 +442,31 @@ Future<SendPort> _helperIsolateSendPort = () async {
           pointer.ref.items = itemPointer;
           pointer.ref.count = i;
 
-          Pointer<Uint32> count = calloc();
-          count.value = 0;
-          List<int> keys = [];
-          final Pointer<Uint64> result = _bindings.darkside(pointer, count);
-          for (var i = 0; i < count.value; i++) {
+          count = calloc<Uint32>();
+          result = _bindings.darkside(pointer, count);
+          final List<int> keys = <int>[];
+          for (int i = 0; i < count.value; i++) {
             keys.add(result[i]);
           }
-          final KeyResponse response = KeyResponse(data.id, keys);
-          sendPort.send(response);
-          return;
-        } else if (data is NestedRequest) {
-          Pointer<Nested> pointer = calloc();
+          sendPort.send(KeyResponse(data.id, keys));
+        } finally {
+          if (result != null) {
+            _bindings.recovery_free(result.cast<Void>());
+          }
+          if (count != null) {
+            calloc.free(count);
+          }
+          if (itemPointer != null) {
+            calloc.free(itemPointer);
+          }
+          calloc.free(pointer);
+        }
+        return;
+      } else if (data is NestedRequest) {
+        final Pointer<Nested> pointer = calloc<Nested>();
+        Pointer<Uint32>? count;
+        Pointer<Uint64>? result;
+        try {
           pointer.ref.uid = data.nested.uid;
           pointer.ref.dist = data.nested.distance;
           pointer.ref.nt0 = data.nested.nt0;
@@ -363,18 +476,26 @@ Future<SendPort> _helperIsolateSendPort = () async {
           pointer.ref.nt1_enc = data.nested.nt1Enc;
           pointer.ref.par1 = data.nested.par1;
 
-          Pointer<Uint32> count = calloc();
-          count.value = 0;
-          List<int> keys = [];
-          final Pointer<Uint64> result = _bindings.nested(pointer, count);
-          for (var i = 0; i < count.value; i++) {
+          count = calloc<Uint32>();
+          result = _bindings.nested(pointer, count);
+          final List<int> keys = <int>[];
+          for (int i = 0; i < count.value; i++) {
             keys.add(result[i]);
           }
-          final KeyResponse response = KeyResponse(data.id, keys);
-          sendPort.send(response);
-          return;
-        } else if (data is Mfkey32Request) {
-          Pointer<Mfkey32> pointer = calloc();
+          sendPort.send(KeyResponse(data.id, keys));
+        } finally {
+          if (result != null) {
+            _bindings.recovery_free(result.cast<Void>());
+          }
+          if (count != null) {
+            calloc.free(count);
+          }
+          calloc.free(pointer);
+        }
+        return;
+      } else if (data is Mfkey32Request) {
+        final Pointer<Mfkey32> pointer = calloc<Mfkey32>();
+        try {
           pointer.ref.uid = data.mfkey32.uid;
           pointer.ref.nt0 = data.mfkey32.nt0;
           pointer.ref.nt1 = data.mfkey32.nt1;
@@ -384,11 +505,14 @@ Future<SendPort> _helperIsolateSendPort = () async {
           pointer.ref.ar1_enc = data.mfkey32.ar1Enc;
 
           final int result = _bindings.mfkey32(pointer);
-          final KeyResponse response = KeyResponse(data.id, [result]);
-          sendPort.send(response);
-          return;
-        } else if (data is Mfkey64Request) {
-          Pointer<Mfkey64> pointer = calloc();
+          sendPort.send(KeyResponse(data.id, <int>[result]));
+        } finally {
+          calloc.free(pointer);
+        }
+        return;
+      } else if (data is Mfkey64Request) {
+        final Pointer<Mfkey64> pointer = calloc<Mfkey64>();
+        try {
           pointer.ref.uid = data.mfkey64.uid;
           pointer.ref.nt = data.mfkey64.nt;
           pointer.ref.nr_enc = data.mfkey64.nrEnc;
@@ -396,11 +520,16 @@ Future<SendPort> _helperIsolateSendPort = () async {
           pointer.ref.at_enc = data.mfkey64.atEnc;
 
           final int result = _bindings.mfkey64(pointer);
-          final KeyResponse response = KeyResponse(data.id, [result]);
-          sendPort.send(response);
-          return;
-        } else if (data is StaticNestedRequest) {
-          Pointer<StaticNested> pointer = calloc();
+          sendPort.send(KeyResponse(data.id, <int>[result]));
+        } finally {
+          calloc.free(pointer);
+        }
+        return;
+      } else if (data is StaticNestedRequest) {
+        final Pointer<StaticNested> pointer = calloc<StaticNested>();
+        Pointer<Uint32>? count;
+        Pointer<Uint64>? result;
+        try {
           pointer.ref.uid = data.nested.uid;
           pointer.ref.key_type = data.nested.keyType;
           pointer.ref.nt0 = data.nested.nt0;
@@ -408,60 +537,74 @@ Future<SendPort> _helperIsolateSendPort = () async {
           pointer.ref.nt1 = data.nested.nt1;
           pointer.ref.nt1_enc = data.nested.nt1Enc;
 
-          Pointer<Uint32> count = calloc();
-          count.value = 0;
-          List<int> keys = [];
-          final Pointer<Uint64> result =
-              _bindings.static_nested(pointer, count);
-          for (var i = 0; i < count.value; i++) {
+          count = calloc<Uint32>();
+          result = _bindings.static_nested(pointer, count);
+          final List<int> keys = <int>[];
+          for (int i = 0; i < count.value; i++) {
             keys.add(result[i]);
           }
-          final KeyResponse response = KeyResponse(data.id, keys);
-          sendPort.send(response);
-          return;
-        } else if (data is StaticEncryptedNestedRequest) {
-          Pointer<StaticEncryptedNested> pointer = calloc();
+          sendPort.send(KeyResponse(data.id, keys));
+        } finally {
+          if (result != null) {
+            _bindings.recovery_free(result.cast<Void>());
+          }
+          if (count != null) {
+            calloc.free(count);
+          }
+          calloc.free(pointer);
+        }
+        return;
+      } else if (data is StaticEncryptedNestedRequest) {
+        final Pointer<StaticEncryptedNested> pointer =
+            calloc<StaticEncryptedNested>();
+        Pointer<Uint32>? count;
+        Pointer<Uint64>? result;
+        try {
           pointer.ref.uid = data.nested.uid;
           pointer.ref.nt = data.nested.nt;
           pointer.ref.nt_enc = data.nested.ntEnc;
           pointer.ref.nt_par_enc = data.nested.ntParEnc;
 
-          Pointer<Uint32> count = calloc();
-          count.value = 0;
-          List<int> keys = [];
-          final Pointer<Uint64> result =
-              _bindings.static_encrypted_nested(pointer, count);
-          for (var i = 0; i < count.value; i++) {
+          count = calloc<Uint32>();
+          result = _bindings.static_encrypted_nested(pointer, count);
+          final List<int> keys = <int>[];
+          for (int i = 0; i < count.value; i++) {
             keys.add(result[i]);
           }
-          final KeyResponse response = KeyResponse(data.id, keys);
-          sendPort.send(response);
-          return;
-        } else if (data is HardNestedRequest) {
-          Pointer<HardNested> pointer = calloc();
-          final Pointer<Uint8> uint8Ptr =
-              calloc<Uint8>(data.nested.nonces.length);
-          uint8Ptr
+          sendPort.send(KeyResponse(data.id, keys));
+        } finally {
+          if (result != null) {
+            _bindings.recovery_free(result.cast<Void>());
+          }
+          if (count != null) {
+            calloc.free(count);
+          }
+          calloc.free(pointer);
+        }
+        return;
+      } else if (data is HardNestedRequest) {
+        final Pointer<HardNested> pointer = calloc<HardNested>();
+        Pointer<Uint8>? nonces;
+        try {
+          nonces = calloc<Uint8>(data.nested.nonces.length);
+          nonces
               .asTypedList(data.nested.nonces.length)
               .setAll(0, data.nested.nonces);
-          pointer.ref.nonces = uint8Ptr.cast<Char>();
+          pointer.ref.nonces = nonces.cast<Char>();
           pointer.ref.length = data.nested.nonces.length;
 
-          List<int> keys = [];
           final int result = _bindings.hardnested(pointer);
-          keys.add(result);
-          final KeyResponse response = KeyResponse(data.id, keys);
-          sendPort.send(response);
-          return;
+          sendPort.send(KeyResponse(data.id, <int>[result]));
+        } finally {
+          if (nonces != null) {
+            calloc.free(nonces);
+          }
+          calloc.free(pointer);
         }
-        throw UnsupportedError('Unsupported message type: ${data.runtimeType}');
-      });
+        return;
+      }
+      throw UnsupportedError('Unsupported message type: ${data.runtimeType}');
+    });
 
-    // Send the port to the main isolate on which we can receive requests.
-    sendPort.send(helperReceivePort.sendPort);
-  }, receivePort.sendPort);
-
-  // Wait until the helper isolate has sent us back the SendPort on which we
-  // can start sending requests.
-  return completer.future;
-}();
+  sendPort.send(helperReceivePort.sendPort);
+}

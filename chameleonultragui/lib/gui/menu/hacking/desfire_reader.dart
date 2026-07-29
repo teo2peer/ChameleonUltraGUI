@@ -112,13 +112,15 @@ class DesfireReaderPageState extends State<DesfireReaderPage> {
         final files = body
             .map((b) => b.toRadixString(16).padLeft(2, '0').toUpperCase())
             .toList();
-        apps.add(_DesfireApp(currentAid ?? '??????', files, pendingKeySettings));
+        apps.add(
+            _DesfireApp(currentAid ?? '??????', files, pendingKeySettings));
       } else if (ins == 0xF5) {
         // GetFileSettings for the file id in the command (byte 5)
         if (apps.isNotEmpty && cmd.length >= 6 && body.isNotEmpty) {
-          apps.last.fileSettings[
-                  cmd[5].toRadixString(16).padLeft(2, '0').toUpperCase()] =
-              _decodeFileSettings(body);
+          apps.last.fileSettings[cmd[5]
+              .toRadixString(16)
+              .padLeft(2, '0')
+              .toUpperCase()] = _decodeFileSettings(body);
         }
       }
     }
@@ -127,7 +129,8 @@ class DesfireReaderPageState extends State<DesfireReaderPage> {
     if (apps.isEmpty && aids.length >= 3) {
       for (int a = 0; a + 3 <= aids.length; a += 3) {
         apps.add(_DesfireApp(
-            bytesToHex(Uint8List.fromList(aids.sublist(a, a + 3))).toUpperCase(),
+            bytesToHex(Uint8List.fromList(aids.sublist(a, a + 3)))
+                .toUpperCase(),
             const []));
       }
     }
@@ -236,8 +239,7 @@ class DesfireReaderPageState extends State<DesfireReaderPage> {
                     _row('UID', r.uid),
                     ...r.info.entries.map((e) => _row(e.key, e.value)),
                     const Divider(height: 24),
-                    Text(
-                        "${localizations.applications} (${r.apps.length})",
+                    Text("${localizations.applications} (${r.apps.length})",
                         style: const TextStyle(fontWeight: FontWeight.bold)),
                     ...r.apps.map((a) => Card(
                           clipBehavior: Clip.antiAlias,

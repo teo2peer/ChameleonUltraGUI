@@ -1,4 +1,6 @@
+import 'package:chameleonultragui/helpers/emv.dart';
 import 'package:chameleonultragui/helpers/general.dart';
+import 'package:chameleonultragui/gui/component/apdu_cheatsheet.dart';
 import 'package:chameleonultragui/main.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -18,10 +20,12 @@ class ApduTerminalPage extends StatefulWidget {
 
 class ApduTerminalPageState extends State<ApduTerminalPage> {
   // Default: SELECT PPSE (2PAY.SYS.DDF01) — a harmless probe for contactless.
-  final _apdu = TextEditingController(
-      text: '00A404000E325041592E5359532E4444463031');
+  final _apdu =
+      TextEditingController(text: '00A404000E325041592E5359532E4444463031');
   bool _busy = false;
   String? _response;
+  String? _decoded;
+  List<EmvTlv> _tlvs = [];
   String? _error;
 
   ChameleonGUIState get _app => context.read<ChameleonGUIState>();
@@ -38,6 +42,8 @@ class ApduTerminalPageState extends State<ApduTerminalPage> {
     setState(() {
       _busy = true;
       _response = null;
+      _decoded = null;
+      _tlvs = [];
       _error = null;
     });
     try {
@@ -50,7 +56,15 @@ class ApduTerminalPageState extends State<ApduTerminalPage> {
         await _app.communicator!.setReaderDeviceMode(true);
       }
       final resp = await _app.communicator!.hf14a4ReaderApdu(apdu);
-      setState(() => _response = bytesToHexSpace(resp).toUpperCase());
+      final sw =
+          resp.length >= 2 ? (resp[resp.length - 2] << 8) | resp.last : null;
+      final body = resp.length >= 2 ? resp.sublist(0, resp.length - 2) : resp;
+      setState(() {
+        _response = bytesToHexSpace(resp).toUpperCase();
+        _decoded =
+            '${emvDescribeCommand(apdu)} | SW ${sw == null ? '--' : sw.toRadixString(16).padLeft(4, '0').toUpperCase()} - ${emvStatusText(sw)}';
+        _tlvs = parseEmvTlv(body);
+      });
     } on FormatException {
       setState(() => _error = localizations.invalid_hex_input);
     } catch (e) {
@@ -58,6 +72,29 @@ class ApduTerminalPageState extends State<ApduTerminalPage> {
     } finally {
       if (mounted) setState(() => _busy = false);
     }
+  }
+
+  Widget _tlvRow(EmvTlv t) {
+    final printable =
+        !t.constructed && t.value.every((c) => c >= 0x20 && c < 0x7F);
+    final ascii = printable ? String.fromCharCodes(t.value) : null;
+    return Padding(
+      padding: EdgeInsets.only(left: 8.0 + t.depth * 14.0, top: 2, bottom: 2),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('${t.tag}  ${emvTagName(t.tag)}',
+              style: TextStyle(
+                  fontSize: 12,
+                  fontWeight:
+                      t.constructed ? FontWeight.bold : FontWeight.w600)),
+          if (!t.constructed)
+            SelectableText(
+                "${bytesToHexSpace(t.value).toUpperCase()}${ascii != null && ascii.trim().isNotEmpty ? '   "$ascii"' : ''}",
+                style: const TextStyle(fontFamily: 'RobotoMono', fontSize: 12)),
+        ],
+      ),
+    );
   }
 
   @override
@@ -72,6 +109,13 @@ class ApduTerminalPageState extends State<ApduTerminalPage> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
+                  ApduCheatSheet(
+                    onExampleSelected: (example) => setState(() {
+                      _apdu.text = example;
+                      _error = null;
+                    }),
+                  ),
+                  const SizedBox(height: 12),
                   TextField(
                     controller: _apdu,
                     maxLines: 2,
@@ -99,6 +143,11 @@ class ApduTerminalPageState extends State<ApduTerminalPage> {
                         style: TextStyle(
                             color: Theme.of(context).colorScheme.error)),
                   if (_response != null) ...[
+                    if (_decoded != null) ...[
+                      Text(_decoded!,
+                          style: const TextStyle(fontWeight: FontWeight.bold)),
+                      const SizedBox(height: 8),
+                    ],
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
@@ -116,13 +165,20 @@ class ApduTerminalPageState extends State<ApduTerminalPage> {
                       width: double.infinity,
                       padding: const EdgeInsets.all(10),
                       decoration: BoxDecoration(
-                        color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                        color: Theme.of(context)
+                            .colorScheme
+                            .surfaceContainerHighest,
                         borderRadius: BorderRadius.circular(8),
                       ),
                       child: SelectableText(_response!,
                           style: const TextStyle(
                               fontFamily: 'RobotoMono', fontSize: 14)),
                     ),
+                    if (_tlvs.isNotEmpty)
+                      ExpansionTile(
+                        title: Text('Response TLV (${_tlvs.length})'),
+                        children: _tlvs.map(_tlvRow).toList(),
+                      ),
                   ],
                 ],
               ),

@@ -5,6 +5,7 @@ import 'package:chameleonultragui/gui/page/read_card.dart'
     show MifareClassicInfo;
 import 'package:chameleonultragui/helpers/general.dart';
 import 'package:chameleonultragui/helpers/mifare_classic/general.dart';
+import 'package:chameleonultragui/helpers/mifare_classic/recovery.dart';
 import 'package:chameleonultragui/main.dart';
 import 'package:chameleonultragui/sharedprefsprovider.dart';
 import 'package:flutter/material.dart';
@@ -28,6 +29,7 @@ class AutopwnPageState extends State<AutopwnPage> {
   MifareClassicInfo? mfcInfo;
   bool running = false;
   String message = '';
+  MifareClassicRecovery? _activeRecovery;
 
   // Saved dictionaries the user can pick from as a starting key set before the
   // run. Index 0 is always the "empty" entry (default keys only).
@@ -48,6 +50,12 @@ class AutopwnPageState extends State<AutopwnPage> {
     }
   }
 
+  @override
+  void dispose() {
+    _activeRecovery?.cancel();
+    super.dispose();
+  }
+
   void _refresh() {
     if (mounted) setState(() {});
   }
@@ -61,6 +69,7 @@ class AutopwnPageState extends State<AutopwnPage> {
     });
     try {
       var (hfInfo, mfc, _) = await readHFInfo(context, _refresh);
+      if (!mounted) return;
       if (!hfInfo.cardExist) {
         setState(() => message = localizations.no_card_found);
         return;
@@ -69,25 +78,32 @@ class AutopwnPageState extends State<AutopwnPage> {
         setState(() => message = localizations.not_mifare_classic_slot);
         return;
       }
+      final recovery = mfc.recovery!;
+      _activeRecovery = recovery;
       setState(() => mfcInfo = mfc);
 
       // Seed the recovery with the dictionary the user picked before starting.
       // checkKeys() tests these keys first (default keys are still tried on top,
       // unless skipDefaultDictionary). Falls back to "empty" (defaults only).
-      mfc.recovery!.dictionaries = List.of(_dictionaries);
-      mfc.recovery!.selectedDictionary =
-          _selectedDictionary ?? _dictionaries.first;
+      recovery.dictionaries = List.of(_dictionaries);
+      recovery.selectedDictionary = _selectedDictionary ?? _dictionaries.first;
 
-      await mfc.recovery!.checkKeys();
-      if (!widget.dictionaryOnly && !mfc.recovery!.allKeysExists) {
-        await mfc.recovery!.recoverKeys();
+      await recovery.checkKeys();
+      if (!mounted || recovery.isCancelled) return;
+      if (!widget.dictionaryOnly && !recovery.allKeysExists) {
+        await recovery.recoverKeys();
       }
-      if (mfc.recovery!.allKeysExists) {
-        await mfc.recovery!.dumpData();
+      if (!mounted || recovery.isCancelled) return;
+      if (recovery.allKeysExists) {
+        await recovery.dumpData();
       }
+      if (!mounted || recovery.isCancelled) return;
       _refresh();
+    } on MifareClassicRecoveryCancelled {
+      // Leaving the page cancels the run cooperatively after the in-flight
+      // device command returns. Do not surface this as an error.
     } catch (e) {
-      setState(() => message = e.toString());
+      if (mounted) setState(() => message = e.toString());
     } finally {
       if (mounted) setState(() => running = false);
     }
@@ -161,7 +177,8 @@ class AutopwnPageState extends State<AutopwnPage> {
               KeyCheckMarks(
                 checkMarks: recovery.checkMarks,
                 validKeys: recovery.validKeys,
-                checkmarkCount: mfClassicGetSectorCount(recovery.mifareClassicType,
+                checkmarkCount: mfClassicGetSectorCount(
+                    recovery.mifareClassicType,
                     isEV1: recovery.isMifareClassicEV1),
               ),
               if (recovery.error.isNotEmpty) ...[

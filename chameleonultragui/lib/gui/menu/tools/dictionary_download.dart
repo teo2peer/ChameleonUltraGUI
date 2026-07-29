@@ -11,10 +11,7 @@ class DictionaryLocation {
   final String name;
   final String url;
 
-  DictionaryLocation({
-    required this.name,
-    required this.url,
-  });
+  DictionaryLocation({required this.name, required this.url});
 }
 
 class DictionaryDownloadMenu extends StatefulWidget {
@@ -34,8 +31,11 @@ class DictionaryDownloadMenuState extends State<DictionaryDownloadMenu> {
     super.dispose();
   }
 
-  Future<void> _downloadDictionary(ChameleonGUIState appState,
-      DictionaryLocation dictLocation, AppLocalizations localizations) async {
+  Future<void> _downloadDictionary(
+    ChameleonGUIState appState,
+    DictionaryLocation dictLocation,
+    AppLocalizations localizations,
+  ) async {
     setState(() {
       _downloading.add(dictLocation.url);
     });
@@ -44,8 +44,10 @@ class DictionaryDownloadMenuState extends State<DictionaryDownloadMenu> {
       final response = await http.get(Uri.parse(dictLocation.url));
 
       if (response.statusCode == 200) {
-        Dictionary dict =
-            Dictionary.fromString(response.body, name: dictLocation.name);
+        Dictionary dict = Dictionary.fromString(
+          response.body,
+          name: dictLocation.name,
+        );
 
         if (dict.keys.isEmpty) {
           return;
@@ -53,14 +55,16 @@ class DictionaryDownloadMenuState extends State<DictionaryDownloadMenu> {
 
         var dictionaries = appState.sharedPreferencesProvider.getDictionaries();
         dictionaries.add(dict);
-        appState.sharedPreferencesProvider.setDictionaries(dictionaries);
+        await appState.sharedPreferencesProvider.setDictionaries(dictionaries);
         appState.changesMade();
 
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-                content: Text(localizations
-                    .dictionary_download_success(dictLocation.name))),
+              content: Text(
+                localizations.dictionary_download_success(dictLocation.name),
+              ),
+            ),
           );
         }
       }
@@ -81,30 +85,38 @@ class DictionaryDownloadMenuState extends State<DictionaryDownloadMenu> {
 
     List<DictionaryLocation> dictionaries = [
       DictionaryLocation(
-          name: 'Proxmark3 (Mifare Classic)',
-          url:
-              'https://raw.githubusercontent.com/RfidResearchGroup/proxmark3/refs/heads/master/client/dictionaries/mfc_default_keys.dic'),
+        name: 'Proxmark3 (Mifare Classic)',
+        url:
+            'https://raw.githubusercontent.com/RfidResearchGroup/proxmark3/refs/heads/master/client/dictionaries/mfc_default_keys.dic',
+      ),
       DictionaryLocation(
-          name: 'Proxmark3 (T55XX)',
-          url:
-              'https://raw.githubusercontent.com/RfidResearchGroup/proxmark3/refs/heads/master/client/dictionaries/t55xx_default_pwds.dic'),
+        name: 'Proxmark3 (T55XX)',
+        url:
+            'https://raw.githubusercontent.com/RfidResearchGroup/proxmark3/refs/heads/master/client/dictionaries/t55xx_default_pwds.dic',
+      ),
       DictionaryLocation(
-          name: 'Proxmark3 (Mifare Ultralight C)',
-          url:
-              'https://raw.githubusercontent.com/RfidResearchGroup/proxmark3/refs/heads/master/client/dictionaries/mfulc_default_keys.dic'),
+        name: 'Proxmark3 (Mifare Ultralight C)',
+        url:
+            'https://raw.githubusercontent.com/RfidResearchGroup/proxmark3/refs/heads/master/client/dictionaries/mfulc_default_keys.dic',
+      ),
       DictionaryLocation(
-          name: 'Proxmark3 (Mifare Plus)',
-          url:
-              'https://raw.githubusercontent.com/RfidResearchGroup/proxmark3/refs/heads/master/client/dictionaries/mfp_default_keys.dic'),
+        name: 'Proxmark3 (Mifare Plus)',
+        url:
+            'https://raw.githubusercontent.com/RfidResearchGroup/proxmark3/refs/heads/master/client/dictionaries/mfp_default_keys.dic',
+      ),
       DictionaryLocation(
-          name: 'Flipper Zero Unleashed Firmware (Mifare Classic)',
-          url:
-              'https://raw.githubusercontent.com/DarkFlippers/unleashed-firmware/refs/heads/dev/applications/main/nfc/resources/nfc/assets/mf_classic_dict.nfc'),
+        name: 'Flipper Zero Unleashed Firmware (Mifare Classic)',
+        url:
+            'https://raw.githubusercontent.com/DarkFlippers/unleashed-firmware/refs/heads/dev/applications/main/nfc/resources/nfc/assets/mf_classic_dict.nfc',
+      ),
     ];
 
     return AlertDialog(
-      title: Text(localizations.dictionary_download,
-          maxLines: 3, overflow: TextOverflow.ellipsis),
+      title: Text(
+        localizations.dictionary_download,
+        maxLines: 3,
+        overflow: TextOverflow.ellipsis,
+      ),
       content: SizedBox(
         width: double.maxFinite,
         child: SingleChildScrollView(
@@ -130,7 +142,10 @@ class DictionaryDownloadMenuState extends State<DictionaryDownloadMenu> {
                       onPressed: isDownloading
                           ? null
                           : () => _downloadDictionary(
-                              appState, dict, localizations),
+                              appState,
+                              dict,
+                              localizations,
+                            ),
                       child: isDownloading
                           ? const SizedBox(
                               width: 16,

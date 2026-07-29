@@ -1,10 +1,13 @@
 import 'package:chameleonultragui/gui/component/element_button.dart';
 import 'package:chameleonultragui/gui/menu/hacking/apdu_terminal.dart';
 import 'package:chameleonultragui/gui/menu/hacking/auth_trace.dart';
+import 'package:chameleonultragui/gui/menu/hacking/authorized_relay_lab.dart';
 import 'package:chameleonultragui/gui/menu/hacking/autopwn.dart';
+import 'package:chameleonultragui/gui/menu/hacking/autopwn_plus.dart';
 import 'package:chameleonultragui/gui/menu/hacking/backdoor.dart';
 import 'package:chameleonultragui/gui/menu/hacking/ble_app.dart';
 import 'package:chameleonultragui/gui/menu/hacking/ble_audit.dart';
+import 'package:chameleonultragui/gui/menu/hacking/ble_advertising_lab.dart';
 import 'package:chameleonultragui/gui/menu/hacking/ble_radio_identity.dart';
 import 'package:chameleonultragui/gui/menu/hacking/ble_stress.dart';
 import 'package:chameleonultragui/gui/menu/hacking/category_page.dart';
@@ -13,9 +16,12 @@ import 'package:chameleonultragui/gui/menu/hacking/desfire_reader.dart';
 import 'package:chameleonultragui/gui/menu/hacking/emv_emulator.dart';
 import 'package:chameleonultragui/gui/menu/hacking/emv_reader.dart';
 import 'package:chameleonultragui/gui/menu/hacking/emv_transaction.dart';
+import 'package:chameleonultragui/gui/menu/hacking/keyboard_payload.dart';
 import 'package:chameleonultragui/gui/menu/hacking/mfkey_manual.dart';
 import 'package:chameleonultragui/gui/menu/hacking/nested.dart';
 import 'package:chameleonultragui/gui/menu/hacking/ntag_password_capture.dart';
+import 'package:chameleonultragui/gui/menu/hacking/relay_resistance_lab.dart';
+import 'package:chameleonultragui/gui/menu/hacking/transit_gate_test.dart';
 import 'package:chameleonultragui/gui/menu/hacking/value_block.dart';
 import 'package:chameleonultragui/gui/menu/hacking/wiegand.dart';
 import 'package:chameleonultragui/gui/menu/pages/mfkey32.dart';
@@ -68,15 +74,22 @@ class EthicalHackingPageState extends State<EthicalHackingPage> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(Icons.gpp_maybe,
-                size: 64, color: Theme.of(context).colorScheme.primary),
+            Icon(
+              Icons.gpp_maybe,
+              size: 64,
+              color: Theme.of(context).colorScheme.primary,
+            ),
             const SizedBox(height: 16),
-            Text(localizations.ethical_hacking_disclaimer_title,
-                style: Theme.of(context).textTheme.titleLarge,
-                textAlign: TextAlign.center),
+            Text(
+              localizations.ethical_hacking_disclaimer_title,
+              style: Theme.of(context).textTheme.titleLarge,
+              textAlign: TextAlign.center,
+            ),
             const SizedBox(height: 12),
-            Text(localizations.ethical_hacking_disclaimer,
-                textAlign: TextAlign.center),
+            Text(
+              localizations.ethical_hacking_disclaimer,
+              textAlign: TextAlign.center,
+            ),
             const SizedBox(height: 20),
             ElevatedButton(
               onPressed: () {
@@ -104,176 +117,263 @@ class EthicalHackingPageState extends State<EthicalHackingPage> {
     }
 
     final mfc = <HackingAttack>[
-      HackingAttack(localizations.autopwn, localizations.autopwn_description,
-          Icons.bolt, (c) => _push(c, const AutopwnPage()),
-          deviceRequired: true),
       HackingAttack(
-          localizations.dictionary_check,
-          localizations.dictionary_check_description,
-          Icons.menu_book,
-          (c) => _push(c, const AutopwnPage(dictionaryOnly: true)),
-          deviceRequired: true),
-      HackingAttack(localizations.darkside, localizations.darkside_description,
-          Icons.dark_mode, (c) => _push(c, const DarksidePage()),
-          deviceRequired: true),
-      HackingAttack(localizations.nested, localizations.nested_description,
-          Icons.layers, (c) => _push(c, const NestedPage()),
-          deviceRequired: true),
+        localizations.autopwn,
+        localizations.autopwn_description,
+        Icons.bolt,
+        (c) => _push(c, const AutopwnPage()),
+        deviceRequired: true,
+      ),
       HackingAttack(
-          localizations.static_nested,
-          localizations.static_nested_description,
-          Icons.lock_clock,
-          (c) => _push(c, const NestedPage(variant: NestedVariant.staticNonce)),
-          deviceRequired: true),
+        localizations.autopwn_plus,
+        localizations.autopwn_plus_description,
+        Icons.auto_awesome,
+        (c) => _push(c, const AutopwnPlusPage()),
+        deviceRequired: true,
+      ),
       HackingAttack(
-          localizations.hardnested,
-          localizations.hardnested_description,
-          Icons.memory,
-          (c) => _push(c, const NestedPage(variant: NestedVariant.hard)),
-          deviceRequired: true),
+        localizations.dictionary_check,
+        localizations.dictionary_check_description,
+        Icons.menu_book,
+        (c) => _push(c, const AutopwnPage(dictionaryOnly: true)),
+        deviceRequired: true,
+      ),
       HackingAttack(
-          localizations.backdoor_rf08s,
-          localizations.backdoor_rf08s_description,
-          Icons.door_back_door,
-          (c) => _push(c, const BackdoorPage()),
-          deviceRequired: true),
-      HackingAttack(localizations.read_card, localizations.recover_keys,
-          Icons.sensors, (c) => _push(c, const ReadCardPage()),
-          deviceRequired: true),
+        localizations.darkside,
+        localizations.darkside_description,
+        Icons.dark_mode,
+        (c) => _push(c, const DarksidePage()),
+        deviceRequired: true,
+      ),
       HackingAttack(
-          localizations.mfkey_manual,
-          localizations.mfkey_manual_description,
-          Icons.vpn_key,
-          (c) => _dialog(c, const MfkeyManualMenu())),
+        localizations.nested,
+        localizations.nested_description,
+        Icons.layers,
+        (c) => _push(c, const NestedPage()),
+        deviceRequired: true,
+      ),
+      HackingAttack(
+        localizations.static_nested,
+        localizations.static_nested_description,
+        Icons.lock_clock,
+        (c) => _push(c, const NestedPage(variant: NestedVariant.staticNonce)),
+        deviceRequired: true,
+      ),
+      HackingAttack(
+        localizations.hardnested,
+        localizations.hardnested_description,
+        Icons.memory,
+        (c) => _push(c, const NestedPage(variant: NestedVariant.hard)),
+        deviceRequired: true,
+      ),
+      HackingAttack(
+        localizations.backdoor_rf08s,
+        localizations.backdoor_rf08s_description,
+        Icons.door_back_door,
+        (c) => _push(c, const BackdoorPage()),
+        deviceRequired: true,
+      ),
+      HackingAttack(
+        localizations.read_card,
+        localizations.recover_keys,
+        Icons.sensors,
+        (c) => _push(c, const ReadCardPage()),
+        deviceRequired: true,
+      ),
+      HackingAttack(
+        localizations.mfkey_manual,
+        localizations.mfkey_manual_description,
+        Icons.vpn_key,
+        (c) => _dialog(c, const MfkeyManualMenu()),
+      ),
     ];
 
     final capture = <HackingAttack>[
       HackingAttack(
-          localizations.reader_keys_capture,
-          localizations.mfkey_manual_description,
-          Icons.wifi_tethering,
-          (c) => _push(c, const ReaderKeysPage()),
-          deviceRequired: true),
+        localizations.reader_keys_capture,
+        localizations.mfkey_manual_description,
+        Icons.wifi_tethering,
+        (c) => _push(c, const ReaderKeysPage()),
+        deviceRequired: true,
+      ),
       HackingAttack(
-          localizations.hf_sniffing,
-          localizations.hf_sniffing_description,
-          Icons.radar,
-          (c) => _dialog(c, const HfSniffingMenu()),
-          deviceRequired: true),
+        localizations.hf_sniffing,
+        localizations.hf_sniffing_description,
+        Icons.radar,
+        (c) => _dialog(c, const HfSniffingMenu()),
+        deviceRequired: true,
+      ),
       HackingAttack(
-          localizations.ntag_password_capture,
-          localizations.ntag_password_capture_description,
-          Icons.password,
-          (c) => _push(c, const NtagPasswordCapturePage()),
-          deviceRequired: true),
+        localizations.ntag_password_capture,
+        localizations.ntag_password_capture_description,
+        Icons.password,
+        (c) => _push(c, const NtagPasswordCapturePage()),
+        deviceRequired: true,
+      ),
       HackingAttack(
-          localizations.mfkey32,
-          localizations.mfkey_manual_description,
-          Icons.key,
-          (c) => _push(c, const Mfkey32Menu()),
-          deviceRequired: true),
+        localizations.mfkey32,
+        localizations.mfkey_manual_description,
+        Icons.key,
+        (c) => _push(c, const Mfkey32Menu()),
+        deviceRequired: true,
+      ),
     ];
 
     final emulation = <HackingAttack>[
       HackingAttack(
-          localizations.value_block_tool,
-          localizations.value_block_description,
-          Icons.exposure,
-          (c) => _dialog(c, const ValueBlockMenu()),
-          deviceRequired: true),
-      HackingAttack(localizations.write_card, localizations.write_card,
-          Icons.system_update_alt, (c) => _push(c, const WriteCardPage()),
-          deviceRequired: true),
+        localizations.value_block_tool,
+        localizations.value_block_description,
+        Icons.exposure,
+        (c) => _dialog(c, const ValueBlockMenu()),
+        deviceRequired: true,
+      ),
       HackingAttack(
-          localizations.wiegand_decoder,
-          localizations.wiegand_decoder_description,
-          Icons.numbers,
-          (c) => _dialog(c, const WiegandMenu())),
+        localizations.write_card,
+        localizations.write_card,
+        Icons.system_update_alt,
+        (c) => _push(c, const WriteCardPage()),
+        deviceRequired: true,
+      ),
       HackingAttack(
-          localizations.emv_emulator,
-          localizations.emv_emulator_description,
-          Icons.sim_card,
-          (c) => _push(c, const EmvEmulatorPage()),
-          deviceRequired: true),
+        localizations.wiegand_decoder,
+        localizations.wiegand_decoder_description,
+        Icons.numbers,
+        (c) => _dialog(c, const WiegandMenu()),
+      ),
+      HackingAttack(
+        localizations.emv_emulator,
+        localizations.emv_emulator_description,
+        Icons.sim_card,
+        (c) => _push(c, const EmvEmulatorPage()),
+        deviceRequired: true,
+      ),
+      HackingAttack(
+        localizations.keyboard_payload,
+        localizations.keyboard_payload_description,
+        Icons.keyboard,
+        (c) => _push(c, const KeyboardPayloadPage()),
+        deviceRequired: true,
+      ),
     ];
 
     final diagnostics = <HackingAttack>[
       HackingAttack(
-          localizations.auth_trace,
-          localizations.auth_trace_description,
-          Icons.timeline,
-          (c) => _push(c, const AuthTracePage()),
-          deviceRequired: true),
+        localizations.authorized_relay_title,
+        localizations.authorized_relay_description,
+        Icons.account_balance_wallet,
+        (c) => _push(c, const AuthorizedRelayLabPage()),
+      ),
       HackingAttack(
-          localizations.apdu_terminal,
-          localizations.apdu_terminal_description,
-          Icons.terminal,
-          (c) => _push(c, const ApduTerminalPage()),
-          deviceRequired: true),
+        'Synthetic relay-resistance lab',
+        'Private-AID Android HCE forwarding with strict payment-traffic rejection and timing reports',
+        Icons.security,
+        (c) => _push(c, const RelayResistanceLabPage()),
+      ),
       HackingAttack(
-          localizations.emv_reader,
-          localizations.emv_reader_description,
-          Icons.contactless,
-          (c) => _push(c, const EmvReaderPage()),
-          deviceRequired: true),
+        localizations.auth_trace,
+        localizations.auth_trace_description,
+        Icons.timeline,
+        (c) => _push(c, const AuthTracePage()),
+        deviceRequired: true,
+      ),
       HackingAttack(
-          localizations.purchase_sim,
-          localizations.purchase_sim_description,
-          Icons.point_of_sale,
-          (c) => _push(c, const EmvTransactionPage()),
-          deviceRequired: true),
+        localizations.apdu_terminal,
+        localizations.apdu_terminal_description,
+        Icons.terminal,
+        (c) => _push(c, const ApduTerminalPage()),
+        deviceRequired: true,
+      ),
       HackingAttack(
-          localizations.desfire_reader,
-          localizations.desfire_reader_description,
-          Icons.storage,
-          (c) => _push(c, const DesfireReaderPage()),
-          deviceRequired: true),
+        localizations.emv_reader,
+        localizations.emv_reader_description,
+        Icons.contactless,
+        (c) => _push(c, const EmvReaderPage()),
+        deviceRequired: true,
+      ),
+      HackingAttack(
+        localizations.purchase_sim,
+        localizations.purchase_sim_description,
+        Icons.point_of_sale,
+        (c) => _push(c, const EmvTransactionPage()),
+        deviceRequired: true,
+      ),
+      HackingAttack(
+        'Transit gate lab',
+        'Test whether an operator-locked phone exposes an EMV wallet and '
+            'capture one authorised transit-profile transaction attempt',
+        Icons.directions_subway,
+        (c) => _push(c, const TransitGateTestPage()),
+        deviceRequired: true,
+      ),
+      HackingAttack(
+        localizations.desfire_reader,
+        localizations.desfire_reader_description,
+        Icons.storage,
+        (c) => _push(c, const DesfireReaderPage()),
+        deviceRequired: true,
+      ),
     ];
 
     final categories = <_Category>[
       _Category(
-          localizations.mfc_attacks,
-          Icons.vpn_key,
-          (c) => _push(
-              c,
-              HackingCategoryPage(
-                  title: localizations.mfc_attacks, attacks: mfc)),
-          count: mfc.length),
+        localizations.mfc_attacks,
+        Icons.vpn_key,
+        (c) => _push(
+          c,
+          HackingCategoryPage(title: localizations.mfc_attacks, attacks: mfc),
+        ),
+        count: mfc.length,
+      ),
       _Category(
-          localizations.capture_sniffing,
-          Icons.wifi_tethering,
-          (c) => _push(
-              c,
-              HackingCategoryPage(
-                  title: localizations.capture_sniffing, attacks: capture)),
-          count: capture.length),
+        localizations.capture_sniffing,
+        Icons.wifi_tethering,
+        (c) => _push(
+          c,
+          HackingCategoryPage(
+            title: localizations.capture_sniffing,
+            attacks: capture,
+          ),
+        ),
+        count: capture.length,
+      ),
       _Category(
-          localizations.emulation_magic,
-          Icons.auto_fix_high,
-          (c) => _push(
-              c,
-              HackingCategoryPage(
-                  title: localizations.emulation_magic, attacks: emulation)),
-          count: emulation.length),
+        localizations.emulation_magic,
+        Icons.auto_fix_high,
+        (c) => _push(
+          c,
+          HackingCategoryPage(
+            title: localizations.emulation_magic,
+            attacks: emulation,
+          ),
+        ),
+        count: emulation.length,
+      ),
       _Category(
-          localizations.diagnostics,
-          Icons.troubleshoot,
-          (c) => _push(
-              c,
-              HackingCategoryPage(
-                  title: localizations.diagnostics, attacks: diagnostics)),
-          count: diagnostics.length),
+        localizations.diagnostics,
+        Icons.troubleshoot,
+        (c) => _push(
+          c,
+          HackingCategoryPage(
+            title: localizations.diagnostics,
+            attacks: diagnostics,
+          ),
+        ),
+        count: diagnostics.length,
+      ),
       _Category(
-          localizations.bluetooth,
-          Icons.bluetooth,
-          (c) => _push(
-              c,
-              const BleAppPage(
-                auditTab: BleAuditPage(embedded: true),
-                radioIdentityTab: BleRadioIdentityPage(embedded: true),
-                stressBroadcastTab: BleStressPage(embedded: true),
-              )),
-          count: 3),
+        localizations.bluetooth,
+        Icons.bluetooth,
+        (c) => _push(
+          c,
+          const BleAppPage(
+            auditTab: BleAuditPage(embedded: true),
+            radioIdentityTab: BleRadioIdentityPage(embedded: true),
+            advertisingLabTab: BleAdvertisingLabPage(embedded: true),
+            stressBroadcastTab: BleStressPage(embedded: true),
+          ),
+        ),
+        count: 4,
+      ),
     ];
 
     return Scaffold(

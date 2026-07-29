@@ -65,10 +65,7 @@ class _ConnectPageState extends State<ConnectPage> {
       final localizations = AppLocalizations.of(context)!;
       final snackBar = SnackBar(
         content: Text(localizations.android_ble_permissions_missing),
-        action: SnackBarAction(
-          label: localizations.close,
-          onPressed: () {},
-        ),
+        action: SnackBarAction(label: localizations.close, onPressed: () {}),
       );
 
       scaffoldMessenger.hideCurrentSnackBar();
@@ -139,7 +136,9 @@ class _ConnectPageState extends State<ConnectPage> {
   }
 
   Widget _buildDeviceGrid(
-      AppLocalizations localizations, List<Chameleon> devices) {
+    AppLocalizations localizations,
+    List<Chameleon> devices,
+  ) {
     return GridView(
       padding: const EdgeInsets.all(20),
       gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
@@ -179,7 +178,7 @@ class _ConnectPageState extends State<ConnectPage> {
                             Text(chameleonDevice.port ?? ""),
                             if (chameleonDevice.dfu) Text(localizations.dfu),
                           ],
-                        )
+                        ),
                       ],
                     ),
                   ),
@@ -207,7 +206,7 @@ class _ConnectPageState extends State<ConnectPage> {
                         ? 'assets/black-ultra-standing-front.webp'
                         : 'assets/black-lite-standing-front.webp',
                     fit: BoxFit.fitHeight,
-                    errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+                    errorBuilder: (_, _, _) => const SizedBox.shrink(),
                   ),
                 ),
                 const SizedBox(height: 8),
@@ -226,9 +225,7 @@ class _ConnectPageState extends State<ConnectPage> {
 
     if (appState.scanError != null) {
       return Scaffold(
-        appBar: AppBar(
-          title: Text(localizations.connect),
-        ),
+        appBar: AppBar(title: Text(localizations.connect)),
         body: ErrorPage(errorMessage: appState.scanError.toString()),
       );
     }
@@ -237,9 +234,7 @@ class _ConnectPageState extends State<ConnectPage> {
     _showPermissionsWarningIfNeeded(devices);
 
     return Scaffold(
-      appBar: AppBar(
-        title: Text(localizations.connect),
-      ),
+      appBar: AppBar(title: Text(localizations.connect)),
       body: Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,

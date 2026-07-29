@@ -45,6 +45,16 @@ enum ChameleonCommand {
   getDeviceCapabilities(1035),
   getSleepTimeout(1039),
   setSleepTimeout(1040),
+  keyboardUploadBegin(1041),
+  keyboardUploadChunk(1042),
+  keyboardUploadCommit(1043),
+  keyboardRun(1044),
+  keyboardCancel(1045),
+  keyboardGetStatus(1046),
+  keyboardClear(1047),
+  keyboardSetTemporaryBleName(1048),
+  keyboardArmBle(1049),
+  activeSlotSnapshot(1050),
 
   // button config
   getButtonPressConfig(1026),
@@ -89,6 +99,11 @@ enum ChameleonCommand {
   hf14a4EmvTraceStart(6007),
   hf14a4EmvTraceMeta(6008),
   hf14a4EmvTraceGet(6009),
+  hf14a4DebugCounters(6010),
+  hf14a4ReaderSessionStart(6011),
+  hf14a4ReaderSessionExchange(6012),
+  hf14a4ReaderSessionStop(6013),
+  hf14a4ReaderSessionStartAppleTransit(6014),
 
   // lf commands
   scanEM410Xtag(3000),
@@ -222,7 +237,10 @@ enum ChameleonCommand {
   bleFloodCount(7046),
   bleKick(7047),
   bleAdvFloodStart(7050),
-  bleAdvFloodStop(7051);
+  bleAdvFloodStop(7051),
+  bleAdvLabStart(7052),
+  bleAdvLabStatus(7053),
+  bleAdvLabStop(7054);
 
   const ChameleonCommand(this.value);
   final int value;
@@ -331,6 +349,16 @@ class CardData {
       required this.ats});
 }
 
+class IsoDepReaderSessionInfo {
+  final int sessionId;
+  final CardData card;
+
+  const IsoDepReaderSessionInfo({
+    required this.sessionId,
+    required this.card,
+  });
+}
+
 class ChameleonMessage {
   int command;
   int status;
@@ -370,7 +398,7 @@ class BleCharacteristic {
 
 // Snapshot of the directed fuzzing harness state.
 class BleCentralState {
-  int connState; // 0 idle,1 connecting,2 connected,3 disconnected
+  int connState; // 0 idle,1 connecting,2 connected,3 disconnected,4 cancelling,5 disconnecting
   int discState; // 0 idle,1 discovering,2 done,3 error
   int charCount;
   int fuzzState; // 0 idle,1 running,2 stopped/finished
@@ -406,6 +434,20 @@ class BleCentralState {
       this.writeState = 0,
       this.notificationCount = 0,
       this.hasOperationState = false});
+}
+
+class IsoDepDebugCounters {
+  final int receivedIBlocks;
+  final int transmittedIBlocks;
+  final int lastReceivedPcb;
+  final int lastStaticResponseMatch;
+
+  const IsoDepDebugCounters({
+    required this.receivedIBlocks,
+    required this.transmittedIBlocks,
+    required this.lastReceivedPcb,
+    required this.lastStaticResponseMatch,
+  });
 }
 
 // One entry of the fuzz log (a mutated write that was sent to the target).

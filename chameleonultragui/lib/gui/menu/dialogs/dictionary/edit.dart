@@ -13,8 +13,11 @@ class DictionaryEditMenu extends StatefulWidget {
   final Dictionary dictionary;
   final bool isNew;
 
-  const DictionaryEditMenu(
-      {super.key, required this.dictionary, this.isNew = false});
+  const DictionaryEditMenu({
+    super.key,
+    required this.dictionary,
+    this.isNew = false,
+  });
 
   @override
   DictionaryEditMenuState createState() => DictionaryEditMenuState();
@@ -52,97 +55,104 @@ class DictionaryEditMenuState extends State<DictionaryEditMenu> {
                 controller: nameController,
                 validator: (value) => validateName(value, localizations),
                 decoration: InputDecoration(
-                    labelText: localizations.name,
-                    hintText: localizations.enter_dict_name,
-                    prefix: Transform(
-                      transform: Matrix4.translationValues(0, 7, 0),
-                      child: IconButton(
-                        icon: Icon(Icons.key, color: currentColor),
-                        onPressed: () async {
-                          showDialog(
-                            context: context,
-                            builder: (BuildContext context) {
-                              return AlertDialog(
-                                title: Text('${localizations.pick_color}!'),
-                                content: SingleChildScrollView(
-                                  child: ColorPicker(
-                                    pickerColor: pickerColor,
-                                    onColorChanged: (Color color) {
-                                      setState(() {
-                                        pickerColor = color;
-                                      });
-                                    },
-                                    pickerAreaHeightPercent: 0.8,
-                                  ),
+                  labelText: localizations.name,
+                  hintText: localizations.enter_dict_name,
+                  prefix: Transform(
+                    transform: Matrix4.translationValues(0, 7, 0),
+                    child: IconButton(
+                      icon: Icon(Icons.key, color: currentColor),
+                      onPressed: () async {
+                        showDialog(
+                          context: context,
+                          builder: (BuildContext context) {
+                            return AlertDialog(
+                              title: Text('${localizations.pick_color}!'),
+                              content: SingleChildScrollView(
+                                child: ColorPicker(
+                                  pickerColor: pickerColor,
+                                  onColorChanged: (Color color) {
+                                    setState(() {
+                                      pickerColor = color;
+                                    });
+                                  },
+                                  pickerAreaHeightPercent: 0.8,
                                 ),
-                                actions: <Widget>[
-                                  TextButton(
-                                    onPressed: () {
-                                      setState(() => currentColor =
-                                          pickerColor = Colors.deepOrange);
-                                      Navigator.pop(context);
-                                    },
-                                    child: Text(localizations.reset_default),
-                                  ),
-                                  TextButton(
-                                    onPressed: () {
-                                      Navigator.pop(context);
-                                    },
-                                    child: Text(localizations.cancel),
-                                  ),
-                                  TextButton(
-                                    child: Text(localizations.ok),
-                                    onPressed: () {
-                                      setState(
-                                          () => currentColor = pickerColor);
-                                      Navigator.pop(context);
-                                    },
-                                  ),
-                                ],
-                              );
-                            },
-                          );
-                        },
-                      ),
-                    )),
+                              ),
+                              actions: <Widget>[
+                                TextButton(
+                                  onPressed: () {
+                                    setState(
+                                      () => currentColor = pickerColor =
+                                          Colors.deepOrange,
+                                    );
+                                    Navigator.pop(context);
+                                  },
+                                  child: Text(localizations.reset_default),
+                                ),
+                                TextButton(
+                                  onPressed: () {
+                                    Navigator.pop(context);
+                                  },
+                                  child: Text(localizations.cancel),
+                                ),
+                                TextButton(
+                                  child: Text(localizations.ok),
+                                  onPressed: () {
+                                    setState(() => currentColor = pickerColor);
+                                    Navigator.pop(context);
+                                  },
+                                ),
+                              ],
+                            );
+                          },
+                        );
+                      },
+                    ),
+                  ),
+                ),
               ),
               TextFormField(
                 maxLines: null,
                 controller: keysController,
-                style:
-                    const TextStyle(fontFamily: 'RobotoMono', fontSize: 16.0),
+                style: const TextStyle(
+                  fontFamily: 'RobotoMono',
+                  fontSize: 16.0,
+                ),
                 decoration: InputDecoration(
                   labelText: localizations.keys,
                   hintText: localizations.enter_dict_keys,
                 ),
-              )
+              ),
             ],
           ),
         ),
       ),
       actions: [
         TextButton(
-          onPressed: () {
+          onPressed: () async {
             Navigator.pop(context);
           },
           child: Text(localizations.cancel),
         ),
         TextButton(
-          onPressed: () {
+          onPressed: () async {
             if (!_formKey.currentState!.validate()) {
               return;
             }
 
-            Dictionary dict = Dictionary.fromString(keysController.text,
-                name: nameController.text, color: currentColor);
+            Dictionary dict = Dictionary.fromString(
+              keysController.text,
+              name: nameController.text,
+              color: currentColor,
+            );
             dict.id = widget.isNew ? Uuid().v4() : widget.dictionary.id;
 
             if (dict.keys.isEmpty) {
               return;
             }
 
-            var dictionaries =
-                appState.sharedPreferencesProvider.getDictionaries();
+            var dictionaries = appState.sharedPreferencesProvider
+                .getDictionaries();
             List<Dictionary> output = [];
 
             if (widget.isNew) {
@@ -158,8 +168,9 @@ class DictionaryEditMenuState extends State<DictionaryEditMenu> {
               }
             }
 
-            appState.sharedPreferencesProvider.setDictionaries(output);
+            await appState.sharedPreferencesProvider.setDictionaries(output);
             appState.changesMade();
+            if (!context.mounted) return;
             Navigator.pop(context);
           },
           child: Text(localizations.save),

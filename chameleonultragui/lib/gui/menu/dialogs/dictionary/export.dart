@@ -15,8 +15,11 @@ class DictionaryExportMenu extends StatefulWidget {
   final String defaultName;
   final List<Uint8List> keys;
 
-  const DictionaryExportMenu(
-      {super.key, this.defaultName = "", required this.keys});
+  const DictionaryExportMenu({
+    super.key,
+    this.defaultName = "",
+    required this.keys,
+  });
 
   @override
   DictionaryExportMenuState createState() => DictionaryExportMenuState();
@@ -27,7 +30,7 @@ class DictionaryExportMenuState extends State<DictionaryExportMenu> {
     // Key by hex (value), not Object.hashAll — an int-hash collision would
     // silently drop a distinct key.
     return <String, Uint8List>{
-      for (var key in keys.where((key) => key.isNotEmpty)) bytesToHex(key): key
+      for (var key in keys.where((key) => key.isNotEmpty)) bytesToHex(key): key,
     }.values.toList();
   }
 
@@ -43,7 +46,9 @@ class DictionaryExportMenuState extends State<DictionaryExportMenu> {
   }
 
   Future<String?> dictionarySelectDialog(
-      BuildContext context, List<Uint8List> keys) {
+    BuildContext context,
+    List<Uint8List> keys,
+  ) {
     var appState = context.read<ChameleonGUIState>();
     var dicts = appState.sharedPreferencesProvider.getDictionaries();
 
@@ -57,17 +62,16 @@ class DictionaryExportMenuState extends State<DictionaryExportMenu> {
 
   Future<String> getDictionaryName() async {
     var localizations = AppLocalizations.of(context)!;
-    TextEditingController dictionary =
-        TextEditingController(text: widget.defaultName);
+    TextEditingController dictionary = TextEditingController(
+      text: widget.defaultName,
+    );
 
     await showDialog(
       context: context,
       builder: (BuildContext context) {
         return AlertDialog(
           title: Text(localizations.enter_name_of_dictionary),
-          content: TextField(
-            controller: dictionary,
-          ),
+          content: TextField(controller: dictionary),
           actions: [
             ElevatedButton(
               onPressed: () async {
@@ -159,7 +163,9 @@ class DictionaryExportMenuState extends State<DictionaryExportMenu> {
                 context: context,
                 builder: (BuildContext context) {
                   return DictionaryEditMenu(
-                      dictionary: dictionary, isNew: true);
+                    dictionary: dictionary,
+                    isNew: true,
+                  );
                 },
               );
               if (context.mounted) {
@@ -182,14 +188,15 @@ class DictSearchDelegate extends SearchDelegate<String> {
 
   // Merge the recovered keys into the chosen dictionary, deduping against its
   // existing keys, persist, and close the search returning the dict name.
-  void _mergeInto(BuildContext context, Dictionary dict) {
+  Future<void> _mergeInto(BuildContext context, Dictionary dict) async {
     var appState = context.read<ChameleonGUIState>();
     final existing = dict.keys.map(bytesToHex).toSet();
     for (final k in keys) {
       if (existing.add(bytesToHex(k))) dict.keys.add(k);
     }
-    appState.sharedPreferencesProvider.setDictionaries(dicts);
+    await appState.sharedPreferencesProvider.setDictionaries(dicts);
     appState.changesMade();
+    if (!context.mounted) return;
     close(context, dict.name);
   }
 
@@ -217,8 +224,9 @@ class DictSearchDelegate extends SearchDelegate<String> {
 
   @override
   Widget buildResults(BuildContext context) {
-    final results = dicts
-        .where((dict) => dict.name.toLowerCase().contains(query.toLowerCase()));
+    final results = dicts.where(
+      (dict) => dict.name.toLowerCase().contains(query.toLowerCase()),
+    );
 
     return ListView.builder(
       itemCount: results.length,
@@ -228,7 +236,7 @@ class DictSearchDelegate extends SearchDelegate<String> {
           leading: Icon(Icons.key, color: dict.color),
           title: Text(dict.name),
           subtitle: Text("${dict.keys.length.toString()} keys"),
-          onTap: () => _mergeInto(context, dict),
+          onTap: () async => await _mergeInto(context, dict),
         );
       },
     );
@@ -236,8 +244,9 @@ class DictSearchDelegate extends SearchDelegate<String> {
 
   @override
   Widget buildSuggestions(BuildContext context) {
-    final results = dicts
-        .where((dict) => dict.name.toLowerCase().contains(query.toLowerCase()));
+    final results = dicts.where(
+      (dict) => dict.name.toLowerCase().contains(query.toLowerCase()),
+    );
 
     return ListView.builder(
       itemCount: results.length,
@@ -247,7 +256,7 @@ class DictSearchDelegate extends SearchDelegate<String> {
           leading: Icon(Icons.key, color: dict.color),
           title: Text(dict.name),
           subtitle: Text("${dict.keys.length.toString()} keys"),
-          onTap: () => _mergeInto(context, dict),
+          onTap: () async => await _mergeInto(context, dict),
         );
       },
     );

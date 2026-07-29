@@ -1,19 +1,20 @@
 import 'package:chameleonultragui/gui/component/error_message.dart';
 import 'package:chameleonultragui/gui/component/key_check_marks.dart';
 import 'package:chameleonultragui/gui/menu/dialogs/dictionary/export.dart';
-import 'package:chameleonultragui/gui/page/read_card.dart' show MifareClassicInfo;
+import 'package:chameleonultragui/gui/page/read_card.dart'
+    show MifareClassicInfo;
 import 'package:chameleonultragui/helpers/general.dart';
 import 'package:chameleonultragui/helpers/mifare_classic/general.dart';
+import 'package:chameleonultragui/helpers/mifare_classic/recovery.dart';
 import 'package:flutter/material.dart';
 
 // Localizations
 import 'package:chameleonultragui/generated/i18n/app_localizations.dart';
 
-enum NestedVariant { weak, staticNonce, hard }
+enum NestedVariant { weak, staticNonce, staticEncryptedNonce, hard }
 
-// Standalone Nested-family attack: recover a target sector key from a known key.
-// Variant selects weak-PRNG Nested, Static Nested, or Hardnested. Reuses the
-// matching MifareClassicRecovery.recover*Single helper.
+// Standalone Nested-family attack. Static-encrypted recovery uses the RF08S
+// factory backdoor; the other variants recover a target key from a known key.
 class NestedPage extends StatefulWidget {
   final NestedVariant variant;
   const NestedPage({super.key, this.variant = NestedVariant.weak});
@@ -32,9 +33,14 @@ class NestedPageState extends State<NestedPage> {
   MifareClassicInfo? mfcInfo;
   bool running = false;
   String message = '';
+  MifareClassicRecovery? _activeRecovery;
+
+  bool get _usesKnownKey =>
+      widget.variant != NestedVariant.staticEncryptedNonce;
 
   @override
   void dispose() {
+    _activeRecovery?.cancel();
     _knownKey.dispose();
     _knownSector.dispose();
     _targetSector.dispose();
@@ -53,15 +59,22 @@ class NestedPageState extends State<NestedPage> {
       mfcInfo = null;
     });
     try {
-      final key = hexToBytes(_knownKey.text.trim().replaceAll(' ', ''));
-      if (key.length != 6) {
+      final key = _usesKnownKey
+          ? hexToBytes(_knownKey.text.trim().replaceAll(' ', ''))
+          : null;
+      if (_usesKnownKey && key!.length != 6) {
         setState(() => message = localizations.invalid_hex_input);
         return;
       }
-      final knownSector = int.parse(_knownSector.text.trim());
-      final targetSector = int.parse(_targetSector.text.trim());
+      final knownSector = _usesKnownKey
+          ? int.parse(_knownSector.text.trim())
+          : null;
+      final targetSector = _usesKnownKey
+          ? int.parse(_targetSector.text.trim())
+          : null;
 
       var (hfInfo, mfc, _) = await readHFInfo(context, _refresh);
+      if (!mounted) return;
       if (!hfInfo.cardExist) {
         setState(() => message = localizations.no_card_found);
         return;
@@ -70,23 +83,30 @@ class NestedPageState extends State<NestedPage> {
         setState(() => message = localizations.not_mifare_classic_slot);
         return;
       }
+      final recovery = mfc.recovery!;
+      _activeRecovery = recovery;
       setState(() => mfcInfo = mfc);
       switch (widget.variant) {
         case NestedVariant.weak:
-          await mfc.recovery!.recoverNestedSingle(
-              key, knownSector, _knownKeyType, targetSector, _targetKeyType);
+          await recovery.recoverNestedSingle(
+              key!, knownSector!, _knownKeyType, targetSector!, _targetKeyType);
         case NestedVariant.staticNonce:
-          await mfc.recovery!.recoverStaticNestedSingle(
-              key, knownSector, _knownKeyType, targetSector, _targetKeyType);
+          await recovery.recoverStaticNestedSingle(
+              key!, knownSector!, _knownKeyType, targetSector!, _targetKeyType);
+        case NestedVariant.staticEncryptedNonce:
+          await recovery.recoverBackdoor();
         case NestedVariant.hard:
-          await mfc.recovery!.recoverHardnestedSingle(
-              key, knownSector, _knownKeyType, targetSector, _targetKeyType);
+          await recovery.recoverHardnestedSingle(
+              key!, knownSector!, _knownKeyType, targetSector!, _targetKeyType);
       }
+      if (!mounted || recovery.isCancelled) return;
       _refresh();
     } on FormatException {
-      setState(() => message = localizations.invalid_hex_input);
+      if (mounted) setState(() => message = localizations.invalid_hex_input);
+    } on MifareClassicRecoveryCancelled {
+      // Page was left; stop quietly after the current command returns.
     } catch (e) {
-      setState(() => message = e.toString());
+      if (mounted) setState(() => message = e.toString());
     } finally {
       if (mounted) setState(() => running = false);
     }
@@ -108,6 +128,7 @@ class NestedPageState extends State<NestedPage> {
   String get _title => switch (widget.variant) {
         NestedVariant.weak => "Nested",
         NestedVariant.staticNonce => "Static Nested",
+        NestedVariant.staticEncryptedNonce => "Static Encrypted Nested",
         NestedVariant.hard => "Hardnested",
       };
 
@@ -122,48 +143,54 @@ class NestedPageState extends State<NestedPage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            TextField(
-              controller: _knownKey,
-              decoration: InputDecoration(
+            if (_usesKnownKey)
+              TextField(
+                controller: _knownKey,
+                decoration: InputDecoration(
                   labelText: "${localizations.recover_key} (known key)",
                   hintText: 'FFFFFFFFFFFF',
                   border: const OutlineInputBorder()),
-              style: const TextStyle(fontFamily: 'RobotoMono'),
-            ),
-            const SizedBox(height: 10),
-            Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    controller: _knownSector,
-                    keyboardType: TextInputType.number,
-                    decoration: InputDecoration(
-                        labelText: "${localizations.sector} (known)",
-                        border: const OutlineInputBorder()),
+                style: const TextStyle(fontFamily: 'RobotoMono'),
+              ),
+            if (_usesKnownKey) const SizedBox(height: 10),
+            if (_usesKnownKey)
+              Row(
+                children: [
+                  Expanded(
+                    child: TextField(
+                      controller: _knownSector,
+                      keyboardType: TextInputType.number,
+                      decoration: InputDecoration(
+                          labelText: "${localizations.sector} (known)",
+                          border: const OutlineInputBorder()),
+                    ),
                   ),
-                ),
-                const SizedBox(width: 8),
-                _keyTypeToggle(
-                    _knownKeyType, (v) => setState(() => _knownKeyType = v)),
-              ],
-            ),
-            const SizedBox(height: 10),
-            Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    controller: _targetSector,
-                    keyboardType: TextInputType.number,
-                    decoration: InputDecoration(
-                        labelText: "${localizations.sector} (target)",
-                        border: const OutlineInputBorder()),
+                  const SizedBox(width: 8),
+                  _keyTypeToggle(
+                      _knownKeyType, (v) => setState(() => _knownKeyType = v)),
+                ],
+              ),
+            if (_usesKnownKey) const SizedBox(height: 10),
+            if (_usesKnownKey)
+              Row(
+                children: [
+                  Expanded(
+                    child: TextField(
+                      controller: _targetSector,
+                      keyboardType: TextInputType.number,
+                      decoration: InputDecoration(
+                          labelText: "${localizations.sector} (target)",
+                          border: const OutlineInputBorder()),
+                    ),
                   ),
-                ),
-                const SizedBox(width: 8),
-                _keyTypeToggle(
-                    _targetKeyType, (v) => setState(() => _targetKeyType = v)),
-              ],
-            ),
+                  const SizedBox(width: 8),
+                  _keyTypeToggle(
+                      _targetKeyType, (v) => setState(() => _targetKeyType = v)),
+                ],
+              ),
+            if (!_usesKnownKey)
+              Text(localizations.backdoor_rf08s_description,
+                  textAlign: TextAlign.center),
             const SizedBox(height: 16),
             Center(
               child: ElevatedButton.icon(
@@ -183,7 +210,8 @@ class NestedPageState extends State<NestedPage> {
               KeyCheckMarks(
                 checkMarks: recovery.checkMarks,
                 validKeys: recovery.validKeys,
-                checkmarkCount: mfClassicGetSectorCount(recovery.mifareClassicType,
+                checkmarkCount: mfClassicGetSectorCount(
+                    recovery.mifareClassicType,
                     isEV1: recovery.isMifareClassicEV1),
               ),
               if (recovery.error.isNotEmpty) ...[

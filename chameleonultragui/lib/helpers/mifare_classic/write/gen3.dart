@@ -53,7 +53,8 @@ class MifareClassicGen3WriteHelper extends MifareClassicGen2WriteHelper {
       {bool tryBothKeys = false, bool useGenericKey = false}) async {
     for (int retry = 0; retry < 10; retry++) {
       try {
-        await Future.delayed(const Duration(milliseconds: 50)); // Stability delay
+        await Future.delayed(
+            const Duration(milliseconds: 50)); // Stability delay
         if (block == 0) {
           if (await writeGen3Block(card, data)) return true;
         } else {
@@ -82,7 +83,8 @@ class MifareClassicGen3WriteHelper extends MifareClassicGen2WriteHelper {
         checkResponseCrc: false);
 
     // Card doesn't respond with anything, just compare UID
-    await Future.delayed(const Duration(milliseconds: 500)); // Wait for card to reboot
+    await Future.delayed(
+        const Duration(milliseconds: 500)); // Wait for card to reboot
     CardData? card = await communicator.scan14443aTag();
     return card != null &&
             bytesToHex(card.uid) ==

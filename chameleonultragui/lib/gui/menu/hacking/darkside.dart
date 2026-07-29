@@ -1,9 +1,11 @@
 import 'package:chameleonultragui/gui/component/error_message.dart';
 import 'package:chameleonultragui/gui/component/key_check_marks.dart';
 import 'package:chameleonultragui/gui/menu/dialogs/dictionary/export.dart';
-import 'package:chameleonultragui/gui/page/read_card.dart' show MifareClassicInfo;
+import 'package:chameleonultragui/gui/page/read_card.dart'
+    show MifareClassicInfo;
 import 'package:chameleonultragui/helpers/general.dart';
 import 'package:chameleonultragui/helpers/mifare_classic/general.dart';
+import 'package:chameleonultragui/helpers/mifare_classic/recovery.dart';
 import 'package:flutter/material.dart';
 
 // Localizations
@@ -22,6 +24,13 @@ class DarksidePageState extends State<DarksidePage> {
   MifareClassicInfo? mfcInfo;
   bool running = false;
   String message = '';
+  MifareClassicRecovery? _activeRecovery;
+
+  @override
+  void dispose() {
+    _activeRecovery?.cancel();
+    super.dispose();
+  }
 
   void _refresh() {
     if (mounted) setState(() {});
@@ -36,6 +45,7 @@ class DarksidePageState extends State<DarksidePage> {
     });
     try {
       var (hfInfo, mfc, _) = await readHFInfo(context, _refresh);
+      if (!mounted) return;
       if (!hfInfo.cardExist) {
         setState(() => message = localizations.no_card_found);
         return;
@@ -44,11 +54,16 @@ class DarksidePageState extends State<DarksidePage> {
         setState(() => message = localizations.not_mifare_classic_slot);
         return;
       }
+      final recovery = mfc.recovery!;
+      _activeRecovery = recovery;
       setState(() => mfcInfo = mfc);
-      await mfc.recovery!.recoverDarkside();
+      await recovery.recoverDarkside();
+      if (!mounted || recovery.isCancelled) return;
       _refresh();
+    } on MifareClassicRecoveryCancelled {
+      // Page was left; stop quietly after the current command returns.
     } catch (e) {
-      setState(() => message = e.toString());
+      if (mounted) setState(() => message = e.toString());
     } finally {
       if (mounted) setState(() => running = false);
     }
@@ -85,7 +100,8 @@ class DarksidePageState extends State<DarksidePage> {
               KeyCheckMarks(
                 checkMarks: recovery.checkMarks,
                 validKeys: recovery.validKeys,
-                checkmarkCount: mfClassicGetSectorCount(recovery.mifareClassicType,
+                checkmarkCount: mfClassicGetSectorCount(
+                    recovery.mifareClassicType,
                     isEV1: recovery.isMifareClassicEV1),
               ),
               if (recovery.error.isNotEmpty) ...[

@@ -18,6 +18,8 @@
 
 #include "util.h"
 
+#include <limits.h>
+
 // global client debug variable
 uint8_t g_debugMode = 0;
 // global client disable logging variable
@@ -39,9 +41,11 @@ int num_CPUs(void)
     GetSystemInfo(&sysinfo);
     return sysinfo.dwNumberOfProcessors;
 #else
-    int count = sysconf(_SC_NPROCESSORS_ONLN);
+    long count = sysconf(_SC_NPROCESSORS_ONLN);
     if (count <= 0)
         count = 1;
-    return count;
+    if (count > INT_MAX)
+        count = INT_MAX;
+    return (int)count;
 #endif
 }

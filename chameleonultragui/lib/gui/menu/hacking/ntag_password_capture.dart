@@ -1,5 +1,4 @@
-import 'dart:async';
-
+import 'package:chameleonultragui/helpers/non_overlapping_poller.dart';
 import 'package:chameleonultragui/main.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -23,27 +22,37 @@ class NtagPasswordCapturePageState extends State<NtagPasswordCapturePage> {
   bool busy = false;
   int count = 0;
   List<String> passwords = [];
-  Timer? _poll;
+  late final NonOverlappingPoller _poller;
 
   ChameleonGUIState get _app => context.read<ChameleonGUIState>();
   bool get _connected => _app.connector?.connected ?? false;
 
   @override
+  void initState() {
+    super.initState();
+    _poller = NonOverlappingPoller(
+      interval: const Duration(seconds: 2),
+      task: _refreshCount,
+    );
+  }
+
+  @override
   void dispose() {
-    _poll?.cancel();
+    _poller.dispose();
     super.dispose();
   }
 
   void _startPolling() {
-    _poll?.cancel();
-    _poll = Timer.periodic(const Duration(seconds: 2), (_) => _refreshCount());
+    _poller.start();
   }
 
   Future<void> _refreshCount() async {
     if (!_connected) return;
     try {
       final c = await _app.communicator!.mf0NtagGetDetectionCount();
-      if (mounted) setState(() => count = c);
+      if (mounted && _poller.isActive && armed) {
+        setState(() => count = c);
+      }
     } catch (_) {}
   }
 
@@ -67,7 +76,7 @@ class NtagPasswordCapturePageState extends State<NtagPasswordCapturePage> {
 
   Future<void> _stop() async {
     setState(() => busy = true);
-    _poll?.cancel();
+    _poller.stop();
     try {
       await _app.communicator!.mf0NtagSetDetectionEnable(false);
     } catch (e) {

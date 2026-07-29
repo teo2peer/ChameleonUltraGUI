@@ -79,7 +79,7 @@ class ChangelogViewState extends State<ChangelogView> {
   Widget _buildChangelogCard(
       ChangelogEntry changelog, AppLocalizations localizations) {
     final bool isUnreleased = changelog.version == "Unreleased";
-    
+
     return Card(
       color: isUnreleased ? Colors.orange.withValues(alpha: 0.05) : null,
       child: Padding(
@@ -100,7 +100,8 @@ class ChangelogViewState extends State<ChangelogView> {
                 if (isUnreleased) ...[
                   const SizedBox(width: 8),
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                     decoration: BoxDecoration(
                       color: Colors.orange.withValues(alpha: 0.2),
                       borderRadius: BorderRadius.circular(8),
@@ -119,7 +120,9 @@ class ChangelogViewState extends State<ChangelogView> {
             ),
             const SizedBox(height: 8),
             Text(
-              isUnreleased ? localizations.latest_commits_from_main_branch : _formatDate(changelog.publishedAt),
+              isUnreleased
+                  ? localizations.latest_commits_from_main_branch
+                  : _formatDate(changelog.publishedAt),
               style: TextStyle(
                 color: Colors.grey[600],
                 fontSize: 14,
@@ -128,7 +131,9 @@ class ChangelogViewState extends State<ChangelogView> {
             const SizedBox(height: 12),
             if (changelog.changes.isNotEmpty) ...[
               Text(
-                isUnreleased ? '${localizations.recent_commits}:' : '${localizations.changes}:',
+                isUnreleased
+                    ? '${localizations.recent_commits}:'
+                    : '${localizations.changes}:',
                 style: const TextStyle(
                   fontWeight: FontWeight.w600,
                   fontSize: 16,
@@ -136,10 +141,12 @@ class ChangelogViewState extends State<ChangelogView> {
               ),
               const SizedBox(height: 8),
               ...changelog.changes.map((change) {
-                bool isCurrentVersionCommit = changelog.currentVersionCommit != null && 
-                    changelog.commitHashes != null &&
-                    changelog.commitHashes![change] == changelog.currentVersionCommit;
-                    
+                bool isCurrentVersionCommit =
+                    changelog.currentVersionCommit != null &&
+                        changelog.commitHashes != null &&
+                        changelog.commitHashes![change] ==
+                            changelog.currentVersionCommit;
+
                 return Padding(
                   padding: const EdgeInsets.only(left: 16, bottom: 4),
                   child: Row(
@@ -159,7 +166,8 @@ class ChangelogViewState extends State<ChangelogView> {
                             if (isCurrentVersionCommit) ...[
                               const SizedBox(width: 8),
                               Container(
-                                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 6, vertical: 2),
                                 decoration: BoxDecoration(
                                   color: Colors.green.withValues(alpha: 0.2),
                                   borderRadius: BorderRadius.circular(12),
@@ -189,7 +197,9 @@ class ChangelogViewState extends State<ChangelogView> {
                 onPressed: () async {
                   await launchUrl(Uri.parse(changelog.url));
                 },
-                child: Text(isUnreleased ? localizations.view_commits : localizations.view_full_release),
+                child: Text(isUnreleased
+                    ? localizations.view_commits
+                    : localizations.view_full_release),
               ),
             ),
           ],

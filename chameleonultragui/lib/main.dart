@@ -9,7 +9,10 @@ import 'package:chameleonultragui/connector/serial_macos.dart';
 import 'package:chameleonultragui/gui/component/device_found_banner.dart';
 import 'package:chameleonultragui/gui/page/tools.dart';
 import 'package:chameleonultragui/helpers/font.dart';
+import 'package:chameleonultragui/helpers/emulation_change.dart';
+import 'package:chameleonultragui/helpers/definitions.dart';
 import 'package:chameleonultragui/helpers/general.dart';
+import 'package:chameleonultragui/helpers/mifare_classic/general.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
@@ -84,16 +87,65 @@ class ChameleonGUIState extends ChangeNotifier {
   // Flashing easter egg
   bool easterEgg = false;
   dynamic _suppressedAutoReconnectPort;
+  bool _disposed = false;
+
+  Timer? _emulationMonitorTimer;
+  bool _emulationMonitorInProgress = false;
+  int _emulationMonitorGeneration = 0;
+  int _emulationMonitorPauseCount = 0;
+  _EmulationSnapshot? _emulationBaseline;
+  _PendingEmulationChange? _pendingEmulationChange;
+  EmulationChangeEntry? latestEmulationChange;
+  int emulationChangeSequence = 0;
+  Duration emulationMonitorInterval = const Duration(seconds: 3);
+  Future<void> _slotOperationTail = Future<void>.value();
+  int _slotOperationGeneration = 0;
 
   GlobalKey navigationRailKey = GlobalKey();
   Size? navigationRailSize;
 
   void changesMade() {
+    if (_disposed) return;
     notifyListeners();
   }
 
+  Future<T> runSlotOperation<T>(
+    Future<T> Function() operation, {
+    bool invalidatesMonitorBaseline = true,
+  }) async {
+    final generation = _slotOperationGeneration;
+    final expectedCommunicator = communicator;
+    final expectedConnector = connector;
+    if (expectedCommunicator == null || expectedConnector == null) {
+      throw StateError('No connected device for slot operation');
+    }
+    final previous = _slotOperationTail;
+    final release = Completer<void>();
+    _slotOperationTail = release.future;
+    await previous;
+    try {
+      if (_disposed ||
+          generation != _slotOperationGeneration ||
+          !identical(communicator, expectedCommunicator) ||
+          !identical(connector, expectedConnector) ||
+          !expectedConnector.connected) {
+        throw StateError('Slot operation connection changed while queued');
+      }
+      return await operation();
+    } finally {
+      if (invalidatesMonitorBaseline) {
+        _emulationBaseline = null;
+        _pendingEmulationChange?.baselineEligible = false;
+      }
+      release.complete();
+    }
+  }
+
   void onConnectorStateChanged() {
+    if (_disposed) return;
     if (connector == null || !connector!.connected) {
+      _slotOperationGeneration++;
+      stopEmulationChangeMonitor();
       communicator?.dispose('Connector disconnected');
       communicator = null;
       progress = null;
@@ -126,7 +178,9 @@ class ChameleonGUIState extends ChangeNotifier {
   }
 
   Future<void> disconnect({bool manual = false}) async {
+    _slotOperationGeneration++;
     final suppressedPort = manual ? connector?.activeDevicePort : null;
+    stopEmulationChangeMonitor();
     communicator?.dispose('Disconnected by the application');
     communicator = null;
     await connector?.performDisconnect();
@@ -134,12 +188,32 @@ class ChameleonGUIState extends ChangeNotifier {
       _suppressedAutoReconnectPort = suppressedPort;
     }
     progress = null;
-    notifyListeners();
+    if (!_disposed) notifyListeners();
+  }
+
+  Future<void> resetConnector() async {
+    _slotOperationGeneration++;
+    stopDeviceScan();
+    stopEmulationChangeMonitor();
+    communicator?.dispose('Connector mode changed');
+    communicator = null;
+    final previous = connector;
+    connector = null;
+    previous?.connectionStateCallback = null;
+    try {
+      await previous?.performDisconnect();
+      progress = null;
+      if (!_disposed) notifyListeners();
+    } catch (_) {
+      connector = previous;
+      previous?.connectionStateCallback = onConnectorStateChanged;
+      rethrow;
+    }
   }
 
   Future<void> attachConnectedCommunicator() async {
     final activeConnector = connector;
-    if (activeConnector == null || !activeConnector.connected) {
+    if (_disposed || activeConnector == null || !activeConnector.connected) {
       throw StateError('Cannot attach communicator without a connection');
     }
     final next = ChameleonCommunicator(log!, port: activeConnector);
@@ -152,14 +226,374 @@ class ChameleonGUIState extends ChangeNotifier {
       activeConnector.pendingConnection = false;
       await activeConnector.performDisconnect();
       progress = null;
-      notifyListeners();
+      if (!_disposed && identical(connector, activeConnector)) {
+        notifyListeners();
+      }
       rethrow;
+    }
+    if (_disposed ||
+        !identical(connector, activeConnector) ||
+        !activeConnector.connected) {
+      next.dispose('Connection completed after application state disposal');
+      await activeConnector.performDisconnect();
+      return;
     }
     communicator?.dispose('Replaced by a new connection');
     communicator = next;
+    startEmulationChangeMonitor();
+  }
+
+  bool _shouldMonitorEmulationChanges() {
+    final activeConnector = connector;
+    return !_disposed &&
+        sharedPreferencesProvider.getEmulationChangeMonitoring() &&
+        _emulationMonitorPauseCount == 0 &&
+        activeConnector != null &&
+        activeConnector.connected &&
+        !activeConnector.isDFU &&
+        communicator != null &&
+        communicator!.supportsCommandSync(
+              ChameleonCommand.activeSlotSnapshot,
+            ) ==
+            true;
+  }
+
+  Future<void> setEmulationChangeMonitoring(bool enabled) async {
+    await sharedPreferencesProvider.setEmulationChangeMonitoring(enabled);
+    if (enabled) {
+      startEmulationChangeMonitor();
+    } else {
+      stopEmulationChangeMonitor();
+    }
+    notifyListeners();
+  }
+
+  void startEmulationChangeMonitor() {
+    if (!_shouldMonitorEmulationChanges() ||
+        _emulationMonitorTimer != null ||
+        _emulationMonitorInProgress) {
+      return;
+    }
+    final generation = ++_emulationMonitorGeneration;
+    _emulationBaseline = null;
+    _pollEmulationChanges(generation);
+  }
+
+  void stopEmulationChangeMonitor() {
+    _emulationMonitorGeneration++;
+    _emulationMonitorTimer?.cancel();
+    _emulationMonitorTimer = null;
+    _emulationBaseline = null;
+  }
+
+  Future<void> pauseEmulationChangeMonitor() async {
+    _emulationMonitorPauseCount++;
+    stopEmulationChangeMonitor();
+    while (_emulationMonitorInProgress) {
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+    }
+  }
+
+  void resumeEmulationChangeMonitor() {
+    if (_emulationMonitorPauseCount == 0) return;
+    _emulationMonitorPauseCount--;
+    if (_emulationMonitorPauseCount == 0) startEmulationChangeMonitor();
+  }
+
+  void _scheduleEmulationChangePoll(int generation) {
+    _emulationMonitorTimer?.cancel();
+    _emulationMonitorTimer = null;
+    if (generation != _emulationMonitorGeneration ||
+        !_shouldMonitorEmulationChanges()) {
+      return;
+    }
+    _emulationMonitorTimer = Timer(
+      emulationMonitorInterval,
+      () => _pollEmulationChanges(generation),
+    );
+  }
+
+  Future<_FrozenEmulationSnapshot> _captureEmulationSnapshot(
+    ChameleonCommunicator activeCommunicator,
+    AbstractSerial activeConnector,
+    int generation,
+  ) async {
+    _requireCurrentEmulationMonitor(
+      activeCommunicator,
+      activeConnector,
+      generation,
+    );
+    final transaction = await activeCommunicator.beginActiveSlotSnapshot();
+    try {
+      _requireCurrentEmulationMonitor(
+        activeCommunicator,
+        activeConnector,
+        generation,
+      );
+      final blockCount = mfClassicGetBlockCount(
+        chameleonTagTypeGetMfClassicType(transaction.tagType),
+      );
+      if (blockCount == 0) {
+        throw const FormatException('Snapshot has an invalid MIFARE type');
+      }
+
+      _requireCurrentEmulationMonitor(
+        activeCommunicator,
+        activeConnector,
+        generation,
+      );
+      final cardData = await activeCommunicator.mf1GetSnapshotAntiColl(
+        transaction,
+      );
+      _requireCurrentEmulationMonitor(
+        activeCommunicator,
+        activeConnector,
+        generation,
+      );
+      final memory = Uint8List(blockCount * 16);
+      for (var start = 0; start < blockCount; start += 16) {
+        _requireCurrentEmulationMonitor(
+          activeCommunicator,
+          activeConnector,
+          generation,
+        );
+        final remaining = blockCount - start;
+        final count = remaining > 16 ? 16 : remaining;
+        final chunk = await activeCommunicator.mf1GetSnapshotBlocks(
+          transaction,
+          start,
+          count,
+        );
+        _requireCurrentEmulationMonitor(
+          activeCommunicator,
+          activeConnector,
+          generation,
+        );
+        memory.setRange(start * 16, (start + count) * 16, chunk);
+      }
+
+      return _FrozenEmulationSnapshot(
+        transaction: transaction,
+        snapshot: _EmulationSnapshot(
+          slot: transaction.slot,
+          tagType: transaction.tagType,
+          ownerGeneration: transaction.ownerGeneration,
+          uid: bytesToHex(cardData.uid),
+          memory: memory,
+        ),
+      );
+    } catch (_) {
+      try {
+        await activeCommunicator.abortActiveSlotSnapshot(transaction);
+      } catch (_) {}
+      rethrow;
+    }
+  }
+
+  void _requireCurrentEmulationMonitor(
+    ChameleonCommunicator activeCommunicator,
+    AbstractSerial activeConnector,
+    int generation,
+  ) {
+    if (_disposed ||
+        generation != _emulationMonitorGeneration ||
+        !identical(communicator, activeCommunicator) ||
+        !identical(connector, activeConnector) ||
+        !activeConnector.connected) {
+      throw const _EmulationMonitorCancelled();
+    }
+  }
+
+  Future<bool> _persistPendingEmulationChange(
+    ChameleonCommunicator activeCommunicator,
+    AbstractSerial activeConnector,
+    int generation,
+  ) async {
+    final pending = _pendingEmulationChange;
+    if (pending == null) return true;
+    try {
+      await sharedPreferencesProvider.addEmulationChange(pending.entry);
+    } catch (error, stackTrace) {
+      log?.w(
+        'Emulation history persistence failed; retry is pending',
+        error: error,
+        stackTrace: stackTrace,
+      );
+      return false;
+    }
+    if (!identical(_pendingEmulationChange, pending)) return false;
+    _pendingEmulationChange = null;
+    if (pending.baselineEligible &&
+        generation == _emulationMonitorGeneration &&
+        identical(pending.communicator, activeCommunicator) &&
+        identical(pending.connector, activeConnector) &&
+        identical(communicator, activeCommunicator) &&
+        identical(connector, activeConnector) &&
+        activeConnector.connected) {
+      _emulationBaseline = pending.snapshot;
+    }
+    if (!_disposed) {
+      latestEmulationChange = pending.entry;
+      emulationChangeSequence++;
+      notifyListeners();
+    }
+    return true;
+  }
+
+  Future<void> _pollEmulationChanges(int generation) async {
+    if (_emulationMonitorInProgress ||
+        generation != _emulationMonitorGeneration ||
+        !_shouldMonitorEmulationChanges()) {
+      return;
+    }
+    _emulationMonitorTimer?.cancel();
+    _emulationMonitorTimer = null;
+    _emulationMonitorInProgress = true;
+    final activeCommunicator = communicator!;
+    final activeConnector = connector!;
+    try {
+      await runSlotOperation(() async {
+        if (_pendingEmulationChange != null) {
+          await _persistPendingEmulationChange(
+            activeCommunicator,
+            activeConnector,
+            generation,
+          );
+          return;
+        }
+        final frozen = await _captureEmulationSnapshot(
+          activeCommunicator,
+          activeConnector,
+          generation,
+        );
+        var released = false;
+        try {
+          final snapshot = frozen.snapshot;
+          if (generation != _emulationMonitorGeneration ||
+              !identical(communicator, activeCommunicator) ||
+              !identical(connector, activeConnector) ||
+              !activeConnector.connected) {
+            try {
+              await activeCommunicator.abortActiveSlotSnapshot(
+                frozen.transaction,
+              );
+            } catch (_) {}
+            released = true;
+            return;
+          }
+
+          final baseline = _emulationBaseline;
+          if (baseline == null || !baseline.matchesTag(snapshot)) {
+            await activeCommunicator.abortActiveSlotSnapshot(
+              frozen.transaction,
+            );
+            released = true;
+            _emulationBaseline = snapshot;
+            return;
+          }
+
+          final changes = diffEmulationBlocks(baseline.memory, snapshot.memory);
+          if (changes.isEmpty) {
+            await activeCommunicator.abortActiveSlotSnapshot(
+              frozen.transaction,
+            );
+            released = true;
+            _emulationBaseline = snapshot;
+            return;
+          }
+
+          final entry = EmulationChangeEntry(
+            timestamp: DateTime.now().toUtc(),
+            slot: snapshot.slot,
+            tagType: snapshot.tagType,
+            uid: snapshot.uid,
+            changes: changes,
+          );
+          if (generation != _emulationMonitorGeneration ||
+              !identical(communicator, activeCommunicator) ||
+              !identical(connector, activeConnector) ||
+              !activeConnector.connected) {
+            try {
+              await activeCommunicator.abortActiveSlotSnapshot(
+                frozen.transaction,
+              );
+            } catch (_) {}
+            released = true;
+            return;
+          }
+
+          await activeCommunicator.saveReleaseActiveSlotSnapshot(
+            frozen.transaction,
+          );
+          released = true;
+          _pendingEmulationChange = _PendingEmulationChange(
+            entry: entry,
+            snapshot: snapshot,
+            communicator: activeCommunicator,
+            connector: activeConnector,
+          );
+          await _persistPendingEmulationChange(
+            activeCommunicator,
+            activeConnector,
+            generation,
+          );
+        } finally {
+          if (!released) {
+            try {
+              await activeCommunicator.abortActiveSlotSnapshot(
+                frozen.transaction,
+              );
+            } catch (_) {}
+          }
+        }
+      }, invalidatesMonitorBaseline: false);
+    } catch (error, stackTrace) {
+      log?.w(
+        'Emulation change monitor failed',
+        error: error,
+        stackTrace: stackTrace,
+      );
+    } finally {
+      _emulationMonitorInProgress = false;
+      if (generation == _emulationMonitorGeneration) {
+        _scheduleEmulationChangePoll(generation);
+      } else if (_shouldMonitorEmulationChanges()) {
+        startEmulationChangeMonitor();
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    if (_disposed) return;
+    _disposed = true;
+    _slotOperationGeneration++;
+    stopDeviceScan();
+    stopEmulationChangeMonitor();
+    communicator?.dispose('Application state disposed');
+    communicator = null;
+    final activeConnector = connector;
+    connector = null;
+    activeConnector?.connectionStateCallback = null;
+    if (activeConnector != null) {
+      unawaited(
+        activeConnector.performDisconnect().then<void>((_) {}).catchError((
+          Object error,
+          StackTrace stackTrace,
+        ) {
+          log?.w(
+            'Connector teardown failed during state disposal',
+            error: error,
+            stackTrace: stackTrace,
+          );
+        }),
+      );
+    }
+    super.dispose();
   }
 
   void setProgressBar(dynamic value) {
+    if (_disposed) return;
     progress = value;
     notifyListeners();
   }
@@ -178,6 +612,7 @@ class ChameleonGUIState extends ChangeNotifier {
   Duration scanInterval = const Duration(seconds: 3);
   Timer? _scanTimer;
   bool _scanInProgress = false;
+  int _deviceScanGeneration = 0;
   bool _connecting = false;
   dynamic _lastAutoConnectAttemptPort;
   String _lastDevicesSignature = '';
@@ -185,7 +620,8 @@ class ChameleonGUIState extends ChangeNotifier {
 
   bool _shouldScan() {
     final c = connector;
-    return c != null &&
+    return !_disposed &&
+        c != null &&
         !_connecting &&
         !c.connected &&
         !c.pendingConnection &&
@@ -205,8 +641,10 @@ class ChameleonGUIState extends ChangeNotifier {
   }
 
   void stopDeviceScan() {
+    _deviceScanGeneration++;
     _scanTimer?.cancel();
     _scanTimer = null;
+    _scanInProgress = false;
   }
 
   Future<void> refreshDeviceScan() => _scanTick();
@@ -233,10 +671,9 @@ class ChameleonGUIState extends ChangeNotifier {
   }
 
   String _signatureOf(List<Chameleon> devices) {
-    final keys = devices
-        .map((d) => '${d.port}|${d.type.name}|${d.dfu}')
-        .toList()
-      ..sort();
+    final keys =
+        devices.map((d) => '${d.port}|${d.type.name}|${d.dfu}').toList()
+          ..sort();
     return keys.join(',');
   }
 
@@ -250,15 +687,19 @@ class ChameleonGUIState extends ChangeNotifier {
   }
 
   Future<void> _scanTick() async {
-    if (_scanInProgress || !_shouldScan()) {
+    final activeConnector = connector;
+    if (_scanInProgress || !_shouldScan() || activeConnector == null) {
       return;
     }
+    final generation = _deviceScanGeneration;
     _scanTimer?.cancel();
     _scanTimer = null;
     _scanInProgress = true;
     try {
-      final devices =
-          _normalizeDevices(await connector!.availableChameleons(false));
+      final devices = _normalizeDevices(
+        await activeConnector.availableChameleons(false),
+      );
+      if (!_isCurrentDeviceScan(generation, activeConnector)) return;
       syncAutoReconnectSuppression(devices.map((device) => device.port));
 
       final firstConnectablePort = _firstConnectablePort(devices);
@@ -267,7 +708,8 @@ class ChameleonGUIState extends ChangeNotifier {
       }
 
       final signature = _signatureOf(devices);
-      final changed = signature != _lastDevicesSignature ||
+      final changed =
+          signature != _lastDevicesSignature ||
           _lastScanHadError ||
           !hasCompletedDeviceScan;
       _lastDevicesSignature = signature;
@@ -281,7 +723,9 @@ class ChameleonGUIState extends ChangeNotifier {
 
       await _maybeAutoConnect(devices);
     } catch (error) {
-      await connector?.performDisconnect();
+      if (!_isCurrentDeviceScan(generation, activeConnector)) return;
+      await activeConnector.performDisconnect();
+      if (!_isCurrentDeviceScan(generation, activeConnector)) return;
       final wasError = _lastScanHadError;
       _lastScanHadError = true;
       _lastDevicesSignature = '';
@@ -292,10 +736,17 @@ class ChameleonGUIState extends ChangeNotifier {
         notifyListeners();
       }
     } finally {
-      _scanInProgress = false;
-      _scheduleNextScan();
+      if (_isCurrentDeviceScan(generation, activeConnector)) {
+        _scanInProgress = false;
+        _scheduleNextScan();
+      }
     }
   }
+
+  bool _isCurrentDeviceScan(int generation, AbstractSerial activeConnector) =>
+      !_disposed &&
+      generation == _deviceScanGeneration &&
+      identical(connector, activeConnector);
 
   Future<void> _maybeAutoConnect(List<Chameleon> devices) async {
     if (!_shouldScan() ||
@@ -328,7 +779,11 @@ class ChameleonGUIState extends ChangeNotifier {
   /// dialog, so those are handled in the UI layer (ConnectPage) — this returns
   /// false for them. Returns true on a successful connection.
   Future<bool> connectToDevice(Chameleon chameleonDevice) async {
-    if (chameleonDevice.dfu || _connecting) {
+    final activeConnector = connector;
+    if (_disposed ||
+        activeConnector == null ||
+        chameleonDevice.dfu ||
+        _connecting) {
       return false;
     }
 
@@ -339,37 +794,103 @@ class ChameleonGUIState extends ChangeNotifier {
     bool success = false;
     try {
       if (chameleonDevice.type == ConnectionType.ble) {
-        connector!.pendingConnection = true;
+        activeConnector.pendingConnection = true;
         notifyListeners();
       }
 
-      final connected =
-          await connector!.connectSpecificDevice(chameleonDevice.port);
+      final connected = await activeConnector.connectSpecificDevice(
+        chameleonDevice.port,
+      );
+      if (_disposed || !identical(connector, activeConnector)) {
+        if (connected) await activeConnector.performDisconnect();
+        return false;
+      }
       if (connected) {
-        connector!.pendingConnection = false;
+        activeConnector.pendingConnection = false;
         clearAutoReconnectSuppression(chameleonDevice.port);
         await attachConnectedCommunicator();
-        success = true;
+        success =
+            !_disposed &&
+            identical(connector, activeConnector) &&
+            activeConnector.connected &&
+            communicator != null;
       } else {
-        connector!.pendingConnection = false;
+        activeConnector.pendingConnection = false;
       }
-      notifyListeners();
+      if (!_disposed && identical(connector, activeConnector)) {
+        notifyListeners();
+      }
     } catch (error) {
-      connector!.pendingConnection = false;
+      activeConnector.pendingConnection = false;
       communicator?.dispose(error);
       communicator = null;
-      await connector!.performDisconnect();
-      scanError = error;
-      notifyListeners();
+      await activeConnector.performDisconnect();
+      if (!_disposed && identical(connector, activeConnector)) {
+        scanError = error;
+        notifyListeners();
+      }
     } finally {
       _connecting = false;
-      if (!connector!.connected) {
+      if (!_disposed &&
+          identical(connector, activeConnector) &&
+          !activeConnector.connected) {
         _scheduleNextScan();
       }
     }
 
     return success;
   }
+}
+
+class _EmulationSnapshot {
+  final int slot;
+  final TagType tagType;
+  final int ownerGeneration;
+  final String uid;
+  final Uint8List memory;
+
+  const _EmulationSnapshot({
+    required this.slot,
+    required this.tagType,
+    required this.ownerGeneration,
+    required this.uid,
+    required this.memory,
+  });
+
+  bool matchesTag(_EmulationSnapshot other) {
+    return slot == other.slot &&
+        tagType == other.tagType &&
+        ownerGeneration == other.ownerGeneration;
+  }
+}
+
+class _PendingEmulationChange {
+  final EmulationChangeEntry entry;
+  final _EmulationSnapshot snapshot;
+  final ChameleonCommunicator communicator;
+  final AbstractSerial connector;
+  bool baselineEligible = true;
+
+  _PendingEmulationChange({
+    required this.entry,
+    required this.snapshot,
+    required this.communicator,
+    required this.connector,
+  });
+}
+
+class _EmulationMonitorCancelled implements Exception {
+  const _EmulationMonitorCancelled();
+}
+
+class _FrozenEmulationSnapshot {
+  final MifareClassicActiveSlotSnapshot transaction;
+  final _EmulationSnapshot snapshot;
+
+  const _FrozenEmulationSnapshot({
+    required this.transaction,
+    required this.snapshot,
+  });
 }
 
 class MainPage extends StatefulWidget {
@@ -392,6 +913,7 @@ class _MainPageState extends State<MainPage> {
   // confirmation exactly once, on whichever path connected (banner, connect
   // page, manual connect, or auto-connect).
   bool _wasConnected = false;
+  int _lastShownEmulationChangeSequence = 0;
   final GlobalKey<ScaffoldMessengerState> _scaffoldMessengerKey =
       GlobalKey<ScaffoldMessengerState>();
 
@@ -422,11 +944,38 @@ class _MainPageState extends State<MainPage> {
     });
   }
 
+  void _notifyEmulationChange(EmulationChangeEntry entry) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final messenger = _scaffoldMessengerKey.currentState;
+      if (messenger == null) return;
+      messenger.hideCurrentSnackBar();
+      messenger.showSnackBar(
+        SnackBar(
+          behavior: SnackBarBehavior.floating,
+          duration: const Duration(seconds: 5),
+          content: Row(
+            children: [
+              const Icon(Icons.history, color: Colors.amber),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  'Emulated tag changed in slot ${entry.slot + 1}: '
+                  '${entry.changes.length} block${entry.changes.length == 1 ? '' : 's'} archived.',
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    });
+  }
+
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance
-        .addPostFrameCallback((_) => updateNavigationRailWidth(context));
+    WidgetsBinding.instance.addPostFrameCallback(
+      (_) => updateNavigationRailWidth(context),
+    );
   }
 
   @override
@@ -463,9 +1012,7 @@ class _MainPageState extends State<MainPage> {
         appState._sharedPreferencesProvider!.isDebugMode()) {
       return Logger(
         output: SharedPreferencesLogger(appState._sharedPreferencesProvider!),
-        printer: PrettyPrinter(
-          noBoxingByDefault: true,
-        ),
+        printer: PrettyPrinter(noBoxingByDefault: true),
         filter: ChameleonLogFilter(),
       );
     } else {
@@ -576,6 +1123,12 @@ class _MainPageState extends State<MainPage> {
     }
     _wasConnected = nowConnected;
 
+    if (appState.emulationChangeSequence > _lastShownEmulationChangeSequence &&
+        appState.latestEmulationChange != null) {
+      _lastShownEmulationChangeSequence = appState.emulationChangeSequence;
+      _notifyEmulationChange(appState.latestEmulationChange!);
+    }
+
     // "Device found" banner: shown on every screen while disconnected (enabled
     // in settings) when a non-DFU device is available that the user hasn't
     // dismissed.
@@ -601,43 +1154,48 @@ class _MainPageState extends State<MainPage> {
       theme: ThemeData(
         useMaterial3: true,
         colorScheme: ColorScheme.fromSeed(
-            seedColor: widget.sharedPreferencesProvider.getThemeColor()),
+          seedColor: widget.sharedPreferencesProvider.getThemeColor(),
+        ),
         brightness: Brightness.light,
         appBarTheme: AppBarTheme(
-            systemOverlayStyle: SystemUiOverlayStyle(
-                statusBarColor: ColorScheme.fromSeed(
-                        seedColor:
-                            widget.sharedPreferencesProvider.getThemeColor(),
-                        brightness: Brightness.light)
-                    .surface,
-                statusBarBrightness: Brightness.light,
-                statusBarIconBrightness: Brightness.dark)),
+          systemOverlayStyle: SystemUiOverlayStyle(
+            statusBarColor: ColorScheme.fromSeed(
+              seedColor: widget.sharedPreferencesProvider.getThemeColor(),
+              brightness: Brightness.light,
+            ).surface,
+            statusBarBrightness: Brightness.light,
+            statusBarIconBrightness: Brightness.dark,
+          ),
+        ),
       ).useCustomSystemFont(Brightness.light),
       darkTheme: ThemeData(
         useMaterial3: true,
         colorScheme: ColorScheme.fromSeed(
-            seedColor: widget.sharedPreferencesProvider.getThemeColor(),
-            brightness: Brightness.dark),
+          seedColor: widget.sharedPreferencesProvider.getThemeColor(),
+          brightness: Brightness.dark,
+        ),
         brightness: Brightness.dark,
         appBarTheme: AppBarTheme(
-            systemOverlayStyle: SystemUiOverlayStyle(
-                statusBarColor: ColorScheme.fromSeed(
-                        seedColor:
-                            widget.sharedPreferencesProvider.getThemeColor(),
-                        brightness: Brightness.dark)
-                    .surface,
-                statusBarBrightness: Brightness.dark,
-                statusBarIconBrightness: Brightness.light)),
+          systemOverlayStyle: SystemUiOverlayStyle(
+            statusBarColor: ColorScheme.fromSeed(
+              seedColor: widget.sharedPreferencesProvider.getThemeColor(),
+              brightness: Brightness.dark,
+            ).surface,
+            statusBarBrightness: Brightness.dark,
+            statusBarIconBrightness: Brightness.light,
+          ),
+        ),
       ).useCustomSystemFont(Brightness.dark),
       themeMode: widget.sharedPreferencesProvider.getTheme(), // Dark Theme
-      home: LayoutBuilder(// Build Page
-          builder: (context, constraints) {
-        return SafeArea(
-          left: false,
-          right: false,
-          top: false,
-          bottom: true,
-          child: Scaffold(
+      home: LayoutBuilder(
+        // Build Page
+        builder: (context, constraints) {
+          return SafeArea(
+            left: false,
+            right: false,
+            top: false,
+            bottom: true,
+            child: Scaffold(
               body: Column(
                 children: [
                   Expanded(
@@ -655,59 +1213,80 @@ class _MainPageState extends State<MainPage> {
                                     // Sidebar Items
                                     NavigationRailDestination(
                                       icon: const Icon(Icons.home),
-                                      label: Text(AppLocalizations.of(context)!
-                                          .home), // Home
+                                      label: Text(
+                                        AppLocalizations.of(context)!.home,
+                                      ), // Home
                                     ),
                                     NavigationRailDestination(
                                       disabled: !appState.connector!.connected,
                                       icon: const Icon(Icons.widgets),
-                                      label: Text(AppLocalizations.of(context)!
-                                          .slot_manager),
+                                      label: Text(
+                                        AppLocalizations.of(
+                                          context,
+                                        )!.slot_manager,
+                                      ),
                                     ),
                                     NavigationRailDestination(
-                                      icon:
-                                          const Icon(Icons.auto_awesome_motion),
-                                      label: Text(AppLocalizations.of(context)!
-                                          .saved_cards),
+                                      icon: const Icon(
+                                        Icons.auto_awesome_motion,
+                                      ),
+                                      label: Text(
+                                        AppLocalizations.of(
+                                          context,
+                                        )!.saved_cards,
+                                      ),
                                     ),
                                     NavigationRailDestination(
                                       disabled: !appState.connector!.connected,
                                       icon: const Icon(Icons.sensors),
-                                      label: Text(AppLocalizations.of(context)!
-                                          .read_card),
+                                      label: Text(
+                                        AppLocalizations.of(context)!.read_card,
+                                      ),
                                     ),
                                     NavigationRailDestination(
                                       disabled: !appState.connector!.connected,
                                       icon: const Icon(Icons.system_update_alt),
-                                      label: Text(AppLocalizations.of(context)!
-                                          .write_card),
+                                      label: Text(
+                                        AppLocalizations.of(
+                                          context,
+                                        )!.write_card,
+                                      ),
                                     ),
                                     NavigationRailDestination(
                                       icon: const Icon(Icons.handyman),
                                       label: Text(
-                                          AppLocalizations.of(context)!.tools),
+                                        AppLocalizations.of(context)!.tools,
+                                      ),
                                     ),
                                     NavigationRailDestination(
                                       icon: const Icon(Icons.settings),
-                                      label: Text(AppLocalizations.of(context)!
-                                          .settings),
+                                      label: Text(
+                                        AppLocalizations.of(context)!.settings,
+                                      ),
                                     ),
                                     NavigationRailDestination(
                                       disabled: !appState.connector!.connected,
                                       icon: const Icon(Icons.vpn_key),
-                                      label: Text(AppLocalizations.of(context)!
-                                          .reader_keys_capture),
+                                      label: Text(
+                                        AppLocalizations.of(
+                                          context,
+                                        )!.reader_keys_capture,
+                                      ),
                                     ),
                                     NavigationRailDestination(
                                       icon: const Icon(Icons.security),
-                                      label: Text(AppLocalizations.of(context)!
-                                          .ethical_hacking),
+                                      label: Text(
+                                        AppLocalizations.of(
+                                          context,
+                                        )!.ethical_hacking,
+                                      ),
                                     ),
                                     if (appState.devMode)
                                       NavigationRailDestination(
                                         icon: const Icon(Icons.bug_report),
                                         label: Text(
-                                            '🐞 ${AppLocalizations.of(context)!.debug} 🐞'),
+                                          '🐞 ${AppLocalizations.of(context)!.debug} 🐞',
+                                        ),
                                       ),
                                   ],
                                   selectedIndex: selectedIndex,
@@ -721,8 +1300,9 @@ class _MainPageState extends State<MainPage> {
                             : const SizedBox(),
                         Expanded(
                           child: Container(
-                            color:
-                                Theme.of(context).colorScheme.primaryContainer,
+                            color: Theme.of(
+                              context,
+                            ).colorScheme.primaryContainer,
                             child: page,
                           ),
                         ),
@@ -745,9 +1325,11 @@ class _MainPageState extends State<MainPage> {
                     ),
                 ],
               ),
-              bottomNavigationBar: const BottomProgressBar()),
-        );
-      }),
+              bottomNavigationBar: const BottomProgressBar(),
+            ),
+          );
+        },
+      ),
     );
   }
 }

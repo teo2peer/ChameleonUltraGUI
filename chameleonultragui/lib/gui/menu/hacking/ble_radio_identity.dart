@@ -196,6 +196,11 @@ class BleRadioIdentityPageState extends State<BleRadioIdentityPage> {
                 style: Theme.of(context).textTheme.titleMedium),
             const SizedBox(height: 4),
             Text(localizations.ble_radio_power_description),
+            if (_usingBleTransport) ...[
+              const SizedBox(height: 8),
+              Text(localizations.ble_radio_off_usb_only,
+                  style: TextStyle(color: Theme.of(context).colorScheme.error)),
+            ],
             const SizedBox(height: 12),
             if (_radioError != null)
               Padding(
@@ -242,7 +247,9 @@ class BleRadioIdentityPageState extends State<BleRadioIdentityPage> {
                 FilledButton.tonalIcon(
                   icon: const Icon(Icons.do_not_disturb_on),
                   label: Text(localizations.ble_silent_off),
-                  onPressed: (_radioBusy || !(_radio?['on'] ?? true))
+                  onPressed: (_radioBusy ||
+                          _usingBleTransport ||
+                          !(_radio?['on'] ?? true))
                       ? null
                       : () => _toggleRadio(false),
                 ),

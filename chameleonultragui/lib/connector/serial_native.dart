@@ -8,9 +8,10 @@ import 'serial_abstract.dart';
 class NativeSerial extends AbstractSerial {
   // Class for PC Serial Communication
   SerialPort? port;
-  SerialPort? checkPort;
   bool checkDFU = true;
   SerialPortReader? reader;
+  StreamSubscription<Uint8List>? _readerSubscription;
+  int _readerGeneration = 0;
 
   NativeSerial({required super.log});
 
@@ -38,21 +39,31 @@ class NativeSerial extends AbstractSerial {
   @override
   Future<bool> performDisconnect() async {
     final hadState = hasConnectionState || port != null || reader != null;
+    final activeReader = reader;
+    final activeSubscription = _readerSubscription;
+    final activePort = port;
+    _readerGeneration++;
+    reader = null;
+    _readerSubscription = null;
+    port = null;
     resetConnectionState();
-    if (port != null) {
-      reader?.close();
-      port?.close();
-      reader = null;
-      port = null;
-      if (hadState) {
-        notifyConnectionStateChanged();
+    try {
+      try {
+        await activeSubscription?.cancel();
+        activeReader?.close();
+      } finally {
+        if (activePort != null) {
+          try {
+            if (activePort.isOpen) activePort.close();
+          } finally {
+            activePort.dispose();
+          }
+        }
       }
-      return true;
+    } finally {
+      if (hadState) notifyConnectionStateChanged();
     }
-    if (hadState) {
-      notifyConnectionStateChanged();
-    }
-    return false;
+    return activePort != null;
   }
 
   @override
@@ -80,6 +91,9 @@ class NativeSerial extends AbstractSerial {
 
   @override
   Future<bool> connectSpecificDevice(dynamic devicePort) async {
+    if (port != null || reader != null || hasConnectionState) {
+      await performDisconnect();
+    }
     if (await connectDevice(devicePort, true)) {
       portName = devicePort;
       connected = true;
@@ -89,30 +103,40 @@ class NativeSerial extends AbstractSerial {
     return false;
   }
 
+  @protected
+  SerialPort createSerialPort(String address) => SerialPort(address);
+
+  @protected
+  void configureSerialPort(SerialPort candidate) {
+    candidate.config = SerialPortConfig()
+      ..baudRate = 115200
+      ..bits = 8
+      ..stopBits = 1
+      ..parity = SerialPortParity.none
+      ..rts = SerialPortRts.flowControl
+      ..cts = SerialPortCts.flowControl
+      ..dsr = SerialPortDsr.flowControl
+      ..dtr = SerialPortDtr.flowControl
+      ..setFlowControl(SerialPortFlowControl.rtsCts);
+  }
+
   Future<bool> connectDevice(String address, bool setPort) async {
     if (port != null && port!.isOpen && !setPort) {
       log.d("Chameleon is connected now");
     }
 
     log.d("Connecting to $address");
+    SerialPort? candidate;
+    var ownershipTransferred = false;
     try {
-      checkPort = SerialPort(address);
-      checkPort!.openReadWrite();
-      checkPort!.config = SerialPortConfig()
-        ..baudRate = 115200
-        ..bits = 8
-        ..stopBits = 1
-        ..parity = SerialPortParity.none
-        ..rts = SerialPortRts.flowControl
-        ..cts = SerialPortCts.flowControl
-        ..dsr = SerialPortDsr.flowControl
-        ..dtr = SerialPortDtr.flowControl
-        ..setFlowControl(SerialPortFlowControl.rtsCts);
+      candidate = createSerialPort(address);
+      if (!candidate.openReadWrite()) return false;
+      configureSerialPort(candidate);
       log.d("Connected to $address");
-      log.d("Manufacturer: ${checkPort!.manufacturer}");
-      log.d("Product: ${checkPort!.productName}");
-      if (checkPort!.manufacturer == "Proxgrind") {
-        if (checkPort!.productName!.contains('ChameleonUltra')) {
+      log.d("Manufacturer: ${candidate.manufacturer}");
+      log.d("Product: ${candidate.productName}");
+      if (candidate.manufacturer == "Proxgrind") {
+        if ((candidate.productName ?? '').contains('ChameleonUltra')) {
           device = ChameleonDevice.ultra;
         } else {
           device = ChameleonDevice.lite;
@@ -122,13 +146,14 @@ class NativeSerial extends AbstractSerial {
 
         connectionType = ConnectionType.usb;
 
-        checkDFU = checkPort!.vendorId == 0x1915;
+        checkDFU = candidate.vendorId == 0x1915;
 
-        checkPort!.close();
+        if (!candidate.close()) return false;
 
         if (setPort) {
-          port = checkPort;
+          port = candidate;
           isDFU = checkDFU;
+          ownershipTransferred = true;
         }
 
         return true;
@@ -138,22 +163,44 @@ class NativeSerial extends AbstractSerial {
     } on SerialPortError catch (e) {
       log.e(e);
       return false;
+    } catch (e, stackTrace) {
+      log.e('Serial probe failed', error: e, stackTrace: stackTrace);
+      return false;
+    } finally {
+      if (!ownershipTransferred && candidate != null) {
+        try {
+          if (candidate.isOpen) candidate.close();
+        } finally {
+          candidate.dispose();
+        }
+      }
     }
   }
 
   @override
   Future<void> open() async {
     port!.openReadWrite();
-    reader = SerialPortReader(port!, timeout: 2500);
-    reader?.stream.listen((data) async {
+    final activeReader = SerialPortReader(port!, timeout: 2500);
+    final generation = ++_readerGeneration;
+    reader = activeReader;
+    _readerSubscription = activeReader.stream.listen((data) async {
+      if (generation != _readerGeneration || !identical(reader, activeReader)) {
+        return;
+      }
       try {
         await messageCallback(data);
       } catch (_) {
         log.w("Received unexpected data: ${bytesToHex(data)}");
       }
     }, onDone: () async {
+      if (generation != _readerGeneration || !identical(reader, activeReader)) {
+        return;
+      }
       await performDisconnect();
     }, onError: (_) async {
+      if (generation != _readerGeneration || !identical(reader, activeReader)) {
+        return;
+      }
       await performDisconnect();
     });
   }

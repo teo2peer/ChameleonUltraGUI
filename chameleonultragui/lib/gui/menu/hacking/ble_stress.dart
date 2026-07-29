@@ -41,7 +41,7 @@ class BleStressPageState extends State<BleStressPage> {
   final _floodHandle = TextEditingController(text: '0x0012');
   final _floodSize = TextEditingController(text: '16');
   final _floodCount = TextEditingController(text: '0'); // 0 = until stop
-  final _floodInterval = TextEditingController(text: '5');
+  final _floodInterval = TextEditingController(text: '10');
   int _floodSent = 0;
   bool _flooding = false;
   bool _startingFlood = false;
@@ -212,7 +212,7 @@ class BleStressPageState extends State<BleStressPage> {
       setState(() => _floodError = localizations.ble_flood_count_range_error);
       return;
     }
-    if (interval < 1 || interval > 0xFFFF) {
+    if (interval < 10 || interval > 0xFFFF) {
       setState(
           () => _floodError = localizations.ble_flood_interval_range_error);
       return;
@@ -399,6 +399,24 @@ class BleStressPageState extends State<BleStressPage> {
     }
   }
 
+  Future<void> _stopBroadcast() async {
+    final localizations = AppLocalizations.of(context)!;
+    try {
+      await _dev.bleAdvFloodStop();
+      if (!mounted) return;
+      setState(() {
+        _flooding = false;
+        _broadcasting = false;
+        _finiteFloodTarget = null;
+      });
+    } catch (e) {
+      if (mounted) {
+        setState(() =>
+            _broadcastError = localizations.ble_broadcast_failed(e.toString()));
+      }
+    }
+  }
+
   Future<void> _kick() async {
     final localizations = AppLocalizations.of(context)!;
     setState(() => _kickError = null);
@@ -490,8 +508,7 @@ class BleStressPageState extends State<BleStressPage> {
                   feature: localizations.ble_environment_broadcast_title,
                   requiredCommands: const [
                     ChameleonCommand.bleAdvFloodStart,
-                    ChameleonCommand.bleFloodStop,
-                    ChameleonCommand.bleFloodCount,
+                    ChameleonCommand.bleAdvFloodStop,
                   ],
                   child: _broadcastCard(),
                 ),
@@ -806,7 +823,7 @@ class BleStressPageState extends State<BleStressPage> {
                 FilledButton.tonalIcon(
                   icon: const Icon(Icons.stop),
                   label: Text(localizations.ble_stop),
-                  onPressed: _broadcasting ? _stopFlood : null,
+                  onPressed: _broadcasting ? _stopBroadcast : null,
                 ),
               ],
             ),

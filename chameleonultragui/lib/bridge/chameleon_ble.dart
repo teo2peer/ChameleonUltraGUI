@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:chameleonultragui/helpers/definitions.dart';
+import 'package:chameleonultragui/helpers/ble/ble_advertising.dart';
 
 import 'chameleon.dart';
 
@@ -21,6 +22,9 @@ extension ChameleonBle on ChameleonCommunicator {
       throw StateError('BLE command ${command.name} returned no response');
     }
     if (response.status != chameleonStatusSuccess) {
+      if (response.status == 0x66 && usesBleTransport) {
+        throw ChameleonSecureBleLinkException(command);
+      }
       throw ChameleonCommandException(command, response.status);
     }
     final actual = response.data.length;
@@ -60,10 +64,13 @@ extension ChameleonBle on ChameleonCommunicator {
   // addr[6] | addr_type[1] | rssi[1 signed] | adv_len[1] | adv[adv_len].
   Future<List<BleScanResult>> blePassiveScanResults(
       {int startIndex = 0}) async {
+    if (startIndex < 0 || startIndex > 0xFF) {
+      throw ArgumentError.value(startIndex, 'startIndex', 'must be 0..255');
+    }
     final resp = _requireBleSuccess(
         ChameleonCommand.bleScanGetResults,
         await sendCmd(ChameleonCommand.bleScanGetResults,
-            data: Uint8List.fromList([startIndex & 0xFF])));
+            data: Uint8List.fromList([startIndex])));
     List<BleScanResult> out = [];
     var d = resp.data;
     int o = 0;
@@ -191,7 +198,7 @@ extension ChameleonBle on ChameleonCommunicator {
   //   scope=2 → ignored, use bleAdvFloodStart() instead.
   // Throws DEVICE_MODE_ERROR (0x66) if scope=0 and no central link is up.
   Future<int> bleFloodStart(int scope, int valueHandle, int payloadSize,
-      {int maxIterations = 0, int intervalMs = 5}) async {
+      {int maxIterations = 0, int intervalMs = 10}) async {
     if (scope < 0 || scope > 2) {
       throw ArgumentError('scope must be 0/1/2 (got $scope)');
     }
@@ -213,8 +220,8 @@ extension ChameleonBle on ChameleonCommunicator {
     if (maxIterations < 0 || maxIterations > 0xFFFF) {
       throw ArgumentError('maxIterations must be 0..65535');
     }
-    if (intervalMs < 1 || intervalMs > 0xFFFF) {
-      throw ArgumentError('intervalMs must be 1..65535');
+    if (intervalMs < 10 || intervalMs > 0xFFFF) {
+      throw ArgumentError('intervalMs must be 10..65535');
     }
     final p = ByteData(8);
     p.setUint8(0, scope);
@@ -290,13 +297,38 @@ extension ChameleonBle on ChameleonCommunicator {
         await sendCmd(ChameleonCommand.bleAdvFloodStop));
   }
 
+  Future<BleAdvertisingLabStatus> bleAdvLabStart(
+      BleAdvertisingLabConfig config) async {
+    final resp = _requireBleSuccess(ChameleonCommand.bleAdvLabStart,
+        await sendCmd(ChameleonCommand.bleAdvLabStart, data: config.toWire()),
+        exactDataLength: 20);
+    return BleAdvertisingLabStatus.fromWire(resp.data);
+  }
+
+  Future<BleAdvertisingLabStatus> bleAdvLabStatus() async {
+    final resp = _requireBleSuccess(ChameleonCommand.bleAdvLabStatus,
+        await sendCmd(ChameleonCommand.bleAdvLabStatus),
+        exactDataLength: 20);
+    return BleAdvertisingLabStatus.fromWire(resp.data);
+  }
+
+  Future<BleAdvertisingLabStatus> bleAdvLabStop() async {
+    final resp = _requireBleSuccess(ChameleonCommand.bleAdvLabStop,
+        await sendCmd(ChameleonCommand.bleAdvLabStop),
+        exactDataLength: 20);
+    return BleAdvertisingLabStatus.fromWire(resp.data);
+  }
+
   // Connect to ONE target. addrLe is 6 bytes little-endian (as the scanner
   // reports). Returns the firmware status byte (0x68 = success/initiated).
   Future<int> bleConnect(Uint8List addrLe, {int addrType = 0}) async {
     if (addrLe.length != 6) {
       throw ArgumentError.value(addrLe.length, 'addrLe.length', 'must be 6');
     }
-    var payload = Uint8List.fromList([addrType & 0xFF, ...addrLe]);
+    if (addrType < 0 || addrType > 3) {
+      throw ArgumentError.value(addrType, 'addrType', 'must be 0..3');
+    }
+    var payload = Uint8List.fromList([addrType, ...addrLe]);
     final resp = _requireBleSuccess(ChameleonCommand.bleConnect,
         await sendCmd(ChameleonCommand.bleConnect, data: payload));
     return resp.status;
@@ -315,6 +347,14 @@ extension ChameleonBle on ChameleonCommunicator {
     if (d.length != 10 && d.length != 12 && d.length < 21) {
       throw FormatException(
           'BLE central state returned ${d.length} bytes; expected 10, 12, or at least 21');
+    }
+    if (d[0] > 5 || d[1] > 3 || d[3] > 2 || d[8] > 3) {
+      throw const FormatException(
+          'BLE central state contains an invalid state');
+    }
+    if (d.length >= 21 && (d[12] > 2 || d[17] > 3 || d[18] > 3)) {
+      throw const FormatException(
+          'BLE central state contains an invalid operation state');
     }
     return BleCentralState(
         connState: d[0],
@@ -347,10 +387,13 @@ extension ChameleonBle on ChameleonCommunicator {
   // Fetch discovered characteristics. Wire per char:
   // value_handle[2] | props[1] | uuid_type[1] | uuid[2] (big-endian).
   Future<List<BleCharacteristic>> bleGattChars({int startIndex = 0}) async {
+    if (startIndex < 0 || startIndex > 0xFF) {
+      throw ArgumentError.value(startIndex, 'startIndex', 'must be 0..255');
+    }
     final resp = _requireBleSuccess(
         ChameleonCommand.bleGattGetChars,
         await sendCmd(ChameleonCommand.bleGattGetChars,
-            data: Uint8List.fromList([startIndex & 0xFF])));
+            data: Uint8List.fromList([startIndex])));
     List<BleCharacteristic> out = [];
     var d = resp.data;
     if (d.length % 6 != 0) {
@@ -460,7 +503,10 @@ extension ChameleonBle on ChameleonCommunicator {
       final resp = _requireBleSuccess(ChameleonCommand.bleGetDeviceInfo,
           await sendCmd(ChameleonCommand.bleGetDeviceInfo));
       var d = resp.data;
-      if (d.length < 2) continue;
+      if (d.length < 2) {
+        throw const FormatException(
+            'BLE device-information state must contain two bytes');
+      }
       if (d[0] == 3) {
         throw StateError('BLE device-information read failed');
       }
@@ -505,8 +551,8 @@ extension ChameleonBle on ChameleonCommunicator {
     if (maxIterations < 0 || maxIterations > 0xFFFF) {
       throw ArgumentError('maxIterations must be 0..65535');
     }
-    if (intervalMs < 1 || intervalMs > 0xFFFF) {
-      throw ArgumentError('intervalMs must be 1..65535');
+    if (intervalMs < 10 || intervalMs > 0xFFFF) {
+      throw ArgumentError('intervalMs must be 10..65535');
     }
     var payload = Uint8List.fromList([
       valueHandle >> 8,
@@ -537,6 +583,9 @@ extension ChameleonBle on ChameleonCommunicator {
   // Fetch the fuzz log. Wire per entry:
   // index[2] | payload_len[1] | write_status[1] | data[min(payload_len,16)].
   Future<List<BleFuzzLogEntry>> bleFuzzLog({int startIndex = 0}) async {
+    if (startIndex < 0 || startIndex > 0xFFFF) {
+      throw ArgumentError.value(startIndex, 'startIndex', 'must be 0..65535');
+    }
     final resp = _requireBleSuccess(
         ChameleonCommand.bleFuzzGetLog,
         await sendCmd(ChameleonCommand.bleFuzzGetLog,
@@ -572,6 +621,9 @@ extension ChameleonBle on ChameleonCommunicator {
   // (gattStatus, value): gattStatus 0 = success, >0 = ATT error, -1 = timeout.
   Future<(int, Uint8List)> bleGattRead(int valueHandle,
       {Duration timeout = const Duration(seconds: 2)}) async {
+    if (valueHandle < 1 || valueHandle > 0xFFFF) {
+      throw ArgumentError.value(valueHandle, 'valueHandle', 'must be 1..65535');
+    }
     _requireBleSuccess(
         ChameleonCommand.bleGattRead,
         await sendCmd(ChameleonCommand.bleGattRead,
@@ -601,6 +653,12 @@ extension ChameleonBle on ChameleonCommunicator {
   // -1 = timeout / rejected.
   Future<int> bleGattWrite(int valueHandle, Uint8List data,
       {Duration timeout = const Duration(seconds: 2)}) async {
+    if (valueHandle < 1 || valueHandle > 0xFFFF) {
+      throw ArgumentError.value(valueHandle, 'valueHandle', 'must be 1..65535');
+    }
+    if (data.isEmpty || data.length > 244) {
+      throw ArgumentError.value(data.length, 'data.length', 'must be 1..244');
+    }
     var payload = Uint8List.fromList(
         [(valueHandle >> 8) & 0xFF, valueHandle & 0xFF, ...data]);
     _requireBleSuccess(ChameleonCommand.bleGattWrite,
@@ -630,17 +688,26 @@ extension ChameleonBle on ChameleonCommunicator {
   // Subscribe to notifications/indications on the connected target by writing its
   // CCCD. mode: 0 = off, 1 = notifications, 2 = indications. Returns the status.
   Future<int> bleSubscribe(int cccdHandle, int mode) async {
+    if (cccdHandle < 1 || cccdHandle > 0xFFFF) {
+      throw ArgumentError.value(cccdHandle, 'cccdHandle', 'must be 1..65535');
+    }
+    if (mode < 0 || mode > 2) {
+      throw ArgumentError.value(mode, 'mode', 'must be 0..2');
+    }
     final resp = _requireBleSuccess(
         ChameleonCommand.bleSubscribe,
         await sendCmd(ChameleonCommand.bleSubscribe,
             data: Uint8List.fromList(
-                [(cccdHandle >> 8) & 0xFF, cccdHandle & 0xFF, mode & 0xFF])));
+                [(cccdHandle >> 8) & 0xFF, cccdHandle & 0xFF, mode])));
     return resp.status;
   }
 
   // Fetch received notifications. Wire per entry: handle[2] | len[1] | data[len].
   Future<List<Map<String, dynamic>>> bleGetNotifications(
       {int startIndex = 0}) async {
+    if (startIndex < 0 || startIndex > 0xFFFF) {
+      throw ArgumentError.value(startIndex, 'startIndex', 'must be 0..65535');
+    }
     final resp = _requireBleSuccess(
         ChameleonCommand.bleGetNotifications,
         await sendCmd(ChameleonCommand.bleGetNotifications,
@@ -668,10 +735,13 @@ extension ChameleonBle on ChameleonCommunicator {
     return out;
   }
 
-  // Discover a characteristic's CCCD descriptor handle. Falls back to
-  // valueHandle + 1 (the common layout) if none is found or on timeout.
+  // Discover a characteristic's CCCD descriptor handle. Never guess a handle:
+  // writing valueHandle + 1 can mutate an unrelated descriptor.
   Future<int> bleFindCccd(int valueHandle,
       {Duration timeout = const Duration(seconds: 2)}) async {
+    if (valueHandle < 1 || valueHandle >= 0xFFFF) {
+      throw ArgumentError.value(valueHandle, 'valueHandle', 'must be 1..65534');
+    }
     _requireBleSuccess(
         ChameleonCommand.bleFindCccd,
         await sendCmd(ChameleonCommand.bleFindCccd,
@@ -685,8 +755,10 @@ extension ChameleonBle on ChameleonCommunicator {
           exactDataLength: 3);
       var d = resp.data;
       if (d[0] == 2) return (d[1] << 8) | d[2]; // found
-      if (d[0] == 3) break; // not found
+      if (d[0] == 3) {
+        throw StateError('The characteristic has no discovered CCCD');
+      }
     }
-    return valueHandle + 1;
+    throw TimeoutException('BLE CCCD discovery did not finish', timeout);
   }
 }

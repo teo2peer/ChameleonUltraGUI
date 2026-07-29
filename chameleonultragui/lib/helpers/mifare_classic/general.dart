@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:isolate';
 import 'dart:typed_data';
 
@@ -354,36 +355,6 @@ List<Uint8List> mfClassicGetKeysFromDump(List<Uint8List> dump) {
 
 typedef FilterResult = (List<int>, List<int>);
 
-class _FilterKeysParams {
-  final SendPort sendPort;
-  final List<int> keys1;
-  final List<int> keys2;
-  final int nt1;
-  final int nt2;
-  _FilterKeysParams(
-    this.sendPort,
-    this.keys1,
-    this.keys2,
-    this.nt1,
-    this.nt2,
-  );
-}
-
-class _FindParams {
-  final SendPort sendPort;
-  final int nt1;
-  final int key1;
-  final int nt2;
-  final List<int> keys2;
-  _FindParams(
-    this.sendPort,
-    this.nt1,
-    this.key1,
-    this.nt2,
-    this.keys2,
-  );
-}
-
 class StaticEncryptedKeysFilter {
   static final List<int> _iLfsr16 = List<int>.filled(1 << 16, 0);
   static final List<int> _sLfsr16 = List<int>.filled(1 << 16, 0);
@@ -451,38 +422,22 @@ class StaticEncryptedKeysFilter {
       List<int> keys1, List<int> keys2, int nt1, int nt2) {
     _initLfsr16Table();
 
-    final List<int> seednt1 = [];
-    final List<bool> filterKeys1 = List<bool>.filled(keys1.length, false);
-    final List<bool> filterKeys2 = List<bool>.filled(keys2.length, false);
-
-    for (int i = 0; i < keys1.length; i++) {
-      seednt1.add(_computeSeednt16Nt32(nt1, keys1[i]));
-    }
-
-    for (int j = 0; j < keys2.length; j++) {
-      int seednt2 = _computeSeednt16Nt32(nt2, keys2[j]);
-      for (int i = 0; i < keys1.length; i++) {
-        if (seednt2 == seednt1[i]) {
-          filterKeys1[i] = true;
-          filterKeys2[j] = true;
-        }
-      }
-    }
-
-    final List<int> filteredKeys1 = [];
-    final List<int> filteredKeys2 = [];
-
-    for (int i = 0; i < keys1.length; i++) {
-      if (filterKeys1[i]) {
-        filteredKeys1.add(keys1[i]);
-      }
-    }
-
-    for (int j = 0; j < keys2.length; j++) {
-      if (filterKeys2[j]) {
-        filteredKeys2.add(keys2[j]);
-      }
-    }
+    final seeds1 = keys1
+        .map((key) => _computeSeednt16Nt32(nt1, key))
+        .toList(growable: false);
+    final seeds2 = keys2
+        .map((key) => _computeSeednt16Nt32(nt2, key))
+        .toList(growable: false);
+    final seedSet1 = seeds1.toSet();
+    final seedSet2 = seeds2.toSet();
+    final filteredKeys1 = <int>[
+      for (var index = 0; index < keys1.length; index++)
+        if (seedSet2.contains(seeds1[index])) keys1[index],
+    ];
+    final filteredKeys2 = <int>[
+      for (var index = 0; index < keys2.length; index++)
+        if (seedSet1.contains(seeds2[index])) keys2[index],
+    ];
 
     return (filteredKeys1, filteredKeys2);
   }
@@ -513,30 +468,15 @@ extension StaticEncryptedKeysFilterAsync on StaticEncryptedKeysFilter {
     int nt1,
     int nt2,
   ) async {
-    final receivePort = ReceivePort();
-    await Isolate.spawn<_FilterKeysParams>(
-      _filterKeysEntry,
-      _FilterKeysParams(
-        receivePort.sendPort,
-        keys1,
-        keys2,
-        nt1,
-        nt2,
-      ),
+    return Isolate.run(() => StaticEncryptedKeysFilter.filterKeys(
+          keys1,
+          keys2,
+          nt1,
+          nt2,
+        )).timeout(
+      const Duration(minutes: 2),
+      onTimeout: () => throw TimeoutException('Static key filter timed out'),
     );
-    final result = await receivePort.first as FilterResult;
-    receivePort.close();
-    return result;
-  }
-
-  static void _filterKeysEntry(_FilterKeysParams params) {
-    final r = StaticEncryptedKeysFilter.filterKeys(
-      params.keys1,
-      params.keys2,
-      params.nt1,
-      params.nt2,
-    );
-    params.sendPort.send(r);
   }
 
   static Future<List<int>> findMatchingKeys(
@@ -545,30 +485,15 @@ extension StaticEncryptedKeysFilterAsync on StaticEncryptedKeysFilter {
     int nt2,
     List<int> keys2,
   ) async {
-    final receivePort = ReceivePort();
-    await Isolate.spawn<_FindParams>(
-      _findEntry,
-      _FindParams(
-        receivePort.sendPort,
-        nt1,
-        key1,
-        nt2,
-        keys2,
-      ),
+    return Isolate.run(() => StaticEncryptedKeysFilter.findMatchingKeys(
+          nt1,
+          key1,
+          nt2,
+          keys2,
+        )).timeout(
+      const Duration(minutes: 2),
+      onTimeout: () => throw TimeoutException('Static key search timed out'),
     );
-    final result = await receivePort.first as List<int>;
-    receivePort.close();
-    return result;
-  }
-
-  static void _findEntry(_FindParams params) {
-    final r = StaticEncryptedKeysFilter.findMatchingKeys(
-      params.nt1,
-      params.key1,
-      params.nt2,
-      params.keys2,
-    );
-    params.sendPort.send(r);
   }
 }
 

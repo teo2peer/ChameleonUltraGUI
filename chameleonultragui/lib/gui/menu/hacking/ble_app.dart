@@ -15,12 +15,14 @@ import 'package:chameleonultragui/generated/i18n/app_localizations.dart';
 class BleAppPage extends StatefulWidget {
   final Widget auditTab;
   final Widget radioIdentityTab;
+  final Widget advertisingLabTab;
   final Widget stressBroadcastTab;
 
   const BleAppPage({
     super.key,
     required this.auditTab,
     required this.radioIdentityTab,
+    required this.advertisingLabTab,
     required this.stressBroadcastTab,
   });
 
@@ -35,7 +37,7 @@ class _BleAppPageState extends State<BleAppPage>
   @override
   void initState() {
     super.initState();
-    _tab = TabController(length: 3, vsync: this);
+    _tab = TabController(length: 4, vsync: this);
   }
 
   @override
@@ -62,6 +64,9 @@ class _BleAppPageState extends State<BleAppPage>
                 icon: const Icon(Icons.bluetooth),
                 text: localizations.ble_tab_radio_id),
             Tab(
+                icon: const Icon(Icons.cell_tower),
+                text: localizations.ble_tab_advertising_lab),
+            Tab(
                 icon: const Icon(Icons.bolt),
                 text: localizations.ble_tab_stress),
           ],
@@ -72,6 +77,7 @@ class _BleAppPageState extends State<BleAppPage>
         children: [
           widget.auditTab,
           widget.radioIdentityTab,
+          widget.advertisingLabTab,
           widget.stressBroadcastTab,
         ],
       ),

@@ -11,8 +11,8 @@ class _WiegandFormat {
   final int fcMask;
   final int cnShift;
   final int cnMask;
-  const _WiegandFormat(
-      this.name, this.bits, this.fcShift, this.fcMask, this.cnShift, this.cnMask);
+  const _WiegandFormat(this.name, this.bits, this.fcShift, this.fcMask,
+      this.cnShift, this.cnMask);
 }
 
 // Common access-control Wiegand formats (bit slices from the raw value, MSB

@@ -15,13 +15,21 @@ void main() {
       expect(identical(out, keys), true);
     });
 
+    test('short lists can still apply probability priors when requested', () {
+      final keys = [key(1), key(2), key(3)];
+      final out = prioritiseCandidates(
+          keys, {bytesToHex(keys[2])}, minLength: 0);
+      expect(hexes(out), hexes([keys[2], keys[0], keys[1]]));
+    });
+
     test('likely keys move to the front, other order preserved, none lost', () {
       final keys = List.generate(70, key);
       final likely = {bytesToHex(keys[40]), bytesToHex(keys[65])};
       final out = prioritiseCandidates(keys, likely, minLength: 0);
 
       expect(out.length, keys.length);
-      expect(hexes(out).toSet(), hexes(keys).toSet()); // same set, nothing dropped
+      expect(
+          hexes(out).toSet(), hexes(keys).toSet()); // same set, nothing dropped
       expect(bytesToHex(out[0]), bytesToHex(keys[40])); // likely first (stable)
       expect(bytesToHex(out[1]), bytesToHex(keys[65]));
 
@@ -38,26 +46,52 @@ void main() {
     });
   });
 
-  group('narrowCandidates', () {
-    test('first set (null current) is returned as-is', () {
-      expect(narrowCandidates(null, {1, 2, 3}), {1, 2, 3});
+  group('rankCandidateConsensus', () {
+    test('one sample is never enough for on-card verification', () {
+      final result = rankCandidateConsensus([
+        {1, 2, 3},
+      ]);
+      expect(result.candidates, isEmpty);
+      expect(result.support, 1);
     });
 
-    test('non-empty intersection narrows', () {
-      expect(narrowCandidates({1, 2, 3}, {2, 3, 4}), {2, 3});
-    });
-
-    test('empty intersection keeps the newer set (never wipes out candidates)',
+    test('disjoint samples are rejected instead of replacing prior evidence',
         () {
-      expect(narrowCandidates({1, 2}, {3, 4}), {3, 4});
+      final result = rankCandidateConsensus([
+        {1, 2},
+        {3, 4},
+      ]);
+      expect(result.candidates, isEmpty);
+      expect(result.support, 1);
     });
 
-    test('converges to the key common to every set', () {
-      var c = narrowCandidates(null, {10, 20, 30, 42});
-      c = narrowCandidates(c, {20, 42, 99});
-      c = narrowCandidates(c, {42, 20});
-      expect(c.contains(42), true);
-      expect(c.length <= 2, true);
+    test('ranks candidates by support across captures', () {
+      final result = rankCandidateConsensus([
+        {10, 20, 42},
+        {20, 42, 99},
+        {42, 100},
+      ]);
+      expect(result.candidates, [42]);
+      expect(result.support, 3);
+    });
+
+    test('an incompatible outlier cannot destroy existing consensus', () {
+      final result = rankCandidateConsensus([
+        {10, 42},
+        {20, 42},
+        {100, 200, 300},
+      ]);
+      expect(result.candidates, [42]);
+      expect(result.support, 2);
+    });
+
+    test('equally supported candidates have deterministic ordering', () {
+      final result = rankCandidateConsensus([
+        {30, 10},
+        {10, 30},
+      ]);
+      expect(result.candidates, [10, 30]);
+      expect(result.support, 2);
     });
   });
 

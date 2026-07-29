@@ -46,9 +46,11 @@ const Map<String, String> emvTagNames = {
   '93': 'Signed Static Application Data',
   '94': 'Application File Locator (AFL)',
   '95': 'Terminal Verification Results',
+  '97': 'Transaction Certificate Data Object List (TDOL)',
   '9A': 'Transaction Date',
   '9C': 'Transaction Type',
   '9F02': 'Amount, Authorised',
+  '9F03': 'Amount, Other',
   '9F06': 'Application Identifier (terminal)',
   '9F07': 'Application Usage Control',
   '9F08': 'Application Version Number',
@@ -65,10 +67,14 @@ const Map<String, String> emvTagNames = {
   '9F20': 'Track 2 Discretionary Data',
   '9F26': 'Application Cryptogram',
   '9F27': 'Cryptogram Information Data',
+  '9F33': 'Terminal Capabilities',
+  '9F34': 'Cardholder Verification Method Results',
   '9F32': 'Issuer Public Key Exponent',
   '9F36': 'Application Transaction Counter (ATC)',
   '9F37': 'Unpredictable Number',
   '9F38': 'PDOL',
+  '9F40': 'Additional Terminal Capabilities',
+  '9F41': 'Transaction Sequence Counter',
   '9F42': 'Application Currency Code',
   '9F44': 'Application Currency Exponent',
   '9F45': 'Data Authentication Code',
@@ -78,7 +84,9 @@ const Map<String, String> emvTagNames = {
   '9F4A': 'Static Data Authentication Tag List',
   '9F4C': 'ICC Dynamic Number',
   '9F4D': 'Log Entry',
+  '9F53': 'Transaction Category Code',
   '9F5A': 'Application Program ID',
+  '9F5D': 'Available Offline Spending Amount',
   '9F66': 'Terminal Transaction Qualifiers (TTQ)',
   '9F6B': 'Track 2 Data (MSD)',
   '9F6C': 'Card Transaction Qualifiers (CTQ)',
@@ -142,6 +150,231 @@ class EmvScan {
   EmvScan(this.uid, this.atqa, this.sak, this.ats, this.apdus);
 }
 
+class EmvApduTrace {
+  final int index;
+  final Uint8List command;
+  final Uint8List response;
+  final String name;
+  final List<String> commandDetails;
+  final int? statusWord;
+  final String statusText;
+  final Uint8List responseBody;
+  final List<EmvTlv> responseTlvs;
+
+  EmvApduTrace({
+    required this.index,
+    required this.command,
+    required this.response,
+    required this.name,
+    required this.commandDetails,
+    required this.statusWord,
+    required this.statusText,
+    required this.responseBody,
+    required this.responseTlvs,
+  });
+}
+
+class EmvOdaAssessment {
+  const EmvOdaAssessment({
+    required this.advertisedMethods,
+    required this.presentTags,
+    required this.missingTags,
+    required this.caPublicKeyIndex,
+    required this.cryptographicallyVerified,
+    required this.status,
+  });
+
+  final List<String> advertisedMethods;
+  final List<String> presentTags;
+  final List<String> missingTags;
+  final int? caPublicKeyIndex;
+  final bool cryptographicallyVerified;
+  final String status;
+
+  Map<String, Object?> toJson() => {
+        'advertisedMethods': advertisedMethods,
+        'presentTags': presentTags,
+        'missingTags': missingTags,
+        'caPublicKeyIndex': caPublicKeyIndex,
+        'cryptographicallyVerified': cryptographicallyVerified,
+        'status': status,
+      };
+}
+
+EmvOdaAssessment emvAssessOda(Map<String, Uint8List> leaf) {
+  final aip = leaf['82'];
+  final methods = <String>[];
+  if (aip != null && aip.isNotEmpty) {
+    if ((aip[0] & 0x40) != 0) methods.add('SDA');
+    if ((aip[0] & 0x20) != 0) methods.add('DDA');
+    if ((aip[0] & 0x01) != 0) methods.add('CDA');
+  }
+  final required = <String>{};
+  if (methods.isNotEmpty) required.addAll(['8F', '90', '9F32']);
+  if (methods.contains('SDA')) required.add('93');
+  if (methods.contains('DDA') || methods.contains('CDA')) {
+    required.addAll(['9F46', '9F47']);
+  }
+  final present = required.where(leaf.containsKey).toList()..sort();
+  final missing = required.where((tag) => !leaf.containsKey(tag)).toList()
+    ..sort();
+  final capk = leaf['8F'];
+  final capkIndex = capk == null || capk.isEmpty ? null : capk.first;
+  final status = methods.isEmpty
+      ? 'ODA not advertised by AIP'
+      : missing.isNotEmpty
+          ? 'ODA evidence incomplete; missing ${missing.join(', ')}'
+          : 'ODA evidence present; cryptographic verification requires the matching trusted CAPK and signed-data reconstruction';
+  return EmvOdaAssessment(
+    advertisedMethods: List.unmodifiable(methods),
+    presentTags: List.unmodifiable(present),
+    missingTags: List.unmodifiable(missing),
+    caPublicKeyIndex: capkIndex,
+    cryptographicallyVerified: false,
+    status: status,
+  );
+}
+
+String _hex(Uint8List b) => bytesToHex(b).toUpperCase();
+
+String _asciiPrintable(Uint8List b) {
+  if (b.isEmpty || !b.every((c) => c >= 0x20 && c < 0x7F)) return '';
+  return String.fromCharCodes(b);
+}
+
+String emvStatusText(int? sw) {
+  if (sw == null) return 'No status word';
+  switch (sw) {
+    case 0x9000:
+      return 'Success';
+    case 0x6283:
+      return 'Selected file invalidated';
+    case 0x6300:
+      return 'Authentication failed / warning';
+    case 0x6700:
+      return 'Wrong length';
+    case 0x6982:
+      return 'Security status not satisfied';
+    case 0x6985:
+      return 'Conditions of use not satisfied';
+    case 0x6986:
+      return 'Command not allowed (no current EF)';
+    case 0x6A80:
+      return 'Incorrect data';
+    case 0x6A81:
+      return 'Function not supported';
+    case 0x6A82:
+      return 'File or application not found';
+    case 0x6A83:
+      return 'Record not found';
+    case 0x6A86:
+      return 'Incorrect P1/P2';
+    case 0x6D00:
+      return 'Instruction not supported';
+    case 0x6E00:
+      return 'Class not supported';
+    default:
+      if ((sw & 0xFF00) == 0x6100) return 'More response bytes available';
+      if ((sw & 0xFF00) == 0x6C00) return 'Wrong Le; exact length in SW2';
+      return 'Status 0x${sw.toRadixString(16).padLeft(4, '0').toUpperCase()}';
+  }
+}
+
+String emvDescribeCommand(Uint8List cmd) {
+  if (cmd.length < 4) return 'APDU';
+  final cla = cmd[0];
+  final ins = cmd[1];
+  final p1 = cmd[2];
+  final data = _apduData(cmd);
+  if (cla == 0x00 && ins == 0xA4 && p1 == 0x04) {
+    final hex = _hex(data);
+    if (hex == '325041592E5359532E4444463031') return 'SELECT PPSE';
+    if (hex == '315041592E5359532E4444463031') return 'SELECT PSE';
+    return 'SELECT AID';
+  }
+  if (cla == 0x80 && ins == 0xA8) return 'GET PROCESSING OPTIONS';
+  if (cla == 0x00 && ins == 0xB2) return 'READ RECORD';
+  if (cla == 0x80 && ins == 0xAE) return 'GENERATE AC';
+  if (cla == 0x00 && ins == 0xCA) return 'GET DATA';
+  return 'CLA ${cla.toRadixString(16).padLeft(2, '0').toUpperCase()} INS ${ins.toRadixString(16).padLeft(2, '0').toUpperCase()}';
+}
+
+List<String> emvCommandDetails(Uint8List cmd) {
+  final details = <String>[];
+  if (cmd.length < 4) return details;
+  final cla = cmd[0];
+  final ins = cmd[1];
+  final p1 = cmd[2];
+  final p2 = cmd[3];
+  final data = _apduData(cmd);
+  if (cla == 0x00 && ins == 0xA4 && p1 == 0x04) {
+    final ascii = _asciiPrintable(data);
+    details
+        .add("Name/AID: ${_hex(data)}${ascii.isNotEmpty ? '  "$ascii"' : ''}");
+  } else if (cla == 0x80 && ins == 0xA8) {
+    details.add('Command template: ${_hex(data)}');
+    final pdol = _unwrap83(data);
+    if (pdol != null) {
+      details.add('PDOL data length: ${pdol.length}');
+      if (pdol.length >= 4) {
+        details.add(
+            'First 4 PDOL bytes (often TTQ): ${_hex(Uint8List.fromList(pdol.sublist(0, 4)))}');
+      }
+    }
+  } else if (cla == 0x00 && ins == 0xB2) {
+    details.add('SFI: ${(p2 >> 3) & 0x1F}');
+    details.add('Record: $p1');
+  } else if (cla == 0x80 && ins == 0xAE) {
+    final cryptogramType = switch (p1 & 0xC0) {
+      0x00 => 'AAC requested',
+      0x40 => 'TC requested',
+      0x80 => 'ARQC requested',
+      _ => 'RFU cryptogram request',
+    };
+    details.add(cryptogramType);
+    details.add('CDOL1 data length: ${data.length}');
+  }
+  return details;
+}
+
+Uint8List _apduData(Uint8List cmd) {
+  if (cmd.length <= 5) return Uint8List(0);
+  final lc = cmd[4];
+  final end = 5 + lc <= cmd.length ? 5 + lc : cmd.length;
+  return Uint8List.fromList(cmd.sublist(5, end));
+}
+
+Uint8List? _unwrap83(Uint8List data) {
+  if (data.length >= 2 && data[0] == 0x83 && data[1] <= data.length - 2) {
+    return Uint8List.fromList(data.sublist(2, 2 + data[1]));
+  }
+  return null;
+}
+
+List<EmvApduTrace> emvBuildTrace(List<(Uint8List, Uint8List)> apdus) {
+  final out = <EmvApduTrace>[];
+  for (var i = 0; i < apdus.length; i++) {
+    final (cmd, resp) = apdus[i];
+    final sw =
+        resp.length >= 2 ? (resp[resp.length - 2] << 8) | resp.last : null;
+    final body = resp.length >= 2
+        ? Uint8List.fromList(resp.sublist(0, resp.length - 2))
+        : Uint8List.fromList(resp);
+    out.add(EmvApduTrace(
+      index: i + 1,
+      command: cmd,
+      response: resp,
+      name: emvDescribeCommand(cmd),
+      commandDetails: emvCommandDetails(cmd),
+      statusWord: sw,
+      statusText: emvStatusText(sw),
+      responseBody: body,
+      responseTlvs: parseEmvTlv(body),
+    ));
+  }
+  return out;
+}
+
 // Parse the packed scan buffer with full bounds checking. Layout:
 // uid_len,uid,atqa[2],sak,ats_len,ats,num,{cmd_len,cmd,resp_len_LE[2],resp}*
 // Throws FormatException on a truncated/garbled buffer instead of RangeError.
@@ -188,14 +421,83 @@ EmvScan parseEmvScanBuffer(Uint8List d) {
   return EmvScan(uid, atqa, sak, ats, apdus);
 }
 
+String emvProtocolSummary(
+    Uint8List uid, Uint8List atqa, int sak, Uint8List ats) {
+  final parts = <String>[];
+  parts.add((sak & 0x20) != 0 ? 'ISO 14443-4A / ISO-DEP' : 'ISO 14443-A');
+  parts.add('${uid.length * 8}-bit UID');
+  if (ats.length >= 2) {
+    final t0 = ats[1];
+    final fsci = t0 & 0x0F;
+    const fsd = [16, 24, 32, 40, 48, 64, 96, 128, 256];
+    final fsdText = fsci < fsd.length ? ', FSD=${fsd[fsci]}' : '';
+    final atsFeatures = <String>[];
+    if ((t0 & 0x10) != 0) atsFeatures.add('TA');
+    if ((t0 & 0x20) != 0) atsFeatures.add('TB');
+    if ((t0 & 0x40) != 0) atsFeatures.add('TC');
+    parts.add('ATS FSCI=$fsci$fsdText');
+    if (atsFeatures.isNotEmpty) parts.add('ATS ${atsFeatures.join('/')}');
+  } else if (ats.isNotEmpty) {
+    parts.add('ATS present');
+  }
+  if (atqa.isNotEmpty) {
+    parts.add('ATQA ${bytesToHexSpace(atqa).toUpperCase()}');
+  }
+  return parts.join(' | ');
+}
+
 // Build the primitive-tag -> value map once (last occurrence wins). Callers
 // that need fields + cryptogram + AIP share this instead of rescanning 3x.
 Map<String, Uint8List> emvLeafMap(List<EmvTlv> tlvs) {
   final leaf = <String, Uint8List>{};
   for (final t in tlvs) {
-    if (!t.constructed) leaf[t.tag] = t.value;
+    if (!t.constructed) {
+      leaf[t.tag] = t.value;
+      if (t.tag == '80' && t.value.length >= 2) {
+        _addGpoFormat1Leaves(leaf, t.value);
+      }
+    }
   }
   return leaf;
+}
+
+Map<String, Uint8List> emvLeafMapFromTrace(List<EmvApduTrace> traces) {
+  final leaf = <String, Uint8List>{};
+  for (final trace in traces) {
+    for (final t in trace.responseTlvs) {
+      if (t.constructed) continue;
+      leaf[t.tag] = t.value;
+      if (t.tag != '80') continue;
+      final ins = trace.command.length >= 2 ? trace.command[1] : -1;
+      if (ins == 0xA8) {
+        _addGpoFormat1Leaves(leaf, t.value);
+      } else if (ins == 0xAE) {
+        _addGenerateAcFormat1Leaves(leaf, t.value);
+      }
+    }
+  }
+  return leaf;
+}
+
+void _addGpoFormat1Leaves(Map<String, Uint8List> leaf, Uint8List value) {
+  if (value.length < 2) return;
+  // GPO response format 1: tag 80 value is AIP(2) || AFL(n), without nested
+  // 82/94 TLVs. Expose synthetic leaves so callers decode both formats.
+  leaf.putIfAbsent('82', () => Uint8List.fromList(value.sublist(0, 2)));
+  if (value.length > 2) {
+    leaf.putIfAbsent('94', () => Uint8List.fromList(value.sublist(2)));
+  }
+}
+
+void _addGenerateAcFormat1Leaves(Map<String, Uint8List> leaf, Uint8List value) {
+  if (value.length < 11) return;
+  // GENERATE AC response format 1: CID(1) || ATC(2) || AC(8) || IAD(optional).
+  leaf.putIfAbsent('9F27', () => Uint8List.fromList(value.sublist(0, 1)));
+  leaf.putIfAbsent('9F36', () => Uint8List.fromList(value.sublist(1, 3)));
+  leaf.putIfAbsent('9F26', () => Uint8List.fromList(value.sublist(3, 11)));
+  if (value.length > 11) {
+    leaf.putIfAbsent('9F10', () => Uint8List.fromList(value.sublist(11)));
+  }
 }
 
 int _bytesToInt(Uint8List b) {
@@ -213,18 +515,54 @@ String _bcd(Uint8List b) => bytesToHex(b);
 
 // ISO 4217 numeric -> alpha (common)
 const Map<String, String> _currencies = {
-  '0840': 'USD', '0978': 'EUR', '0826': 'GBP', '0392': 'JPY', '0756': 'CHF',
-  '0124': 'CAD', '0036': 'AUD', '0156': 'CNY', '0356': 'INR', '0643': 'RUB',
-  '0752': 'SEK', '0578': 'NOK', '0208': 'DKK', '0985': 'PLN', '0986': 'BRL',
-  '0484': 'MXN', '0710': 'ZAR', '0344': 'HKD', '0702': 'SGD', '0410': 'KRW',
+  '0840': 'USD',
+  '0978': 'EUR',
+  '0826': 'GBP',
+  '0392': 'JPY',
+  '0756': 'CHF',
+  '0124': 'CAD',
+  '0036': 'AUD',
+  '0156': 'CNY',
+  '0356': 'INR',
+  '0643': 'RUB',
+  '0752': 'SEK',
+  '0578': 'NOK',
+  '0208': 'DKK',
+  '0985': 'PLN',
+  '0986': 'BRL',
+  '0484': 'MXN',
+  '0710': 'ZAR',
+  '0344': 'HKD',
+  '0702': 'SGD',
+  '0410': 'KRW',
 };
 // ISO 3166 numeric -> alpha2 (common)
 const Map<String, String> _countries = {
-  '0840': 'US', '0826': 'GB', '0250': 'FR', '0276': 'DE', '0724': 'ES',
-  '0380': 'IT', '0528': 'NL', '0056': 'BE', '0578': 'NO', '0752': 'SE',
-  '0208': 'DK', '0246': 'FI', '0372': 'IE', '0620': 'PT', '0756': 'CH',
-  '0040': 'AT', '0616': 'PL', '0124': 'CA', '0484': 'MX', '0076': 'BR',
-  '0392': 'JP', '0156': 'CN', '0356': 'IN', '0643': 'RU', '0036': 'AU',
+  '0840': 'US',
+  '0826': 'GB',
+  '0250': 'FR',
+  '0276': 'DE',
+  '0724': 'ES',
+  '0380': 'IT',
+  '0528': 'NL',
+  '0056': 'BE',
+  '0578': 'NO',
+  '0752': 'SE',
+  '0208': 'DK',
+  '0246': 'FI',
+  '0372': 'IE',
+  '0620': 'PT',
+  '0756': 'CH',
+  '0040': 'AT',
+  '0616': 'PL',
+  '0124': 'CA',
+  '0484': 'MX',
+  '0076': 'BR',
+  '0392': 'JP',
+  '0156': 'CN',
+  '0356': 'IN',
+  '0643': 'RU',
+  '0036': 'AU',
 };
 
 String _fmtExpiry(String yymmdd) {
@@ -329,9 +667,26 @@ Map<String, String> emvExtractFields(Map<String, Uint8List> leaf) {
     final c = _bcd(leaf['5F28']!).padLeft(4, '0');
     f['Issuer country'] = _countries[c] ?? c;
   }
-  if (leaf.containsKey('5F2D')) f['Language'] = _ascii(leaf['5F2D']!);
+  if (leaf.containsKey('5F2D')) {
+    f['Language'] = _ascii(leaf['5F2D']!);
+  }
   if (leaf.containsKey('9F08')) {
     f['App version'] = bytesToHex(leaf['9F08']!).toUpperCase();
+  }
+  if (leaf.containsKey('9F07')) {
+    f['Application usage'] = bytesToHex(leaf['9F07']!).toUpperCase();
+  }
+  if (leaf.containsKey('8E')) {
+    f['CVM list'] = bytesToHex(leaf['8E']!).toUpperCase();
+  }
+  if (leaf.containsKey('9F0D')) {
+    f['IAC default'] = bytesToHex(leaf['9F0D']!).toUpperCase();
+  }
+  if (leaf.containsKey('9F0E')) {
+    f['IAC denial'] = bytesToHex(leaf['9F0E']!).toUpperCase();
+  }
+  if (leaf.containsKey('9F0F')) {
+    f['IAC online'] = bytesToHex(leaf['9F0F']!).toUpperCase();
   }
   if (leaf.containsKey('9F36') && leaf['9F36']!.isNotEmpty) {
     f['ATC'] = _bytesToInt(leaf['9F36']!).toString();
@@ -339,7 +694,24 @@ Map<String, String> emvExtractFields(Map<String, Uint8List> leaf) {
   if (leaf.containsKey('9F17') && leaf['9F17']!.isNotEmpty) {
     f['PIN try counter'] = leaf['9F17']![0].toString();
   }
-  if (leaf.containsKey('5F50')) f['Issuer URL'] = _ascii(leaf['5F50']!);
+  if (leaf.containsKey('9F4D')) {
+    f['Log entry'] = bytesToHex(leaf['9F4D']!).toUpperCase();
+  }
+  if (leaf.containsKey('9F10')) {
+    f['Issuer app data'] = bytesToHex(leaf['9F10']!).toUpperCase();
+  }
+  if (leaf.containsKey('9F6C')) {
+    f['CTQ'] = bytesToHex(leaf['9F6C']!).toUpperCase();
+  }
+  if (leaf.containsKey('9F6E')) {
+    f['Form factor'] = bytesToHex(leaf['9F6E']!).toUpperCase();
+  }
+  if (leaf.containsKey('9F26')) {
+    f['Cryptogram'] = bytesToHex(leaf['9F26']!).toUpperCase();
+  }
+  if (leaf.containsKey('5F50')) {
+    f['Issuer URL'] = _ascii(leaf['5F50']!);
+  }
   return f;
 }
 
@@ -355,6 +727,20 @@ class EmvAip {
   final bool cda; // Combined DDA / Application Cryptogram generation
   final String raw; // AIP hex
   EmvAip(this.features, this.rrp, this.dda, this.cda, this.raw);
+}
+
+enum EmvRrpAssessment {
+  advertised,
+  notAdvertised,
+  notApplicable,
+  unknownScheme,
+}
+
+EmvRrpAssessment emvAssessRrp(EmvAip aip, String? aid) {
+  if (aid == null || aid.isEmpty) return EmvRrpAssessment.unknownScheme;
+  final mastercard = aid.toUpperCase().startsWith('A000000004');
+  if (!mastercard) return EmvRrpAssessment.notApplicable;
+  return aip.rrp ? EmvRrpAssessment.advertised : EmvRrpAssessment.notAdvertised;
 }
 
 // Decode the AIP (tag 82) from the parsed TLVs. Bit assignments per EMV Book 3
@@ -375,7 +761,6 @@ EmvAip? emvDecodeAip(Map<String, Uint8List> leaf) {
   if (b1 & 0x01 != 0) f.add('CDA (combined DDA/AC generation)');
   if (b2 & 0x80 != 0) f.add('EMV mode supported');
   final rrp = (b2 & 0x01) != 0;
-  if (rrp) f.add('Relay Resistance Protocol (RRP) supported');
   return EmvAip(
       f, rrp, b1 & 0x20 != 0, b1 & 0x01 != 0, bytesToHex(aip).toUpperCase());
 }

@@ -4,6 +4,7 @@ import 'package:chameleonultragui/bridge/chameleon.dart';
 import 'package:chameleonultragui/connector/serial_abstract.dart';
 import 'package:chameleonultragui/generated/i18n/app_localizations.dart';
 import 'package:chameleonultragui/gui/menu/hacking/ble_app.dart';
+import 'package:chameleonultragui/gui/menu/hacking/ble_advertising_lab.dart';
 import 'package:chameleonultragui/gui/menu/hacking/ble_audit.dart';
 import 'package:chameleonultragui/gui/menu/hacking/ble_capability_gate.dart';
 import 'package:chameleonultragui/gui/menu/hacking/ble_radio_identity.dart';
@@ -62,6 +63,7 @@ void main() {
         child: const BleAppPage(
           auditTab: SizedBox.expand(),
           radioIdentityTab: SizedBox.expand(),
+          advertisingLabTab: SizedBox.expand(),
           stressBroadcastTab: SizedBox.expand(),
         ),
       ),
@@ -124,6 +126,7 @@ void main() {
   for (final page in <String, Widget>{
     'audit': const BleAuditPage(embedded: true),
     'radio': const BleRadioIdentityPage(embedded: true),
+    'advertising lab': const BleAdvertisingLabPage(embedded: true),
     'stress': const BleStressPage(embedded: true),
   }.entries) {
     testWidgets('connected BLE ${page.key} page has no narrow overflow',
@@ -145,6 +148,28 @@ void main() {
       expect(tester.takeException(), isNull);
     });
   }
+
+  testWidgets('BLE pairing-sheet editor has no narrow overflow',
+      (tester) async {
+    final appState = ChameleonGUIState(SharedPreferencesProvider())
+      ..connector = (_ConnectedSerial()..connected = true)
+      ..communicator = _CapabilityCommunicator(unsupported: const {});
+    addTearDown(appState.dispose);
+
+    await pumpAtNarrowLargeText(
+      tester,
+      ChangeNotifierProvider<ChameleonGUIState>.value(
+        value: appState,
+        child: const Scaffold(body: BleAdvertisingLabPage(embedded: true)),
+      ),
+    );
+    await tester.ensureVisible(find.text('Pairing sheets'));
+    await tester.tap(find.text('Pairing sheets'));
+    await tester.pump();
+
+    expect(find.text('Apple proximity pairing'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
 
   testWidgets('BLE responsive fields and key values stack without overflow',
       (tester) async {

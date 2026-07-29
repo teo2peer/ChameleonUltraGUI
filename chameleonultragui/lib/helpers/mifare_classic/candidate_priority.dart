@@ -2,10 +2,9 @@ import 'dart:typed_data';
 
 import 'package:chameleonultragui/helpers/general.dart';
 
-// Pure, dependency-free candidate-ordering helpers used by the MIFARE Classic
-// key-recovery engine. Kept separate from recovery.dart so they can be unit
-// tested without a live device / app state. All are ORDER-ONLY: they never add,
-// drop or mutate keys — the caller always confirms candidates on-card.
+// Pure, dependency-free candidate selection and ordering helpers used by the
+// MIFARE Classic key-recovery engine. Kept separate from recovery.dart so they
+// can be unit tested without a live device or app state.
 
 /// Reorder [keys] so the ones whose hex is in [likely] come first (stable),
 /// leaving everything else in original order. `checkKeysOnSector` breaks on the
@@ -26,15 +25,31 @@ List<Uint8List> prioritiseCandidates(List<Uint8List> keys, Set<String> likely,
   return pri.isEmpty ? keys : [...pri, ...rest];
 }
 
-/// Intersect [current] with [next]. If [current] is null this is the first set,
-/// so [next] is returned as-is. If the intersection is empty (e.g. a bad nonce
-/// pair), the newer set [next] is kept instead — so narrowing can never wipe out
-/// every candidate and leave nothing to test. The real key is present in every
-/// valid set, so repeated intersection only removes false candidates.
-Set<int> narrowCandidates(Set<int>? current, Set<int> next) {
-  if (current == null) return next;
-  final inter = current.intersection(next);
-  return inter.isEmpty ? next : inter;
+/// Return only the candidates with the strongest support across independent
+/// nonce captures. A single capture is not consensus and therefore produces no
+/// candidates for on-card verification.
+({List<int> candidates, int support}) rankCandidateConsensus(
+    Iterable<Set<int>> samples) {
+  final supportByKey = <int, int>{};
+  for (final sample in samples) {
+    for (final key in sample) {
+      supportByKey[key] = (supportByKey[key] ?? 0) + 1;
+    }
+  }
+
+  var strongestSupport = 0;
+  for (final support in supportByKey.values) {
+    if (support > strongestSupport) strongestSupport = support;
+  }
+  if (strongestSupport < 2) {
+    return (candidates: const <int>[], support: strongestSupport);
+  }
+
+  final candidates = <int>[
+    for (final entry in supportByKey.entries)
+      if (entry.value == strongestSupport) entry.key,
+  ]..sort();
+  return (candidates: candidates, support: strongestSupport);
 }
 
 /// Reorder [list] putting cross-sector duplicates (a hex appearing in [counts]

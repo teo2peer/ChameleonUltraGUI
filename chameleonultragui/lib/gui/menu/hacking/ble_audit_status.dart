@@ -20,6 +20,8 @@ class BleAuditStatus extends StatelessWidget {
       localizations.ble_status_connecting,
       localizations.ble_status_connected,
       localizations.ble_status_disconnected,
+      localizations.ble_status_cancelling,
+      localizations.ble_status_disconnecting,
     ];
     final discoveryStates = [
       localizations.ble_status_idle,
@@ -35,6 +37,12 @@ class BleAuditStatus extends StatelessWidget {
     final probeStates = [
       localizations.ble_status_idle,
       localizations.ble_status_probing,
+      localizations.ble_status_done,
+      localizations.ble_status_error,
+    ];
+    final operationStates = [
+      localizations.ble_status_idle,
+      localizations.ble_status_running,
       localizations.ble_status_done,
       localizations.ble_status_error,
     ];
@@ -62,6 +70,21 @@ class BleAuditStatus extends StatelessWidget {
             state.fuzzSent,
             statusAt(fuzzStates, state.fuzzState),
           )),
+          if (state.hasOperationState) ...[
+            Text(localizations.ble_status_flood(
+              state.floodSent,
+              statusAt(fuzzStates, state.floodState),
+            )),
+            Text(localizations.ble_status_read(
+              statusAt(operationStates, state.readState),
+            )),
+            Text(localizations.ble_status_write(
+              statusAt(operationStates, state.writeState),
+            )),
+            Text(localizations.ble_status_notifications(
+              state.notificationCount,
+            )),
+          ],
           Text(localizations.ble_status_target_up(
             state.targetAlive ? localizations.yes : localizations.no,
           )),

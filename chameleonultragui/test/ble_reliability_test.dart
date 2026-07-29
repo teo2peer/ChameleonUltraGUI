@@ -6,6 +6,8 @@ import 'package:chameleonultragui/connector/serial_ble.dart';
 import 'package:chameleonultragui/helpers/ble/ble_address.dart';
 import 'package:chameleonultragui/helpers/ble/ble_presentation.dart';
 import 'package:chameleonultragui/helpers/definitions.dart';
+import 'package:flutter_reactive_ble/flutter_reactive_ble.dart'
+    show ConnectionPriority;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:logger/logger.dart';
 
@@ -108,6 +110,71 @@ void main() {
       expect(state.notificationCount, 5);
       expect(state.hasOperationState, isTrue);
     });
+
+    test('rejects invalid public API arguments instead of truncating them',
+        () async {
+      final communicator = _FakeCommunicator(ChameleonMessage(
+          command: 0, status: chameleonStatusSuccess, data: Uint8List(0)));
+
+      await expectLater(communicator.bleConnect(Uint8List(6), addrType: 4),
+          throwsArgumentError);
+      await expectLater(communicator.blePassiveScanResults(startIndex: 256),
+          throwsArgumentError);
+      await expectLater(communicator.bleGattRead(0), throwsArgumentError);
+      await expectLater(
+          communicator.bleGattWrite(1, Uint8List(0)), throwsArgumentError);
+      await expectLater(communicator.bleSubscribe(1, 3), throwsArgumentError);
+      await expectLater(
+          communicator.bleFuzzStart(1, intervalMs: 9), throwsArgumentError);
+    });
+
+    test('does not guess a CCCD when discovery reports not found', () async {
+      final communicator = _QueuedCommunicator([
+        ChameleonMessage(
+            command: ChameleonCommand.bleFindCccd.value,
+            status: chameleonStatusSuccess,
+            data: Uint8List(0)),
+        ChameleonMessage(
+            command: ChameleonCommand.bleGetCccd.value,
+            status: chameleonStatusSuccess,
+            data: Uint8List.fromList([3, 0, 0])),
+      ]);
+
+      await expectLater(communicator.bleFindCccd(0x002a), throwsStateError);
+      expect(communicator.commands,
+          [ChameleonCommand.bleFindCccd, ChameleonCommand.bleGetCccd]);
+    });
+  });
+
+  group('firmware command contracts', () {
+    test('LF setters validate length and propagate firmware rejection',
+        () async {
+      final communicator = _FakeCommunicator(ChameleonMessage(
+          command: ChameleonCommand.setPacEmulatorID.value,
+          status: 0x72,
+          data: Uint8List(0)));
+
+      await expectLater(
+          communicator.setPacEmulatorID(Uint8List(7)), throwsArgumentError);
+      await expectLater(
+          communicator.setPacEmulatorID(Uint8List(8)),
+          throwsA(isA<ChameleonCommandException>()
+              .having((error) => error.status, 'status', 0x72)));
+    });
+
+    test('decodes the four ISO-DEP debug counters exactly', () async {
+      expect(ChameleonCommand.hf14a4DebugCounters.value, 6010);
+      final communicator = _FakeCommunicator(ChameleonMessage(
+          command: ChameleonCommand.hf14a4DebugCounters.value,
+          status: chameleonStatusSuccess,
+          data: Uint8List.fromList([7, 8, 0xA2, 3])));
+
+      final counters = await communicator.hf14a4DebugCounters();
+      expect(counters.receivedIBlocks, 7);
+      expect(counters.transmittedIBlocks, 8);
+      expect(counters.lastReceivedPcb, 0xA2);
+      expect(counters.lastStaticResponseMatch, 3);
+    });
   });
 
   test('BLE disconnect cancels the active UART receive subscription', () async {
@@ -120,6 +187,32 @@ void main() {
 
     expect(controller.hasListener, isFalse);
     await controller.close();
+  });
+
+  test('BLE relay transport requests low latency and MTU 247', () async {
+    String? priorityDeviceId;
+    ConnectionPriority? priority;
+    String? mtuDeviceId;
+    int? requestedMtu;
+    final serial = BLESerial(
+      log: Logger(level: Level.off),
+      connectionPriorityRequester: (deviceId, requestedPriority) async {
+        priorityDeviceId = deviceId;
+        priority = requestedPriority;
+      },
+      mtuRequester: (deviceId, mtu) async {
+        mtuDeviceId = deviceId;
+        requestedMtu = mtu;
+        return mtu;
+      },
+    );
+
+    await serial.optimizeConnection('backend', isAndroid: true);
+
+    expect(priorityDeviceId, 'backend');
+    expect(priority, ConnectionPriority.highPerformance);
+    expect(mtuDeviceId, 'backend');
+    expect(requestedMtu, 247);
   });
 }
 
@@ -135,5 +228,22 @@ class _FakeCommunicator extends ChameleonCommunicator {
       bool skipReceive = false,
       bool firstRun = false}) async {
     return response;
+  }
+}
+
+class _QueuedCommunicator extends ChameleonCommunicator {
+  final List<ChameleonMessage> responses;
+  final List<ChameleonCommand> commands = [];
+
+  _QueuedCommunicator(this.responses) : super(Logger());
+
+  @override
+  Future<ChameleonMessage?> sendCmd(ChameleonCommand cmd,
+      {Uint8List? data,
+      Duration timeout = const Duration(seconds: 5),
+      bool skipReceive = false,
+      bool firstRun = false}) async {
+    commands.add(cmd);
+    return responses.removeAt(0);
   }
 }

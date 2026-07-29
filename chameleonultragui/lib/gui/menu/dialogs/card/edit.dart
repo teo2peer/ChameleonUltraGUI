@@ -56,10 +56,12 @@ class CardEditMenuState extends State<CardEditMenu> {
     sakController.text = bytesToHexSpace(u8ToBytes(widget.tagSave.sak));
     atqaController.text = bytesToHexSpace(widget.tagSave.atqa);
     atsController.text = bytesToHexSpace(widget.tagSave.ats);
-    ultralightVersionController.text =
-        bytesToHexSpace(widget.tagSave.extraData.ultralightVersion);
-    ultralightSignatureController.text =
-        bytesToHexSpace(widget.tagSave.extraData.ultralightSignature);
+    ultralightVersionController.text = bytesToHexSpace(
+      widget.tagSave.extraData.ultralightVersion,
+    );
+    ultralightSignatureController.text = bytesToHexSpace(
+      widget.tagSave.extraData.ultralightSignature,
+    );
 
     initCounterControllers();
 
@@ -122,10 +124,15 @@ class CardEditMenuState extends State<CardEditMenu> {
 
     if (isMifareClassic(selectedType)) {
       updatedData[0] = mfClassicGenerateFirstBlock(
-          hexToBytes(uid), hexToBytes(sak)[0], hexToBytes(atqa));
+        hexToBytes(uid),
+        hexToBytes(sak)[0],
+        hexToBytes(atqa),
+      );
     } else if (isMifareUltralight(selectedType)) {
-      final newBlocks =
-          mfUltralightGenerateFirstBlocks(hexToBytes(uid), selectedType);
+      final newBlocks = mfUltralightGenerateFirstBlocks(
+        hexToBytes(uid),
+        selectedType,
+      );
 
       for (int i = 0; i < newBlocks.length && i < updatedData.length; i++) {
         updatedData[i] = newBlocks[i];
@@ -150,8 +157,8 @@ class CardEditMenuState extends State<CardEditMenu> {
     for (int i = 0; i < counterCount; i++) {
       TextEditingController controller = TextEditingController();
       if (i < widget.tagSave.extraData.ultralightCounters.length) {
-        controller.text =
-            widget.tagSave.extraData.ultralightCounters[i].toString();
+        controller.text = widget.tagSave.extraData.ultralightCounters[i]
+            .toString();
       } else {
         controller.text = '0';
       }
@@ -185,74 +192,77 @@ class CardEditMenuState extends State<CardEditMenu> {
                 controller: nameController,
                 validator: (value) => validateName(value, localizations),
                 decoration: InputDecoration(
-                    labelText: localizations.name,
-                    hintText: localizations.enter_name_of_card,
-                    prefix: Transform(
-                        transform: Matrix4.translationValues(0, 7, 0),
-                        child: IconButton(
-                          icon: Icon(
-                              (chameleonTagToFrequency(widget.tagSave.tag) ==
-                                      TagFrequency.hf)
-                                  ? Icons.credit_card
-                                  : Icons.wifi,
-                              color: currentColor),
-                          onPressed: () async {
-                            showDialog(
-                              context: context,
-                              builder: (BuildContext context) {
-                                return AlertDialog(
-                                  title: Text(localizations.pick_color),
-                                  content: SingleChildScrollView(
-                                    child: ColorPicker(
-                                      pickerColor: pickerColor,
-                                      onColorChanged: (Color color) {
-                                        setState(() {
-                                          pickerColor = color;
-                                        });
-                                      },
-                                      pickerAreaHeightPercent: 0.8,
-                                    ),
-                                  ),
-                                  actions: <Widget>[
-                                    TextButton(
-                                      onPressed: () {
-                                        setState(() => currentColor =
-                                            pickerColor = Colors.deepOrange);
-                                        Navigator.pop(context);
-                                      },
-                                      child: Text(localizations.reset_default),
-                                    ),
-                                    TextButton(
-                                      onPressed: () {
-                                        Navigator.pop(context);
-                                      },
-                                      child: Text(localizations.cancel),
-                                    ),
-                                    TextButton(
-                                      child: Text(localizations.ok),
-                                      onPressed: () {
-                                        setState(
-                                            () => currentColor = pickerColor);
-                                        Navigator.pop(context);
-                                      },
-                                    ),
-                                  ],
-                                );
-                              },
+                  labelText: localizations.name,
+                  hintText: localizations.enter_name_of_card,
+                  prefix: Transform(
+                    transform: Matrix4.translationValues(0, 7, 0),
+                    child: IconButton(
+                      icon: Icon(
+                        (chameleonTagToFrequency(widget.tagSave.tag) ==
+                                TagFrequency.hf)
+                            ? Icons.credit_card
+                            : Icons.wifi,
+                        color: currentColor,
+                      ),
+                      onPressed: () async {
+                        showDialog(
+                          context: context,
+                          builder: (BuildContext context) {
+                            return AlertDialog(
+                              title: Text(localizations.pick_color),
+                              content: SingleChildScrollView(
+                                child: ColorPicker(
+                                  pickerColor: pickerColor,
+                                  onColorChanged: (Color color) {
+                                    setState(() {
+                                      pickerColor = color;
+                                    });
+                                  },
+                                  pickerAreaHeightPercent: 0.8,
+                                ),
+                              ),
+                              actions: <Widget>[
+                                TextButton(
+                                  onPressed: () {
+                                    setState(
+                                      () => currentColor = pickerColor =
+                                          Colors.deepOrange,
+                                    );
+                                    Navigator.pop(context);
+                                  },
+                                  child: Text(localizations.reset_default),
+                                ),
+                                TextButton(
+                                  onPressed: () {
+                                    Navigator.pop(context);
+                                  },
+                                  child: Text(localizations.cancel),
+                                ),
+                                TextButton(
+                                  child: Text(localizations.ok),
+                                  onPressed: () {
+                                    setState(() => currentColor = pickerColor);
+                                    Navigator.pop(context);
+                                  },
+                                ),
+                              ],
                             );
                           },
-                        ))),
+                        );
+                      },
+                    ),
+                  ),
+                ),
               ),
               const SizedBox(height: 8),
               DropdownButton<TagType>(
                 value: selectedType,
-                items: getTagTypes()
-                    .map<DropdownMenuItem<TagType>>((TagType type) {
+                items: getTagTypes().map<DropdownMenuItem<TagType>>((
+                  TagType type,
+                ) {
                   return DropdownMenuItem<TagType>(
                     value: type,
-                    child: Text(
-                      chameleonTagToString(type, localizations),
-                    ),
+                    child: Text(chameleonTagToString(type, localizations)),
                   );
                 }).toList(),
                 onChanged: (TagType? newValue) {
@@ -267,182 +277,234 @@ class CardEditMenuState extends State<CardEditMenu> {
               ),
               Visibility(
                 visible: selectedType != TagType.unknown,
-                child: Column(children: [
-                  TextFormField(
-                    controller: uidController,
-                    decoration: InputDecoration(
+                child: Column(
+                  children: [
+                    TextFormField(
+                      controller: uidController,
+                      decoration: InputDecoration(
                         labelText: localizations.uid,
-                        hintText:
-                            localizations.enter_something(localizations.uid)),
-                    inputFormatters: hexFormatter,
-                    validator: (value) =>
-                        validateUid(value, localizations, selectedType),
-                  ),
-                  Visibility(
-                      visible: chameleonTagToFrequency(selectedType) !=
+                        hintText: localizations.enter_something(
+                          localizations.uid,
+                        ),
+                      ),
+                      inputFormatters: hexFormatter,
+                      validator: (value) =>
+                          validateUid(value, localizations, selectedType),
+                    ),
+                    Visibility(
+                      visible:
+                          chameleonTagToFrequency(selectedType) !=
                           TagFrequency.lf,
-                      child: Column(children: [
-                        const SizedBox(height: 20),
-                        TextFormField(
-                          controller: sakController,
-                          decoration: InputDecoration(
-                              labelText: localizations.sak,
-                              hintText: localizations
-                                  .enter_something(localizations.sak)),
-                          inputFormatters: hexFormatter,
-                          validator: (value) =>
-                              chameleonTagToFrequency(selectedType) ==
-                                      TagFrequency.lf
-                                  ? null
-                                  : validateHex(value, localizations,
-                                      exactBytes: 1,
-                                      fieldName: localizations.sak,
-                                      required: true),
-                        ),
-                        const SizedBox(height: 20),
-                        TextFormField(
-                          controller: atqaController,
-                          decoration: InputDecoration(
-                              labelText: localizations.atqa,
-                              hintText: localizations
-                                  .enter_something(localizations.atqa)),
-                          inputFormatters: hexFormatter,
-                          validator: (value) =>
-                              chameleonTagToFrequency(selectedType) ==
-                                      TagFrequency.lf
-                                  ? null
-                                  : validateHex(value, localizations,
-                                      exactBytes: 2,
-                                      fieldName: localizations.atqa,
-                                      required: true),
-                        ),
-                        const SizedBox(height: 20),
-                        TextFormField(
-                            controller: atsController,
+                      child: Column(
+                        children: [
+                          const SizedBox(height: 20),
+                          TextFormField(
+                            controller: sakController,
                             decoration: InputDecoration(
-                                labelText: localizations.ats,
-                                hintText: localizations
-                                    .enter_something(localizations.ats)),
+                              labelText: localizations.sak,
+                              hintText: localizations.enter_something(
+                                localizations.sak,
+                              ),
+                            ),
                             inputFormatters: hexFormatter,
                             validator: (value) =>
-                                validateHex(value, localizations)),
-                        if (isMifareUltralight(selectedType)) ...[
+                                chameleonTagToFrequency(selectedType) ==
+                                    TagFrequency.lf
+                                ? null
+                                : validateHex(
+                                    value,
+                                    localizations,
+                                    exactBytes: 1,
+                                    fieldName: localizations.sak,
+                                    required: true,
+                                  ),
+                          ),
                           const SizedBox(height: 20),
                           TextFormField(
+                            controller: atqaController,
+                            decoration: InputDecoration(
+                              labelText: localizations.atqa,
+                              hintText: localizations.enter_something(
+                                localizations.atqa,
+                              ),
+                            ),
+                            inputFormatters: hexFormatter,
+                            validator: (value) =>
+                                chameleonTagToFrequency(selectedType) ==
+                                    TagFrequency.lf
+                                ? null
+                                : validateHex(
+                                    value,
+                                    localizations,
+                                    exactBytes: 2,
+                                    fieldName: localizations.atqa,
+                                    required: true,
+                                  ),
+                          ),
+                          const SizedBox(height: 20),
+                          TextFormField(
+                            controller: atsController,
+                            decoration: InputDecoration(
+                              labelText: localizations.ats,
+                              hintText: localizations.enter_something(
+                                localizations.ats,
+                              ),
+                            ),
+                            inputFormatters: hexFormatter,
+                            validator: (value) =>
+                                validateHex(value, localizations),
+                          ),
+                          if (isMifareUltralight(selectedType)) ...[
+                            const SizedBox(height: 20),
+                            TextFormField(
                               controller: ultralightVersionController,
                               decoration: InputDecoration(
-                                  labelText: localizations.ultralight_version,
-                                  hintText: localizations.enter_something(
-                                      localizations.ultralight_version)),
+                                labelText: localizations.ultralight_version,
+                                hintText: localizations.enter_something(
+                                  localizations.ultralight_version,
+                                ),
+                              ),
                               inputFormatters: hexFormatter,
                               validator: (value) => validateHex(
-                                  value, localizations,
-                                  exactBytes: 8,
-                                  fieldName: localizations.ultralight_version)),
-                          const SizedBox(height: 20),
-                          TextFormField(
+                                value,
+                                localizations,
+                                exactBytes: 8,
+                                fieldName: localizations.ultralight_version,
+                              ),
+                            ),
+                            const SizedBox(height: 20),
+                            TextFormField(
                               controller: ultralightSignatureController,
                               decoration: InputDecoration(
-                                  labelText: localizations.ultralight_signature,
-                                  hintText: localizations.enter_something(
-                                      localizations.ultralight_signature)),
+                                labelText: localizations.ultralight_signature,
+                                hintText: localizations.enter_something(
+                                  localizations.ultralight_signature,
+                                ),
+                              ),
                               inputFormatters: hexFormatter,
                               validator: (value) =>
-                                  validateHex(value, localizations)),
-                          if (mfUltralightHasCounters(selectedType)) ...[
-                            const SizedBox(height: 20),
-                            ...ultralightCounterControllers
-                                .asMap()
-                                .entries
-                                .map((entry) {
-                              int index = entry.key;
-                              TextEditingController controller = entry.value;
-                              return Padding(
-                                padding: const EdgeInsets.only(bottom: 10),
-                                child: TextFormField(
-                                  controller: controller,
-                                  decoration: InputDecoration(
-                                      labelText: localizations
-                                          .ultralight_counter(index),
-                                      hintText: localizations
-                                          .ultralight_counter_value),
-                                  validator: (value) => validateIntRange(
-                                      value, localizations,
-                                      min: 0,
-                                      max: 16777215,
-                                      emptyMessage:
-                                          localizations.counter_value_empty),
-                                ),
-                              );
-                            }),
+                                  validateHex(value, localizations),
+                            ),
+                            if (mfUltralightHasCounters(selectedType)) ...[
+                              const SizedBox(height: 20),
+                              ...ultralightCounterControllers
+                                  .asMap()
+                                  .entries
+                                  .map((entry) {
+                                    int index = entry.key;
+                                    TextEditingController controller =
+                                        entry.value;
+                                    return Padding(
+                                      padding: const EdgeInsets.only(
+                                        bottom: 10,
+                                      ),
+                                      child: TextFormField(
+                                        controller: controller,
+                                        decoration: InputDecoration(
+                                          labelText: localizations
+                                              .ultralight_counter(index),
+                                          hintText: localizations
+                                              .ultralight_counter_value,
+                                        ),
+                                        validator: (value) => validateIntRange(
+                                          value,
+                                          localizations,
+                                          min: 0,
+                                          max: 16777215,
+                                          emptyMessage:
+                                              localizations.counter_value_empty,
+                                        ),
+                                      ),
+                                    );
+                                  }),
+                            ],
                           ],
-                        ]
-                      ])),
-                  if (selectedType == TagType.hidProx)
-                    Column(children: [
-                      const SizedBox(height: 20),
-                      DropdownButton<int>(
-                        value: int.tryParse(hidTypeController.text) ?? 1,
-                        items: List.generate(30, (index) => index + 1)
-                            .map<DropdownMenuItem<int>>((int type) {
-                          return DropdownMenuItem<int>(
-                            value: type,
-                            child: Text(getNameForHIDProxType(type)),
-                          );
-                        }).toList(),
-                        onChanged: (int? newValue) {
-                          if (newValue != null) {
-                            setState(() {
-                              hidTypeController.text = newValue.toString();
-                            });
-                          }
-                        },
-                        isExpanded: true,
-                      ),
-                      const SizedBox(height: 20),
-                      TextFormField(
-                        controller: facilityCodeController,
-                        decoration: InputDecoration(
-                            labelText: localizations.facility_code,
-                            hintText: localizations
-                                .enter_something(localizations.facility_code)),
-                        inputFormatters: [
-                          FilteringTextInputFormatter.digitsOnly
                         ],
-                        validator: (value) => validateIntRange(
-                            value, localizations,
-                            min: 0, max: 4294967295),
                       ),
-                      const SizedBox(height: 20),
-                      TextFormField(
-                        controller: issueLevelController,
-                        decoration: InputDecoration(
-                            labelText: localizations.issue_level,
-                            hintText: localizations
-                                .enter_something(localizations.issue_level)),
-                        inputFormatters: [
-                          FilteringTextInputFormatter.digitsOnly
+                    ),
+                    if (selectedType == TagType.hidProx)
+                      Column(
+                        children: [
+                          const SizedBox(height: 20),
+                          DropdownButton<int>(
+                            value: int.tryParse(hidTypeController.text) ?? 1,
+                            items: List.generate(30, (index) => index + 1)
+                                .map<DropdownMenuItem<int>>((int type) {
+                                  return DropdownMenuItem<int>(
+                                    value: type,
+                                    child: Text(getNameForHIDProxType(type)),
+                                  );
+                                })
+                                .toList(),
+                            onChanged: (int? newValue) {
+                              if (newValue != null) {
+                                setState(() {
+                                  hidTypeController.text = newValue.toString();
+                                });
+                              }
+                            },
+                            isExpanded: true,
+                          ),
+                          const SizedBox(height: 20),
+                          TextFormField(
+                            controller: facilityCodeController,
+                            decoration: InputDecoration(
+                              labelText: localizations.facility_code,
+                              hintText: localizations.enter_something(
+                                localizations.facility_code,
+                              ),
+                            ),
+                            inputFormatters: [
+                              FilteringTextInputFormatter.digitsOnly,
+                            ],
+                            validator: (value) => validateIntRange(
+                              value,
+                              localizations,
+                              min: 0,
+                              max: 4294967295,
+                            ),
+                          ),
+                          const SizedBox(height: 20),
+                          TextFormField(
+                            controller: issueLevelController,
+                            decoration: InputDecoration(
+                              labelText: localizations.issue_level,
+                              hintText: localizations.enter_something(
+                                localizations.issue_level,
+                              ),
+                            ),
+                            inputFormatters: [
+                              FilteringTextInputFormatter.digitsOnly,
+                            ],
+                            validator: (value) => validateIntRange(
+                              value,
+                              localizations,
+                              min: 0,
+                              max: 255,
+                            ),
+                          ),
+                          const SizedBox(height: 20),
+                          TextFormField(
+                            controller: oemController,
+                            decoration: InputDecoration(
+                              labelText: "OEM",
+                              hintText: localizations.enter_something('OEM'),
+                            ),
+                            inputFormatters: [
+                              FilteringTextInputFormatter.digitsOnly,
+                            ],
+                            validator: (value) => validateIntRange(
+                              value,
+                              localizations,
+                              min: 0,
+                              max: 65535,
+                            ),
+                          ),
                         ],
-                        validator: (value) => validateIntRange(
-                            value, localizations,
-                            min: 0, max: 255),
                       ),
-                      const SizedBox(height: 20),
-                      TextFormField(
-                        controller: oemController,
-                        decoration: InputDecoration(
-                            labelText: "OEM",
-                            hintText: localizations.enter_something('OEM')),
-                        inputFormatters: [
-                          FilteringTextInputFormatter.digitsOnly
-                        ],
-                        validator: (value) => validateIntRange(
-                            value, localizations,
-                            min: 0, max: 65535),
-                      ),
-                    ])
-                ]),
-              )
+                  ],
+                ),
+              ),
             ],
           ),
         ),
@@ -484,8 +546,9 @@ class CardEditMenuState extends State<CardEditMenu> {
                 int issueLevel = int.parse(issueLevelController.text);
                 int oem = int.parse(oemController.text);
 
-                Uint8List uid =
-                    hexToBytes(uidController.text.replaceAll(' ', ''));
+                Uint8List uid = hexToBytes(
+                  uidController.text.replaceAll(' ', ''),
+                );
 
                 HIDCard hidCard = HIDCard(
                   hidType: hidType,
@@ -504,36 +567,38 @@ class CardEditMenuState extends State<CardEditMenu> {
             }
 
             var tag = CardSave(
-                id: widget.tagSave.id,
-                name: nameController.text,
-                sak: chameleonTagToFrequency(selectedType) == TagFrequency.lf
-                    ? widget.tagSave.sak
-                    : hexToBytes(sakController.text)[0],
-                atqa: hexToBytes(atqaController.text),
-                uid: finalUid,
-                extraData: CardSaveExtra(
-                  ultralightSignature:
-                      hexToBytes(ultralightSignatureController.text),
-                  ultralightVersion:
-                      hexToBytes(ultralightVersionController.text),
-                  ultralightCounters: ultralightCounterControllers
-                      .map((controller) => int.tryParse(controller.text) ?? 0)
-                      .toList(),
+              id: widget.tagSave.id,
+              name: nameController.text,
+              sak: chameleonTagToFrequency(selectedType) == TagFrequency.lf
+                  ? widget.tagSave.sak
+                  : hexToBytes(sakController.text)[0],
+              atqa: hexToBytes(atqaController.text),
+              uid: finalUid,
+              extraData: CardSaveExtra(
+                ultralightSignature: hexToBytes(
+                  ultralightSignatureController.text,
                 ),
-                tag: selectedType,
-                data: cardData,
-                color: currentColor,
-                ats: hexToBytes(atsController.text));
+                ultralightVersion: hexToBytes(ultralightVersionController.text),
+                ultralightCounters: ultralightCounterControllers
+                    .map((controller) => int.tryParse(controller.text) ?? 0)
+                    .toList(),
+              ),
+              tag: selectedType,
+              data: cardData,
+              color: currentColor,
+              ats: hexToBytes(atsController.text),
+            );
 
             var tags = appState.sharedPreferencesProvider.getCards();
-            var index =
-                tags.indexWhere((element) => element.id == widget.tagSave.id);
+            var index = tags.indexWhere(
+              (element) => element.id == widget.tagSave.id,
+            );
 
             if (index != -1) {
               tags[index] = tag;
             }
 
-            appState.sharedPreferencesProvider.setCards(tags);
+            await appState.sharedPreferencesProvider.setCards(tags);
             appState.changesMade();
             if (context.mounted) {
               Navigator.pop(context);
