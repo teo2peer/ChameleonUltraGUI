@@ -1,22 +1,44 @@
-# PM3 Tools compatibility catalog
+# PM3-compatible workflows
 
-`PM3 Tools` is an additive menu. It does not replace or fork existing Chameleon workflows.
+`PM3 Tools` is an operational compatibility layer, not a Proxmark3 command
+console. Navigation follows this structure:
 
-The catalog was audited against `RfidResearchGroup/proxmark3` commit
-`8b65feaba36ecc6d58d8aeef96cdc7c5a04381bc`. The canonical `doc/commands.md` dump contains 990 command rows. Excluding 96 help rows and deduplicating its repeated `lf awid brute` row produces 893 unique executable commands across the client, data, HF, LF, hardware, flash/SPIFFS, trace, and scripting surfaces.
+`Ethical Hacking > PM3 Tools > category > tool > dedicated interface`
 
-The generated snapshot preserves each upstream command, short description, and offline flag. Regenerate it with:
+The upstream inventory was audited against `RfidResearchGroup/proxmark3`
+commit `8b65feaba36ecc6d58d8aeef96cdc7c5a04381bc`. Its 893 command names remain in
+`lib/helpers/pm3_command_inventory.dart` as an audit snapshot only. They are
+not presented as Chameleon features.
 
-```sh
-dart run tool/generate_pm3_command_inventory.dart <proxmark3/doc/commands.md>
-```
+## Operational categories
 
-## Compatibility states
+| Category | Implemented workflows | Device primitives |
+| --- | --- | --- |
+| ISO14443-A | card inspection, persistent select, raw frames, APDU, sniff | 2000, 2010, 2016, 2020, 2100-2101, 2200-2201, 6004 |
+| MIFARE Classic | info/dump, Autopwn, Darkside, Nested, Static Nested, Hardnested, value blocks | 2001-2015, 2018 |
+| Low frequency | protocol search, ADC window, sniff, ioProx codec, T55xx block write, Jablotron clone | 3000, 3002, 3004, 3009-3010, 3012-3014, 3016, 3019-3020, 3031 |
+| Smart cards | EMV scan/transaction, DESFire enumeration, APDU terminal | 6004-6006 |
+| Offline analysis | number conversion, XOR, LRC, checksum matrix, NUID, frequency, HF units, Wiegand decode | host implementation |
 
-- `Mapped`: opens an existing Chameleon page or dialog. Existing authorization, connection, capability, and cleanup gates remain authoritative.
-- `Host port pending`: the host algorithm or protocol workflow may be adapted, but no bounded implementation is connected yet. The entry is disabled.
-- `Unsupported`: the operation depends on PM3-specific FPGA, ADC, antenna, external flash, SPIFFS, LCD, FPC USART, radio protocol, or timing behavior. The entry is disabled.
+Every device-backed tool uses the advertised firmware capabilities and the
+same USB/BLE command protocol as the rest of the application. Raw operations
+use typed, bounded payloads; arbitrary PM3 command strings are not accepted.
 
-Catalog visibility never implies device support or authorization. The menu accepts no arbitrary PM3 command strings and adds no firmware command IDs.
+The previous catalogue labelled 230 commands as `Host port pending` solely
+because Proxmark3 marks them as available without a connected device. That flag
+is not a portability guarantee: most depend on PM3 `GraphBuffer` state, trace
+files, client preferences, scripting runtimes, or PM3-only capture formats.
+This menu exposes only bounded RFID workflows with a direct Chameleon command
+or a stateless host implementation.
 
-At the audited commit, Flutter exposes 45 mapped commands, 230 disabled host-port candidates, and 618 disabled PM3-specific commands. Expo keeps all execution disabled until its corresponding feature screens are implemented.
+## Hardware boundaries
+
+Commands remain unavailable when the Chameleon hardware has no corresponding
+physical capability. Examples include PM3 FPGA image control, PM3 SPIFFS and
+external flash, LCD/FPC USART, antenna tuning/decay measurement, and protocols
+that require unsupported analogue front-end or modulation paths such as
+ISO14443-B, ISO15693, FeliCa, iCLASS/Picopass, LEGIC, and Hitag.
+
+EM4x05 is intentionally not exposed. Firmware command 3030 currently returns
+`STATUS_NOT_IMPLEMENTED` because its framing produced false UIDs and has not
+been verified against hardware captures or golden vectors.

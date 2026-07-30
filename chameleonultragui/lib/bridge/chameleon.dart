@@ -6,6 +6,7 @@ import 'package:chameleonultragui/helpers/emv_trace.dart';
 import 'package:chameleonultragui/helpers/general.dart';
 import 'package:chameleonultragui/connector/serial_abstract.dart';
 import 'package:chameleonultragui/helpers/mifare_classic/general.dart';
+import 'package:chameleonultragui/helpers/pm3_protocol.dart';
 import 'package:chameleonultragui/bridge/chameleon_frame_decoder.dart';
 import 'package:logger/logger.dart';
 
@@ -610,6 +611,68 @@ class ChameleonCommunicator {
     );
   }
 
+  Future<CardData?> scan14443aTagKeep() async {
+    const command = ChameleonCommand.hf14aScanKeep;
+    final resp = await sendCmd(command);
+    if (resp == null) {
+      throw const ChameleonCommandException(command, 0xffff);
+    }
+    if (resp.status == 0x01 && resp.data.isEmpty) return null;
+    if (resp.status != 0x00) {
+      throw ChameleonCommandException(command, resp.status);
+    }
+    if (resp.data.isEmpty) {
+      throw const FormatException('Empty successful ISO14443-A scan response');
+    }
+    final uidLength = resp.data[0];
+    if (!const {4, 7, 10}.contains(uidLength) ||
+        resp.data.length < uidLength + 5) {
+      throw const FormatException('Invalid ISO14443-A scan response');
+    }
+    final atsLength = resp.data[uidLength + 4];
+    if (resp.data.length != uidLength + 5 + atsLength) {
+      throw const FormatException('Invalid ISO14443-A ATS length');
+    }
+    return CardData(
+      uid: Uint8List.fromList(resp.data.sublist(1, uidLength + 1)),
+      atqa: Uint8List.fromList(
+        resp.data.sublist(uidLength + 1, uidLength + 3).reversed.toList(),
+      ),
+      sak: resp.data[uidLength + 3],
+      ats: Uint8List.fromList(resp.data.sublist(uidLength + 5)),
+    );
+  }
+
+  Future<Pm3Hf14aRawResponse> hf14aRaw(Pm3Hf14aRawRequest request) async {
+    final command = ChameleonCommand.hf14ARawCommand;
+    final response = await sendCmd(
+      command,
+      data: request.encode(),
+      timeout: Duration(milliseconds: request.responseTimeoutMs + 2000),
+    );
+    if (response == null) {
+      throw ChameleonCommandException(command, 0xffff);
+    }
+    return Pm3Hf14aRawResponse(status: response.status, data: response.data);
+  }
+
+  Future<void> setHf14aField(bool enabled) async {
+    await _sendChecked(
+      enabled
+          ? ChameleonCommand.hf14aSetFieldOn
+          : ChameleonCommand.hf14aSetFieldOff,
+    );
+  }
+
+  Future<Pm3Hf14aConfig> getHf14aConfig() async {
+    final response = await _sendChecked(ChameleonCommand.hf14aGetConfig);
+    return Pm3Hf14aConfig.decode(response.data);
+  }
+
+  Future<void> setHf14aConfig(Pm3Hf14aConfig config) async {
+    await _sendChecked(ChameleonCommand.hf14aSetConfig, data: config.encode());
+  }
+
   Future<bool> detectMf1Support() async {
     // Detects if it is a Mifare Classic tag
     // true - Mifare Classic
@@ -1198,6 +1261,76 @@ class ChameleonCommunicator {
     }
 
     return IoProxCard.fromBytes(resp.data);
+  }
+
+  Future<Uint8List?> readJablotron() async {
+    final response = await sendCmd(ChameleonCommand.scanJablotronTag);
+    if (response == null) {
+      throw const ChameleonCommandException(
+        ChameleonCommand.scanJablotronTag,
+        0xffff,
+      );
+    }
+    if (response.status == 0x41 && response.data.isEmpty) return null;
+    if (response.status != 0x40) {
+      throw ChameleonCommandException(
+        ChameleonCommand.scanJablotronTag,
+        response.status,
+      );
+    }
+    if (response.data.length != 5) {
+      throw const FormatException('Invalid Jablotron scan response');
+    }
+    return Uint8List.fromList(response.data);
+  }
+
+  Future<Uint8List> readLfAdc() async {
+    const command = ChameleonCommand.readLfAdc;
+    final response = await sendCmd(command);
+    if (response == null || response.status != 0x40) {
+      throw ChameleonCommandException(command, response?.status ?? 0xffff);
+    }
+    if (response.data.isEmpty) {
+      throw const FormatException('Empty LF ADC response');
+    }
+    return Uint8List.fromList(response.data);
+  }
+
+  Future<Pm3IoProxData> decodeIoProxRaw(Uint8List raw) async {
+    if (raw.length != 8) {
+      throw ArgumentError.value(raw.length, 'raw.length', 'must be 8');
+    }
+    final response = await _sendChecked(
+      ChameleonCommand.ioProxDecodeRaw,
+      data: raw,
+    );
+    return Pm3IoProxData.decode(response.data);
+  }
+
+  Future<Pm3IoProxData> composeIoProxId({
+    required int version,
+    required int facilityCode,
+    required int cardNumber,
+  }) async {
+    if (version < 0 || version > 0xff) {
+      throw RangeError.range(version, 0, 0xff, 'version');
+    }
+    if (facilityCode < 0 || facilityCode > 0xff) {
+      throw RangeError.range(facilityCode, 0, 0xff, 'facilityCode');
+    }
+    if (cardNumber < 0 || cardNumber > 0xffff) {
+      throw RangeError.range(cardNumber, 0, 0xffff, 'cardNumber');
+    }
+    final response = await _sendChecked(
+      ChameleonCommand.ioProxComposeId,
+      data: Uint8List.fromList([
+        version,
+        facilityCode,
+        cardNumber >> 8,
+        cardNumber & 0xff,
+      ]),
+    );
+    return Pm3IoProxData.decode(response.data);
   }
 
   Future<void> setEM410XEmulatorID(Uint8List uid) async {
@@ -1905,6 +2038,52 @@ class ChameleonCommunicator {
       uid,
       newKey,
       oldKeys,
+    );
+  }
+
+  Future<void> writeJablotronToT55XX(
+    Uint8List uid,
+    Uint8List newKey,
+    List<Uint8List> oldKeys,
+  ) async {
+    if (uid.length != 5) {
+      throw ArgumentError.value(uid.length, 'uid.length', 'must be 5');
+    }
+    await _writeT55xx(
+      ChameleonCommand.writeJablotronToT5577,
+      uid,
+      newKey,
+      oldKeys,
+    );
+  }
+
+  Future<void> writeT55xxBlock({
+    required int block,
+    required int word,
+    int? password,
+    required bool page1,
+  }) async {
+    final maxBlock = page1 ? 3 : 7;
+    if (block < 0 || block > maxBlock) {
+      throw RangeError.range(block, 0, maxBlock, 'block');
+    }
+    if (word < 0 || word > 0xffffffff) {
+      throw RangeError.range(word, 0, 0xffffffff, 'word');
+    }
+    if (password != null && (password < 0 || password > 0xffffffff)) {
+      throw RangeError.range(password, 0, 0xffffffff, 'password');
+    }
+    final passwordValue = password ?? 0;
+    await _sendChecked(
+      ChameleonCommand.writeT55xxBlock,
+      data: Uint8List.fromList([
+        block,
+        ...u32ToBytes(word),
+        password == null ? 0 : 1,
+        ...u32ToBytes(passwordValue),
+        page1 ? 1 : 0,
+      ]),
+      allowedStatuses: const {0x40},
     );
   }
 

@@ -30,7 +30,6 @@ import 'package:chameleonultragui/gui/menu/tools/pm3_tools.dart';
 import 'package:chameleonultragui/gui/page/read_card.dart';
 import 'package:chameleonultragui/gui/page/reader_keys.dart';
 import 'package:chameleonultragui/gui/page/write_card.dart';
-import 'package:chameleonultragui/helpers/pm3_tool_catalog.dart';
 import 'package:chameleonultragui/main.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_staggered_grid_view/flutter_staggered_grid_view.dart';
@@ -321,7 +320,7 @@ class EthicalHackingPageState extends State<EthicalHackingPage> {
         localizations.pm3_tools,
         Icons.developer_board,
         (c) => _push(c, const Pm3ToolsPage()),
-        count: pm3CatalogEntries.length,
+        count: pm3OperationalToolCount,
       ),
       _Category(
         localizations.mfc_attacks,
