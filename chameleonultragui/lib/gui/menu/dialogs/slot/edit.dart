@@ -606,7 +606,7 @@ class SlotEditMenuState extends State<SlotEditMenu> {
                                                                           .push(
                                                                         context,
                                                                         ModulePageRoute(
-                                                                          moduleId: ModuleId.slotManager,
+                                                                          moduleId: ModuleId.mfkey32,
                                                                           builder: (context) =>
                                                                               const Mfkey32Menu(),
                                                                         ),

@@ -287,7 +287,7 @@ class SettingsMainPageState extends State<SettingsMainPage> {
                     onTap: () => Navigator.push(
                       context,
                       ModulePageRoute<void>(
-                        moduleId: ModuleId.settings,
+                        moduleId: ModuleId.dataSync,
                         builder: (_) => const DataSyncPage(),
                       ),
                     ),

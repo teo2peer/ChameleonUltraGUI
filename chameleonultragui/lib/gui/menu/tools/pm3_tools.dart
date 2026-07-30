@@ -246,49 +246,59 @@ class _Pm3ToolsPageState extends State<Pm3ToolsPage> {
   void _open(Pm3ToolTarget target) {
     switch (target) {
       case Pm3ToolTarget.device:
-        _push(const ConnectPage());
+        _push(const ConnectPage(), ModuleId.device);
       case Pm3ToolTarget.readCard:
-        _push(const ReadCardPage());
+        _push(const ReadCardPage(), ModuleId.readCard);
       case Pm3ToolTarget.writeCard:
-        _push(const WriteCardPage());
+        _push(const WriteCardPage(), ModuleId.writeCard);
       case Pm3ToolTarget.slotManager:
-        _push(const SlotManagerPage());
+        _push(const SlotManagerPage(), ModuleId.slotManager);
       case Pm3ToolTarget.hfSniffing:
-        _dialog(const HfSniffingMenu());
+        _dialog(const HfSniffingMenu(), ModuleId.hfSniffing);
       case Pm3ToolTarget.lfSniffing:
-        _dialog(const LfSniffingMenu());
+        _dialog(const LfSniffingMenu(), ModuleId.lfSniffing);
       case Pm3ToolTarget.apduTerminal:
-        _push(const ApduTerminalPage());
+        _push(const ApduTerminalPage(), ModuleId.apduTerminal);
       case Pm3ToolTarget.emvReader:
-        _push(const EmvReaderPage());
+        _push(const EmvReaderPage(), ModuleId.emvReader);
       case Pm3ToolTarget.desfireReader:
-        _push(const DesfireReaderPage());
+        _push(const DesfireReaderPage(), ModuleId.desfireReader);
       case Pm3ToolTarget.autopwn:
-        _push(const AutopwnPage());
+        _push(const AutopwnPage(), ModuleId.autopwn);
       case Pm3ToolTarget.darkside:
-        _push(const DarksidePage());
+        _push(const DarksidePage(), ModuleId.darkside);
       case Pm3ToolTarget.nested:
-        _push(const NestedPage());
+        _push(const NestedPage(), ModuleId.nested);
       case Pm3ToolTarget.staticNested:
-        _push(const NestedPage(variant: NestedVariant.staticNonce));
+        _push(
+          const NestedPage(variant: NestedVariant.staticNonce),
+          ModuleId.staticNested,
+        );
       case Pm3ToolTarget.hardnested:
-        _push(const NestedPage(variant: NestedVariant.hard));
+        _push(
+          const NestedPage(variant: NestedVariant.hard),
+          ModuleId.hardnested,
+        );
       case Pm3ToolTarget.valueBlock:
-        _dialog(const ValueBlockMenu());
+        _dialog(const ValueBlockMenu(), ModuleId.valueBlock);
       case Pm3ToolTarget.wiegand:
-        _dialog(const WiegandMenu());
+        _dialog(const WiegandMenu(), ModuleId.wiegand);
     }
   }
 
-  void _push(Widget page) {
+  void _push(Widget page, ModuleId moduleId) {
     Navigator.push(
       context,
-      ModulePageRoute(moduleId: ModuleId.pm3Catalog, builder: (_) => page),
+      ModulePageRoute(moduleId: moduleId, builder: (_) => page),
     );
   }
 
-  void _dialog(Widget dialog) {
-    showDialog(context: context, builder: (_) => dialog);
+  void _dialog(Widget dialog, ModuleId moduleId) {
+    showDialog(
+      context: context,
+      routeSettings: RouteSettings(arguments: moduleId),
+      builder: (_) => dialog,
+    );
   }
 }
 

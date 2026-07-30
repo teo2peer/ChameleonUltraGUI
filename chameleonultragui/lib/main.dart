@@ -1208,16 +1208,19 @@ class _MainPageState extends State<MainPage> {
       themeMode: widget.sharedPreferencesProvider.getTheme(), // Dark Theme
       navigatorObservers: [_moduleNavigationObserver],
       builder: (context, child) {
-        return Column(
-          children: [
-            Expanded(child: child ?? const SizedBox.shrink()),
-            ValueListenableBuilder<ModuleId>(
-              valueListenable: _activeModule,
-              builder: (context, moduleId, _) {
-                return ModuleVersionFooter(moduleId: moduleId);
-              },
-            ),
-          ],
+        return ModuleVersionScope(
+          notifier: _activeModule,
+          child: Column(
+            children: [
+              Expanded(child: child ?? const SizedBox.shrink()),
+              ValueListenableBuilder<ModuleId>(
+                valueListenable: _activeModule,
+                builder: (context, moduleId, _) {
+                  return ModuleVersionFooter(moduleId: moduleId);
+                },
+              ),
+            ],
+          ),
         );
       },
       home: LayoutBuilder(
@@ -1374,11 +1377,11 @@ class _MainPageState extends State<MainPage> {
       0 => ModuleId.device,
       1 => ModuleId.slotManager,
       2 => ModuleId.library,
-      3 => ModuleId.reader,
-      4 => ModuleId.writer,
+      3 => ModuleId.readCard,
+      4 => ModuleId.writeCard,
       5 => ModuleId.tools,
       6 => ModuleId.settings,
-      7 => ModuleId.readerKeys,
+      7 => ModuleId.readerKeysCapture,
       8 => ModuleId.ethicalHacking,
       9 => ModuleId.debug,
       _ => ModuleId.appShell,

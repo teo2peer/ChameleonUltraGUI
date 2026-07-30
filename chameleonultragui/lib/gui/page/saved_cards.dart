@@ -92,7 +92,7 @@ class SavedCardsPageState extends State<SavedCardsPage> {
             onPressed: () => Navigator.push(
               context,
               ModulePageRoute<void>(
-                moduleId: ModuleId.library,
+                moduleId: ModuleId.dataSync,
                 builder: (_) => const DataSyncPage(),
               ),
             ),

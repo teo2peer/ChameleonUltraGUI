@@ -180,7 +180,7 @@ class DebugPage extends StatelessWidget {
                   Navigator.push(
                     context,
                     ModulePageRoute(
-                      moduleId: ModuleId.debug,
+                      moduleId: ModuleId.logsViewer,
                       builder: (context) => const LogsViewerPage(),
                     ),
                   );

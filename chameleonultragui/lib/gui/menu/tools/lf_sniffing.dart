@@ -399,7 +399,7 @@ class _LfSniffingMenuState extends State<LfSniffingMenu> {
     final zoom = isCompact
         ? await navigator.push<double>(
             ModulePageRoute(
-              moduleId: ModuleId.tools,
+              moduleId: ModuleId.lfSniffing,
               fullscreenDialog: true,
               builder: (context) => _LfWaveformFullscreenPage(
                 capture: capture,

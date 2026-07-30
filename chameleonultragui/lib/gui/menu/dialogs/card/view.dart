@@ -306,7 +306,7 @@ class CardViewMenuState extends State<CardViewMenu> {
                   Navigator.push(
                     context,
                     ModulePageRoute(
-                      moduleId: ModuleId.library,
+                      moduleId: ModuleId.dumpEditor,
                       builder: (context) => DumpEditor(
                         cardSave: widget.tagSave,
                         onSave: (dumpData) async {

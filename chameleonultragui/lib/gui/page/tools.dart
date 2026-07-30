@@ -19,6 +19,7 @@ class ToolItem {
   final String name;
   final String description;
   final IconData icon;
+  final ModuleId moduleId;
   final bool isDeviceRequired;
   final bool showWipBadge;
   final bool openAsPage;
@@ -28,6 +29,7 @@ class ToolItem {
     required this.name,
     required this.description,
     required this.icon,
+    required this.moduleId,
     this.isDeviceRequired = false,
     this.showWipBadge = false,
     this.openAsPage = false,
@@ -53,12 +55,14 @@ class ToolsPageState extends State<ToolsPage> {
         name: localizations.compare_cards,
         description: localizations.compare_cards_description,
         icon: Icons.difference,
+        moduleId: ModuleId.compareCards,
         onPressed: const CompareCardsMenu(),
       ),
       ToolItem(
         name: localizations.dictionary_download,
         description: localizations.dictionary_download_description,
         icon: Icons.key,
+        moduleId: ModuleId.dictionaryDownload,
         onPressed: const DictionaryDownloadMenu(),
       ),
       ToolItem(
@@ -66,12 +70,14 @@ class ToolsPageState extends State<ToolsPage> {
         description:
             'Monitor reader-written MIFARE Classic changes and keep block-level history on this phone.',
         icon: Icons.history,
+        moduleId: ModuleId.emulationHistory,
         onPressed: const EmulationChangeHistoryMenu(),
       ),
       ToolItem(
         name: localizations.pm3_tools,
         description: localizations.pm3_tools_description,
         icon: Icons.developer_board,
+        moduleId: ModuleId.pm3Catalog,
         onPressed: const Pm3ToolsPage(),
         openAsPage: true,
       ),
@@ -79,6 +85,7 @@ class ToolsPageState extends State<ToolsPage> {
         name: localizations.t55xx_password_cleaner,
         description: localizations.t55xx_password_cleaner_description,
         icon: Icons.password,
+        moduleId: ModuleId.t55xxPasswordCleaner,
         onPressed: const T55XXPasswordCleanerMenu(),
         isDeviceRequired: true,
       ),
@@ -86,6 +93,7 @@ class ToolsPageState extends State<ToolsPage> {
         name: localizations.lf_sniffing,
         description: localizations.lf_sniffing_description,
         icon: Icons.graphic_eq,
+        moduleId: ModuleId.lfSniffing,
         onPressed: const LfSniffingMenu(),
         isDeviceRequired: true,
       ),
@@ -93,6 +101,7 @@ class ToolsPageState extends State<ToolsPage> {
         name: localizations.hf_sniffing,
         description: localizations.hf_sniffing_description,
         icon: Icons.radar,
+        moduleId: ModuleId.hfSniffing,
         onPressed: const HfSniffingMenu(),
         showWipBadge: true,
         isDeviceRequired: true,
@@ -101,6 +110,7 @@ class ToolsPageState extends State<ToolsPage> {
         name: localizations.mifare_classic_gen4,
         description: localizations.mifare_classic_gen4_description,
         icon: Icons.settings,
+        moduleId: ModuleId.mifareClassicGen4,
         isDeviceRequired: true,
       ),
     ];
@@ -140,13 +150,16 @@ class ToolsPageState extends State<ToolsPage> {
                               Navigator.push(
                                 context,
                                 ModulePageRoute(
-                                  moduleId: ModuleId.tools,
+                                  moduleId: tool.moduleId,
                                   builder: (_) => tool.onPressed!,
                                 ),
                               );
                             } else {
                               showDialog(
                                 context: context,
+                                routeSettings: RouteSettings(
+                                  arguments: tool.moduleId,
+                                ),
                                 builder: (BuildContext context) {
                                   return tool.onPressed!;
                                 },

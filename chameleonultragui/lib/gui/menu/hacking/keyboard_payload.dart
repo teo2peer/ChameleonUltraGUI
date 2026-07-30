@@ -632,7 +632,7 @@ CTRL L
                 : () => Navigator.push(
                     context,
                     ModulePageRoute<void>(
-                      moduleId: ModuleId.ethicalHacking,
+                      moduleId: ModuleId.dataSync,
                       builder: (_) => const DataSyncPage(),
                     ),
                   ),
