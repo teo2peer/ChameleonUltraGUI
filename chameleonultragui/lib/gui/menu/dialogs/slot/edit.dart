@@ -1,9 +1,11 @@
 import 'package:chameleonultragui/gui/component/error_page.dart';
+import 'package:chameleonultragui/gui/component/module_version_navigation.dart';
 import 'package:chameleonultragui/gui/component/toggle_buttons.dart';
 import 'package:chameleonultragui/gui/menu/pages/mfkey32.dart';
 import 'package:chameleonultragui/helpers/definitions.dart';
 import 'package:chameleonultragui/helpers/mifare_classic/general.dart';
 import 'package:chameleonultragui/helpers/mifare_ultralight/general.dart';
+import 'package:chameleonultragui/helpers/module_versions.dart';
 import 'package:chameleonultragui/helpers/validators.dart';
 import 'package:flutter/material.dart';
 import 'package:chameleonultragui/helpers/general.dart';
@@ -603,7 +605,8 @@ class SlotEditMenuState extends State<SlotEditMenu> {
                                                                       Navigator
                                                                           .push(
                                                                         context,
-                                                                        MaterialPageRoute(
+                                                                        ModulePageRoute(
+                                                                          moduleId: ModuleId.slotManager,
                                                                           builder: (context) =>
                                                                               const Mfkey32Menu(),
                                                                         ),

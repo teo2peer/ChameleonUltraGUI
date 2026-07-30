@@ -2,8 +2,10 @@ import 'dart:math' as math;
 
 import 'package:chameleonultragui/generated/i18n/app_localizations.dart';
 import 'package:chameleonultragui/gui/component/hex_viewer.dart';
+import 'package:chameleonultragui/gui/component/module_version_navigation.dart';
 import 'package:chameleonultragui/helpers/definitions.dart';
 import 'package:chameleonultragui/helpers/lf_sniff.dart';
+import 'package:chameleonultragui/helpers/module_versions.dart';
 import 'package:chameleonultragui/helpers/validators.dart';
 import 'package:chameleonultragui/main.dart';
 import 'package:file_picker/file_picker.dart';
@@ -396,7 +398,8 @@ class _LfSniffingMenuState extends State<LfSniffingMenu> {
     final navigator = Navigator.of(context);
     final zoom = isCompact
         ? await navigator.push<double>(
-            MaterialPageRoute(
+            ModulePageRoute(
+              moduleId: ModuleId.tools,
               fullscreenDialog: true,
               builder: (context) => _LfWaveformFullscreenPage(
                 capture: capture,

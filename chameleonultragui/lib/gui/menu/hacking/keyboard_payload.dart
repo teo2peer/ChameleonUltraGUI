@@ -2,10 +2,12 @@ import 'package:chameleonultragui/bridge/chameleon.dart';
 import 'package:chameleonultragui/bridge/chameleon_keyboard.dart';
 import 'package:chameleonultragui/connector/serial_abstract.dart';
 import 'package:chameleonultragui/generated/i18n/app_localizations.dart';
+import 'package:chameleonultragui/gui/component/module_version_navigation.dart';
 import 'package:chameleonultragui/gui/page/data_sync.dart';
 import 'package:chameleonultragui/helpers/definitions.dart';
 import 'package:chameleonultragui/helpers/keyboard_layout.dart';
 import 'package:chameleonultragui/helpers/keyboard_script.dart';
+import 'package:chameleonultragui/helpers/module_versions.dart';
 import 'package:chameleonultragui/helpers/saved_keyboard_script.dart';
 import 'package:chameleonultragui/main.dart';
 import 'package:flutter/foundation.dart';
@@ -629,7 +631,8 @@ CTRL L
                 ? null
                 : () => Navigator.push(
                     context,
-                    MaterialPageRoute<void>(
+                    ModulePageRoute<void>(
+                      moduleId: ModuleId.ethicalHacking,
                       builder: (_) => const DataSyncPage(),
                     ),
                   ),

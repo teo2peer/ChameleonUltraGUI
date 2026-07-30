@@ -6,6 +6,8 @@ import 'package:chameleonultragui/gui/menu/tools/hf_sniffing.dart';
 import 'package:chameleonultragui/gui/menu/tools/lf_sniffing.dart';
 import 'package:chameleonultragui/gui/menu/tools/pm3_tools.dart';
 import 'package:chameleonultragui/gui/menu/tools/t55xx_password_cleaner.dart';
+import 'package:chameleonultragui/gui/component/module_version_navigation.dart';
+import 'package:chameleonultragui/helpers/module_versions.dart';
 import 'package:chameleonultragui/main.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_staggered_grid_view/flutter_staggered_grid_view.dart';
@@ -137,7 +139,8 @@ class ToolsPageState extends State<ToolsPage> {
                             if (tool.openAsPage) {
                               Navigator.push(
                                 context,
-                                MaterialPageRoute(
+                                ModulePageRoute(
+                                  moduleId: ModuleId.tools,
                                   builder: (_) => tool.onPressed!,
                                 ),
                               );

@@ -1,4 +1,5 @@
 import 'package:chameleonultragui/generated/i18n/app_localizations.dart';
+import 'package:chameleonultragui/gui/component/module_version_navigation.dart';
 import 'package:chameleonultragui/gui/menu/hacking/apdu_terminal.dart';
 import 'package:chameleonultragui/gui/menu/hacking/autopwn.dart';
 import 'package:chameleonultragui/gui/menu/hacking/darkside.dart';
@@ -14,6 +15,7 @@ import 'package:chameleonultragui/gui/page/read_card.dart';
 import 'package:chameleonultragui/gui/page/slot_manager.dart';
 import 'package:chameleonultragui/gui/page/write_card.dart';
 import 'package:chameleonultragui/helpers/pm3_tool_catalog.dart';
+import 'package:chameleonultragui/helpers/module_versions.dart';
 import 'package:chameleonultragui/main.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -279,7 +281,10 @@ class _Pm3ToolsPageState extends State<Pm3ToolsPage> {
   }
 
   void _push(Widget page) {
-    Navigator.push(context, MaterialPageRoute(builder: (_) => page));
+    Navigator.push(
+      context,
+      ModulePageRoute(moduleId: ModuleId.pm3Catalog, builder: (_) => page),
+    );
   }
 
   void _dialog(Widget dialog) {

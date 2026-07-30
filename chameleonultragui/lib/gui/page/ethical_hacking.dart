@@ -1,4 +1,5 @@
 import 'package:chameleonultragui/gui/component/element_button.dart';
+import 'package:chameleonultragui/gui/component/module_version_navigation.dart';
 import 'package:chameleonultragui/gui/menu/hacking/apdu_terminal.dart';
 import 'package:chameleonultragui/gui/menu/hacking/auth_trace.dart';
 import 'package:chameleonultragui/gui/menu/hacking/authorized_relay_lab.dart';
@@ -31,6 +32,7 @@ import 'package:chameleonultragui/gui/page/read_card.dart';
 import 'package:chameleonultragui/gui/page/reader_keys.dart';
 import 'package:chameleonultragui/gui/page/write_card.dart';
 import 'package:chameleonultragui/helpers/pm3_tool_catalog.dart';
+import 'package:chameleonultragui/helpers/module_versions.dart';
 import 'package:chameleonultragui/main.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_staggered_grid_view/flutter_staggered_grid_view.dart';
@@ -59,8 +61,15 @@ class EthicalHackingPage extends StatefulWidget {
 }
 
 class EthicalHackingPageState extends State<EthicalHackingPage> {
-  void _push(BuildContext context, Widget page) {
-    Navigator.push(context, MaterialPageRoute(builder: (_) => page));
+  void _push(
+    BuildContext context,
+    Widget page, {
+    ModuleId moduleId = ModuleId.ethicalHacking,
+  }) {
+    Navigator.push(
+      context,
+      ModulePageRoute(moduleId: moduleId, builder: (_) => page),
+    );
   }
 
   void _dialog(BuildContext context, Widget dialog) {
@@ -195,7 +204,7 @@ class EthicalHackingPageState extends State<EthicalHackingPage> {
         localizations.reader_keys_capture,
         localizations.mfkey_manual_description,
         Icons.wifi_tethering,
-        (c) => _push(c, const ReaderKeysPage()),
+        (c) => _push(c, const ReaderKeysPage(), moduleId: ModuleId.readerKeys),
         deviceRequired: true,
       ),
       HackingAttack(
@@ -320,7 +329,7 @@ class EthicalHackingPageState extends State<EthicalHackingPage> {
       _Category(
         localizations.pm3_tools,
         Icons.developer_board,
-        (c) => _push(c, const Pm3ToolsPage()),
+        (c) => _push(c, const Pm3ToolsPage(), moduleId: ModuleId.pm3Catalog),
         count: pm3CatalogEntries.length,
       ),
       _Category(

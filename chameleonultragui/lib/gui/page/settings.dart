@@ -1,9 +1,11 @@
 import 'package:chameleonultragui/gui/component/developer_list.dart';
 import 'package:chameleonultragui/gui/component/error_page.dart';
+import 'package:chameleonultragui/gui/component/module_version_navigation.dart';
 import 'package:chameleonultragui/gui/component/toggle_buttons.dart';
 import 'package:chameleonultragui/gui/menu/dialogs/qr/settings.dart';
 import 'package:chameleonultragui/helpers/general.dart';
 import 'package:chameleonultragui/helpers/github.dart';
+import 'package:chameleonultragui/helpers/module_versions.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:package_info_plus/package_info_plus.dart';
@@ -284,7 +286,8 @@ class SettingsMainPageState extends State<SettingsMainPage> {
                     trailing: const Icon(Icons.chevron_right),
                     onTap: () => Navigator.push(
                       context,
-                      MaterialPageRoute<void>(
+                      ModulePageRoute<void>(
+                        moduleId: ModuleId.settings,
                         builder: (_) => const DataSyncPage(),
                       ),
                     ),
