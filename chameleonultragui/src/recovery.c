@@ -22,7 +22,6 @@
 
 #define MEM_CHUNK 10000
 #define TRY_KEYS 50
-#define MAX_NESTED_OUTPUT_KEYS 100000
 #define MAX_NESTED_PRNG_DISTANCE 65534
 
 typedef struct
@@ -237,21 +236,18 @@ uint64_t *most_frequent_uint64(uint64_t *keys, uint32_t size, uint32_t *outputKe
   }
 
   qsort(frequencies, uniqueCount, sizeof(KeyFrequency), key_frequency_compare);
-  uint32_t outputCount = uniqueCount < MAX_NESTED_OUTPUT_KEYS
-                             ? uniqueCount
-                             : MAX_NESTED_OUTPUT_KEYS;
-  uint64_t *output = calloc(outputCount, sizeof(uint64_t));
+  uint64_t *output = calloc(uniqueCount, sizeof(uint64_t));
   if (output == NULL)
   {
     free(frequencies);
     return NULL;
   }
-  for (uint32_t i = 0; i < outputCount; i++)
+  for (uint32_t i = 0; i < uniqueCount; i++)
   {
     output[i] = frequencies[i].key;
   }
   free(frequencies);
-  *outputKeyCount = outputCount;
+  *outputKeyCount = uniqueCount;
   return output;
 }
 

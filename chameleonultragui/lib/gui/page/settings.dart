@@ -19,6 +19,7 @@ import 'package:crypto/crypto.dart';
 import 'package:chameleonultragui/gui/menu/dialogs/qr/import.dart';
 import 'package:chameleonultragui/gui/menu/pages/changelog_view.dart';
 import 'package:chameleonultragui/gui/page/data_sync.dart';
+import 'package:chameleonultragui/gui/page/mifare_classic_nonce_history.dart';
 import 'package:flutter/services.dart' show rootBundle;
 
 // Localizations
@@ -272,6 +273,58 @@ class SettingsMainPageState extends State<SettingsMainPage> {
                     },
                   ),
                 ],
+              ),
+              const SizedBox(height: 10),
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 560),
+                child: Card(
+                  child: Column(
+                    children: [
+                      SwitchListTile.adaptive(
+                        title: const Text(
+                          'Remember MIFARE Classic nonce samples',
+                        ),
+                        subtitle: const Text(
+                          'Skip only identical Nested and Static Nested captures for the same UID. Key authentication is always repeated.',
+                        ),
+                        value: appState.sharedPreferencesProvider
+                            .getMifareClassicNonceHistoryEnabled(),
+                        onChanged: (enabled) async {
+                          await appState.sharedPreferencesProvider
+                              .setMifareClassicNonceHistoryEnabled(enabled);
+                          appState.changesMade();
+                          if (mounted) setState(() {});
+                        },
+                      ),
+                      const Divider(height: 1),
+                      ListTile(
+                        leading: const Icon(Icons.manage_search),
+                        title: const Text('Manage stored nonce history'),
+                        subtitle: Builder(
+                          builder: (context) {
+                            final entries = appState.sharedPreferencesProvider
+                                .getMifareClassicNonceHistorySummaries();
+                            final bytes = entries.fold<int>(
+                              0,
+                              (sum, entry) => sum + entry.byteSize,
+                            );
+                            return Text(
+                              '${entries.length} cards | ${formatMifareClassicNonceHistoryBytes(bytes)}',
+                            );
+                          },
+                        ),
+                        trailing: const Icon(Icons.chevron_right),
+                        onTap: () => Navigator.push(
+                          context,
+                          MaterialPageRoute<void>(
+                            builder: (_) =>
+                                const MifareClassicNonceHistoryPage(),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
               ),
               const SizedBox(height: 10),
               ConstrainedBox(

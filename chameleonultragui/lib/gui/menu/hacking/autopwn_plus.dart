@@ -5,6 +5,7 @@ import 'dart:typed_data';
 import 'package:chameleonultragui/generated/i18n/app_localizations.dart';
 import 'package:chameleonultragui/gui/component/error_message.dart';
 import 'package:chameleonultragui/gui/component/key_check_marks.dart';
+import 'package:chameleonultragui/gui/component/mifare_classic_activity_progress.dart';
 import 'package:chameleonultragui/gui/menu/dialogs/dictionary/export.dart';
 import 'package:chameleonultragui/gui/page/read_card.dart'
     show HFCardInfo, MifareClassicInfo;
@@ -131,8 +132,9 @@ class _AutopwnPlusPageState extends State<AutopwnPlusPage> {
     if (expected == null || communicator == null) return false;
     final current = await communicator.scan14443aTag();
     if (current == null) return false;
-    final currentAts =
-        current.ats.isEmpty ? noAts : bytesToHexSpace(current.ats);
+    final currentAts = current.ats.isEmpty
+        ? noAts
+        : bytesToHexSpace(current.ats);
     return bytesToHexSpace(current.uid) == expected.uid &&
         bytesToHexSpace(current.atqa) == expected.atqa &&
         current.sak.toRadixString(16).padLeft(2, '0').toUpperCase() ==
@@ -158,7 +160,8 @@ class _AutopwnPlusPageState extends State<AutopwnPlusPage> {
     try {
       if (!await _sameCardStillPresent()) {
         throw StateError(
-            'The scanned card changed or left the antenna. Scan again.');
+          'The scanned card changed or left the antenna. Scan again.',
+        );
       }
       final result = await _runner.run(
         recovery: port,
@@ -216,7 +219,8 @@ class _AutopwnPlusPageState extends State<AutopwnPlusPage> {
       fileName: 'autopwn-plus-${card.uid.replaceAll(' ', '')}-$timestamp.json',
       bytes: Uint8List.fromList(
         utf8.encode(
-            const JsonEncoder.withIndent('  ').convert(result.toJson())),
+          const JsonEncoder.withIndent('  ').convert(result.toJson()),
+        ),
       ),
     );
   }
@@ -236,17 +240,17 @@ class _AutopwnPlusPageState extends State<AutopwnPlusPage> {
   }
 
   String get _nestedDurationHint => switch (_mfc?.ntLevel) {
-        NTLevel.hard =>
-          'Hardnested is the longest path: nonce collection and native solving can take several minutes per unresolved key.',
-        NTLevel.static =>
-          'Static nested is usually faster than hardnested, but multiple unresolved sectors and retries can still take minutes.',
-        NTLevel.weak =>
-          'Nested duration varies with RF quality and candidate count. A weak-nonce card can finish quickly, but retries may take several minutes.',
-        NTLevel.backdoor =>
-          'Backdoor recovery is normally faster than nested, but every candidate is still verified on-card.',
-        _ =>
-          'Recovery time is variable until the nonce type and available attack path are confirmed.',
-      };
+    NTLevel.hard =>
+      'Hardnested is the longest path: nonce collection and native solving can take several minutes per unresolved key.',
+    NTLevel.static =>
+      'Static nested is usually faster than hardnested, but multiple unresolved sectors and retries can still take minutes.',
+    NTLevel.weak =>
+      'Nested duration varies with RF quality and candidate count. A weak-nonce card can finish quickly, but retries may take several minutes.',
+    NTLevel.backdoor =>
+      'Backdoor recovery is normally faster than nested, but every candidate is still verified on-card.',
+    _ =>
+      'Recovery time is variable until the nonce type and available attack path are confirmed.',
+  };
 
   String _formatDuration(Duration duration) {
     final seconds = duration.inSeconds;
@@ -294,8 +298,10 @@ class _AutopwnPlusPageState extends State<AutopwnPlusPage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('Adaptive recovery plan',
-                style: Theme.of(context).textTheme.titleMedium),
+            Text(
+              'Adaptive recovery plan',
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
             const SizedBox(height: 8),
             Text(_strategySummary),
             const SizedBox(height: 16),
@@ -305,8 +311,8 @@ class _AutopwnPlusPageState extends State<AutopwnPlusPage> {
               quick
                   ? 'Quick checks the top 64 ranked candidates and skips expensive cryptanalytic recovery.'
                   : _profile == AutopwnPlusProfile.deep
-                      ? 'Deep uses every saved dictionary before card-specific recovery.'
-                      : 'Balanced uses selected dictionaries before card-specific recovery.',
+                  ? 'Deep uses every saved dictionary before card-specific recovery.'
+                  : 'Balanced uses selected dictionaries before card-specific recovery.',
             ),
             if (!quick) ...[
               const SizedBox(height: 8),
@@ -317,8 +323,10 @@ class _AutopwnPlusPageState extends State<AutopwnPlusPage> {
             ],
             if (_dictionaries.isNotEmpty) ...[
               const SizedBox(height: 16),
-              Text('Dictionaries',
-                  style: Theme.of(context).textTheme.labelLarge),
+              Text(
+                'Dictionaries',
+                style: Theme.of(context).textTheme.labelLarge,
+              ),
               const SizedBox(height: 6),
               Wrap(
                 spacing: 8,
@@ -327,19 +335,21 @@ class _AutopwnPlusPageState extends State<AutopwnPlusPage> {
                   for (final dictionary in _dictionaries)
                     FilterChip(
                       label: Text(
-                          '${dictionary.name} (${dictionary.keys.length})'),
-                      selected: _profile == AutopwnPlusProfile.deep ||
+                        '${dictionary.name} (${dictionary.keys.length})',
+                      ),
+                      selected:
+                          _profile == AutopwnPlusProfile.deep ||
                           _selectedDictionaryIds.contains(dictionary.id),
-                      onSelected: _running ||
-                              _profile == AutopwnPlusProfile.deep
+                      onSelected:
+                          _running || _profile == AutopwnPlusProfile.deep
                           ? null
                           : (selected) => setState(() {
-                                if (selected) {
-                                  _selectedDictionaryIds.add(dictionary.id);
-                                } else {
-                                  _selectedDictionaryIds.remove(dictionary.id);
-                                }
-                              }),
+                              if (selected) {
+                                _selectedDictionaryIds.add(dictionary.id);
+                              } else {
+                                _selectedDictionaryIds.remove(dictionary.id);
+                              }
+                            }),
                     ),
                 ],
               ),
@@ -407,17 +417,23 @@ class _AutopwnPlusPageState extends State<AutopwnPlusPage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(progress.phase.name.toUpperCase(),
-                style: Theme.of(context).textTheme.labelLarge),
+            Text(
+              progress.phase.name.toUpperCase(),
+              style: Theme.of(context).textTheme.labelLarge,
+            ),
             const SizedBox(height: 4),
             Text(progress.operation),
             const SizedBox(height: 8),
             LinearProgressIndicator(value: effectiveProgress),
+            MifareClassicActivityProgressIndicator(
+              activity: _mfc?.recovery?.activityProgress,
+            ),
             const SizedBox(height: 6),
             Text('Elapsed ${_formatDuration(totalElapsed)}'),
             if (hardnestedCoverage != null)
               Text(
-                  'Hardnested nonce coverage ${(hardnestedCoverage * 100).toStringAsFixed(0)}%'),
+                'Hardnested nonce coverage ${(hardnestedCoverage * 100).toStringAsFixed(0)}%',
+              ),
             if (_running && eta != null && eta > Duration.zero)
               Text(
                 '${hardnestedCoverage != null ? 'Nonce collection ETA' : 'ETA'} ${_formatDuration(eta)}',
@@ -437,9 +453,7 @@ class _AutopwnPlusPageState extends State<AutopwnPlusPage> {
     final result = _result;
     if (result == null) return const SizedBox.shrink();
     final readable = result.blocks.where((block) => block.readable).length;
-    final uniqueKeys = {
-      for (final key in result.keys) bytesToHex(key),
-    }.length;
+    final uniqueKeys = {for (final key in result.keys) bytesToHex(key)}.length;
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -454,12 +468,15 @@ class _AutopwnPlusPageState extends State<AutopwnPlusPage> {
             Text('$uniqueKeys unique keys recovered'),
             if (result.blocks.isNotEmpty)
               Text(
-                  '$readable/${result.blocks.length} selected blocks readable'),
+                '$readable/${result.blocks.length} selected blocks readable',
+              ),
             if (result.error.isNotEmpty) Text('Recovery note: ${result.error}'),
             const SizedBox(height: 8),
             for (final entry in result.timings.entries)
-              Text('${entry.key.name}: '
-                  '${(entry.value.inMilliseconds / 1000).toStringAsFixed(2)} s'),
+              Text(
+                '${entry.key.name}: '
+                '${(entry.value.inMilliseconds / 1000).toStringAsFixed(2)} s',
+              ),
             const SizedBox(height: 12),
             Wrap(
               spacing: 8,
@@ -475,8 +492,9 @@ class _AutopwnPlusPageState extends State<AutopwnPlusPage> {
                       ),
                     ),
                     icon: const Icon(Icons.key),
-                    label:
-                        Text(AppLocalizations.of(context)!.save_recovered_keys),
+                    label: Text(
+                      AppLocalizations.of(context)!.save_recovered_keys,
+                    ),
                   ),
                 OutlinedButton.icon(
                   onPressed: _exportResult,
@@ -573,10 +591,7 @@ class _AutopwnPlusPageState extends State<AutopwnPlusPage> {
                 ErrorMessage(errorMessage: recovery.error),
               ],
             ],
-            if (_result != null) ...[
-              const SizedBox(height: 12),
-              _resultCard(),
-            ],
+            if (_result != null) ...[const SizedBox(height: 12), _resultCard()],
           ],
         ),
       ),

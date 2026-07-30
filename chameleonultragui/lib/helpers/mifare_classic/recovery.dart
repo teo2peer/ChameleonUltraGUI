@@ -176,6 +176,20 @@ class AutopwnRunProgress {
 
 class MifareClassicRecoveryCancelled implements Exception {}
 
+class MifareClassicRecoveryActivity {
+  const MifareClassicRecoveryActivity({
+    required this.label,
+    required this.completed,
+    required this.total,
+  });
+
+  final String label;
+  final int completed;
+  final int total;
+
+  double get progress => total == 0 ? 0 : (completed / total).clamp(0, 1);
+}
+
 class MifareClassicRecovery {
   late ChameleonGUIState appState;
   late AppLocalizations localizations;
@@ -190,6 +204,8 @@ class MifareClassicRecovery {
   double dumpProgress;
   double? hardnestedProgress;
   double? keyCheckProgress;
+  MifareClassicRecoveryActivity? activityProgress;
+  String? cardUid;
   void Function() update;
   MifareClassicType mifareClassicType;
   bool isMifareClassicEV1;
@@ -209,6 +225,7 @@ class MifareClassicRecovery {
     this.selectedDictionary,
     this.mifareClassicType = MifareClassicType.none,
     this.isMifareClassicEV1 = false,
+    this.cardUid,
     List<ChameleonKeyCheckmark>? checkMarks,
     List<Uint8List>? validKeys,
     List<Uint8List>? cardData,
@@ -261,6 +278,63 @@ class MifareClassicRecovery {
     update();
   }
 
+  void _updateActivityProgress(
+    String label, {
+    required int completed,
+    required int total,
+  }) {
+    activityProgress = MifareClassicRecoveryActivity(
+      label: label,
+      completed: completed,
+      total: total,
+    );
+    update();
+  }
+
+  void setActivityProgress(
+    String label, {
+    required int completed,
+    required int total,
+  }) {
+    _updateActivityProgress(label, completed: completed, total: total);
+  }
+
+  void clearActivityProgress() {
+    activityProgress = null;
+    update();
+  }
+
+  String _nonceCaptureFingerprint(
+    String attack, {
+    required int knownBlock,
+    required int knownKeyType,
+    required int targetBlock,
+    required int targetKeyType,
+    required NTDistance distance,
+    required NestedNonces nonces,
+  }) =>
+      '$attack|$knownBlock|$knownKeyType|$targetBlock|$targetKeyType|'
+      '${distance.uid}|${distance.distance}|'
+      '${nonces.nonces.map((nonce) => '${nonce.nt}:${nonce.ntEnc}:${nonce.parity}').join(',')}';
+
+  bool _hasStoredNonceCapture(String fingerprint) {
+    final uid = cardUid;
+    return uid != null &&
+        appState.sharedPreferencesProvider.hasMifareClassicNonceSample(
+          uid,
+          fingerprint,
+        );
+  }
+
+  Future<void> _storeNonceCapture(String fingerprint) async {
+    final uid = cardUid;
+    if (uid == null) return;
+    await appState.sharedPreferencesProvider.recordMifareClassicNonceSample(
+      uid,
+      fingerprint,
+    );
+  }
+
   // Reorder candidates so defaults and keys already verified on another sector
   // are tried first.
   List<Uint8List> _prioritiseCandidates(List<Uint8List> keys) {
@@ -290,10 +364,16 @@ class MifareClassicRecovery {
 
     if (getSectorState(sector, keyType) != ChameleonKeyCheckmark.found &&
         getSectorState(sector, keyType) != ChameleonKeyCheckmark.disabled) {
+      _updateActivityProgress(
+        'Key candidates',
+        completed: 0,
+        total: keys.length,
+      );
       setCheckingSector(sector, keyType);
       int totalChunks = keys.partition(chunkSize).length;
 
       var chunkIndex = 0;
+      var checkedCandidates = 0;
       for (var chunk in keys.partition(chunkSize)) {
         _throwIfCancelled();
         keyCheckProgress = totalChunks <= 1 ? null : chunkIndex / totalChunks;
@@ -305,6 +385,12 @@ class MifareClassicRecovery {
         );
         _throwIfCancelled();
         chunkIndex++;
+        checkedCandidates += chunk.length;
+        _updateActivityProgress(
+          'Key candidates',
+          completed: checkedCandidates,
+          total: keys.length,
+        );
         if (key != null) {
           setKeyAsFound(sector, keyType, key);
           keyCheckProgress = null;
@@ -396,37 +482,53 @@ class MifareClassicRecovery {
     // an earlier, still-unresolved sector. Trying it there is one cheap auth
     // that can avoid an expensive nested/darkside attack. Only sectors still in
     // the `none` state are probed, so resolved sectors are skipped.
-    for (
-      var sector = 0;
-      sector <
-          mfClassicGetSectorCount(mifareClassicType, isEV1: isMifareClassicEV1);
-      sector++
-    ) {
-      for (var keyType = 0; keyType < 2; keyType++) {
+    final targets = <(int, int)>[
+      for (
+        var sector = 0;
+        sector <
+            mfClassicGetSectorCount(
+              mifareClassicType,
+              isEV1: isMifareClassicEV1,
+            );
+        sector++
+      )
+        for (var keyType = 0; keyType < 2; keyType++)
+          if (getSectorState(sector, keyType) == ChameleonKeyCheckmark.none)
+            (sector, keyType),
+    ];
+    if (targets.isEmpty) return;
+    _updateActivityProgress(
+      'Reused key checks',
+      completed: 0,
+      total: targets.length,
+    );
+    var checkedTargets = 0;
+    for (final (sector, keyType) in targets) {
+      _throwIfCancelled();
+      state = localizations.checking_keys(1);
+      appState.log!.d(
+        "Checking found key ${bytesToHex(key)} on sector $sector, key type $keyType",
+      );
+      setCheckingSector(sector, keyType);
+
+      if (await appState.communicator!.mf1Auth(
+        mfClassicGetSectorTrailerBlockBySector(sector),
+        0x60 + keyType,
+        key,
+      )) {
         _throwIfCancelled();
-        if (getSectorState(sector, keyType) == ChameleonKeyCheckmark.none) {
-          state = localizations.checking_keys(1);
-          appState.log!.d(
-            "Checking found key ${bytesToHex(key)} on sector $sector, key type $keyType",
-          );
-          setCheckingSector(sector, keyType);
-
-          if (await appState.communicator!.mf1Auth(
-            mfClassicGetSectorTrailerBlockBySector(sector),
-            0x60 + keyType,
-            key,
-          )) {
-            _throwIfCancelled();
-            // Found valid key
-            setKeyAsFound(sector, keyType, key);
-          } else {
-            _throwIfCancelled();
-            setMissingSector(sector, keyType);
-          }
-
-          update();
-        }
+        setKeyAsFound(sector, keyType, key);
+      } else {
+        _throwIfCancelled();
+        setMissingSector(sector, keyType);
       }
+
+      checkedTargets++;
+      _updateActivityProgress(
+        'Reused key checks',
+        completed: checkedTargets,
+        total: targets.length,
+      );
     }
   }
 
@@ -601,9 +703,17 @@ class MifareClassicRecovery {
     required Future<bool> Function(List<int> candidates) verifyCandidates,
   }) async {
     final evidence = <List<int>>[];
+    final evidenceFingerprints = <String>[];
     final attemptedCandidates = <int>{};
     var distance = initialDistance;
     NTDistance? evidenceDistance;
+    final totalNonces = attempts * 2;
+    var collectedNonces = 0;
+    _updateActivityProgress(
+      'Nested nonces',
+      completed: collectedNonces,
+      total: totalNonces,
+    );
 
     for (var attempt = 0; attempt < attempts; attempt++) {
       _throwIfCancelled();
@@ -633,7 +743,32 @@ class MifareClassicRecovery {
         level: NTLevel.weak,
       );
       _throwIfCancelled();
+      collectedNonces += nonces.nonces.length;
+      if (collectedNonces > totalNonces) collectedNonces = totalNonces;
+      _updateActivityProgress(
+        'Nested nonces',
+        completed: collectedNonces,
+        total: totalNonces,
+      );
       if (nonces.nonces.length < 2) {
+        distance = null;
+        continue;
+      }
+
+      final fingerprint = _nonceCaptureFingerprint(
+        'weak',
+        knownBlock: knownBlock,
+        knownKeyType: knownKeyType,
+        targetBlock: targetBlock,
+        targetKeyType: targetKeyType,
+        distance: distance,
+        nonces: nonces,
+      );
+      if (_hasStoredNonceCapture(fingerprint)) {
+        _updatePhase(
+          AutopwnPhase.nested,
+          'Nested: skipping a stored nonce capture for $targetLabel',
+        );
         distance = null;
         continue;
       }
@@ -664,6 +799,7 @@ class MifareClassicRecovery {
         continue;
       }
       evidence.add(candidates);
+      evidenceFingerprints.add(fingerprint);
       evidenceDistance = distance;
       if (rankAcrossCaptures) {
         appState.log!.d(
@@ -679,12 +815,19 @@ class MifareClassicRecovery {
           .where((candidate) => !attemptedCandidates.contains(candidate))
           .toList();
       attemptedCandidates.addAll(verificationCandidates);
+      if (verificationCandidates.isEmpty) {
+        distance = null;
+        continue;
+      }
       _updatePhase(
         AutopwnPhase.nested,
         "Nested: checking ${verificationCandidates.length}/${candidates.length} candidates for $targetLabel",
       );
 
-      if (await verifyCandidates(verificationCandidates)) {
+      final found = await verifyCandidates(verificationCandidates);
+      await _storeNonceCapture(fingerprint);
+      _throwIfCancelled();
+      if (found) {
         _throwIfCancelled();
         return (true, distance);
       }
@@ -701,7 +844,12 @@ class MifareClassicRecovery {
         AutopwnPhase.nested,
         "Nested: checking ${ranked.length} ranked candidates for $targetLabel",
       );
-      if (await verifyCandidates(ranked)) {
+      final found = await verifyCandidates(ranked);
+      for (final fingerprint in evidenceFingerprints) {
+        await _storeNonceCapture(fingerprint);
+      }
+      _throwIfCancelled();
+      if (found) {
         _throwIfCancelled();
         return (true, evidenceDistance);
       }
@@ -740,6 +888,7 @@ class MifareClassicRecovery {
     String targetLabel = "target key",
     required Future<bool> Function(List<int> candidates) verifyCandidates,
   }) async {
+    _updateActivityProgress('Static Nested nonces', completed: 0, total: 2);
     _updatePhase(
       AutopwnPhase.staticNested,
       "Static Nested: collecting nonces for $targetLabel",
@@ -761,11 +910,33 @@ class MifareClassicRecovery {
       level: NTLevel.static,
     );
     _throwIfCancelled();
+    _updateActivityProgress(
+      'Static Nested nonces',
+      completed: nonces.nonces.length > 2 ? 2 : nonces.nonces.length,
+      total: 2,
+    );
     if (nonces.nonces.length < 2) {
       return StaticNestedAttemptResult.noKey;
     }
     if (!const {0x01200145, 0x009080A2}.contains(nonces.nonces[0].nt)) {
       return StaticNestedAttemptResult.incompatible;
+    }
+
+    final fingerprint = _nonceCaptureFingerprint(
+      'static',
+      knownBlock: knownBlock,
+      knownKeyType: knownKeyType,
+      targetBlock: targetBlock,
+      targetKeyType: targetKeyType,
+      distance: distance,
+      nonces: nonces,
+    );
+    if (_hasStoredNonceCapture(fingerprint)) {
+      _updatePhase(
+        AutopwnPhase.staticNested,
+        'Static Nested: skipping a stored nonce capture for $targetLabel',
+      );
+      return StaticNestedAttemptResult.noKey;
     }
 
     state = localizations.recovering_key("Static Nested");
@@ -792,7 +963,10 @@ class MifareClassicRecovery {
     if (candidates.isEmpty) {
       return StaticNestedAttemptResult.noKey;
     }
-    return await verifyCandidates(candidates)
+    final found = await verifyCandidates(candidates);
+    await _storeNonceCapture(fingerprint);
+    _throwIfCancelled();
+    return found
         ? StaticNestedAttemptResult.found
         : StaticNestedAttemptResult.noKey;
   }
@@ -1602,6 +1776,7 @@ class MifareClassicRecovery {
           for (var i = 0; i < tries && !found; i++) {
             _throwIfCancelled();
             List<int> keys = [];
+            String? nonceFingerprint;
 
             if (prng == NTLevel.hard) {
               hardnestedProgress = 0;
@@ -1628,6 +1803,11 @@ class MifareClassicRecovery {
                 nonces = result as NestedNonces;
               }
             } else if (prng != NTLevel.backdoor) {
+              _updateActivityProgress(
+                'Static Nested nonces',
+                completed: 0,
+                total: 2,
+              );
               nonces = await appState.communicator!.getMf1NestedNonces(
                 validKeyBlock,
                 0x60 + validKeyType,
@@ -1637,16 +1817,38 @@ class MifareClassicRecovery {
                 level: prng,
               );
               _throwIfCancelled();
+              _updateActivityProgress(
+                'Static Nested nonces',
+                completed: nonces.nonces.length > 2 ? 2 : nonces.nonces.length,
+                total: 2,
+              );
             }
 
             state = localizations.recovering_key(attackType);
             update();
 
             if (prng == NTLevel.static) {
+              if (nonces!.nonces.length < 2) continue;
+              nonceFingerprint = _nonceCaptureFingerprint(
+                'static',
+                knownBlock: validKeyBlock,
+                knownKeyType: 0x60 + validKeyType,
+                targetBlock: mfClassicGetSectorTrailerBlockBySector(sector),
+                targetKeyType: 0x60 + keyType,
+                distance: distance!,
+                nonces: nonces,
+              );
+              if (_hasStoredNonceCapture(nonceFingerprint)) {
+                _updatePhase(
+                  AutopwnPhase.staticNested,
+                  'Static Nested: skipping a stored nonce capture for $targetLabel',
+                );
+                continue;
+              }
               var nested = StaticNestedDart(
-                uid: distance!.uid,
+                uid: distance.uid,
                 keyType: 0x60 + keyType,
-                nt0: nonces!.nonces[0].nt,
+                nt0: nonces.nonces[0].nt,
                 nt0Enc: nonces.nonces[0].ntEnc,
                 nt1: nonces.nonces[1].nt,
                 nt1Enc: nonces.nonces[1].ntEnc,
@@ -1742,11 +1944,16 @@ class MifareClassicRecovery {
                 "Checking ${keys.length} recovered key candidates...",
               );
 
-              if (await checkKeysOnSector(
+              final verified = await checkKeysOnSector(
                 mfClassicConvertKeys(keys),
                 keyType,
                 sector,
-              )) {
+              );
+              if (nonceFingerprint != null) {
+                await _storeNonceCapture(nonceFingerprint);
+                _throwIfCancelled();
+              }
+              if (verified) {
                 _throwIfCancelled();
                 found = true;
 
@@ -2026,6 +2233,11 @@ class MifareClassicRecovery {
   ) async {
     _throwIfCancelled();
     NestedNonces nonces = NestedNonces(nonces: []);
+    _updateActivityProgress(
+      'Hardnested nonce coverage',
+      completed: 0,
+      total: 256,
+    );
     while (true) {
       _throwIfCancelled();
       var collectedNonces = await appState.communicator!.getMf1NestedNonces(
@@ -2048,6 +2260,11 @@ class MifareClassicRecovery {
       }
 
       hardnestedProgress = info[1] / 256;
+      _updateActivityProgress(
+        'Hardnested nonce coverage',
+        completed: info[1] as int,
+        total: 256,
+      );
       state = localizations.hardnested_collecting_nonces(
         (hardnestedProgress! * 256).toInt().toString(),
       );
@@ -2084,6 +2301,11 @@ class MifareClassicRecovery {
 
         appState.log!.e("Got wrong sum, trying to collect nonces again...");
         nonces.nonces = [];
+        _updateActivityProgress(
+          'Hardnested nonce coverage',
+          completed: 0,
+          total: 256,
+        );
       }
     }
 

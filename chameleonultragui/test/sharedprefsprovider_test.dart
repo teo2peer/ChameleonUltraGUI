@@ -124,6 +124,31 @@ void main() {
   });
 
   test(
+    'nonce history is opt-in, deduplicated by UID, and removable per card',
+    () async {
+      const uid = '04 11 22 33';
+      const sample = 'weak|capture-one';
+
+      expect(preferences.getMifareClassicNonceHistoryEnabled(), isFalse);
+      await preferences.setMifareClassicNonceHistoryEnabled(true);
+      await preferences.recordMifareClassicNonceSample(uid, sample);
+      await preferences.recordMifareClassicNonceSample(uid, sample);
+      await preferences.recordMifareClassicNonceSample(uid, 'weak|capture-two');
+
+      expect(preferences.hasMifareClassicNonceSample(uid, sample), isTrue);
+      final summaries = preferences.getMifareClassicNonceHistorySummaries();
+      expect(summaries, hasLength(1));
+      expect(summaries.single.cardUid, '04112233');
+      expect(summaries.single.sampleCount, 2);
+      expect(summaries.single.byteSize, greaterThan(0));
+      expect(preferences.dumpSettingsToJson(), isNot(contains('04112233')));
+
+      await preferences.clearMifareClassicNonceHistoryForCard(uid);
+      expect(preferences.getMifareClassicNonceHistorySummaries(), isEmpty);
+    },
+  );
+
+  test(
     'legacy flat backup migrates only allowlisted scalar settings',
     () async {
       await preferences.restoreSettingsFromJson(

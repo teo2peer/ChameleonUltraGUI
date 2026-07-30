@@ -14,6 +14,7 @@ import 'package:chameleonultragui/sharedprefsprovider.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:logger/logger.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
   test('Test darkside', () async {
@@ -67,9 +68,14 @@ void main() {
       ChameleonKeyCheckmark.disabled,
     );
     checkMarks[41] = ChameleonKeyCheckmark.none;
-    final engine = MifareClassicRecovery(
+    final activityUpdates = <MifareClassicRecoveryActivity>[];
+    late final MifareClassicRecovery engine;
+    engine = MifareClassicRecovery(
       appState: appState,
-      update: () {},
+      update: () {
+        final activity = engine.activityProgress;
+        if (activity != null) activityUpdates.add(activity);
+      },
       localizations: lookupAppLocalizations(const Locale('en')),
       mifareClassicType: MifareClassicType.mini,
       checkMarks: checkMarks,
@@ -98,6 +104,22 @@ void main() {
     expect(
       engine.getSectorKey(1, 1),
       orderedEquals(hexToBytes('FFFFFFFFFFFF')),
+    );
+    expect(engine.activityProgress?.label, 'Key candidates');
+    expect(engine.activityProgress?.total, greaterThan(0));
+    expect(engine.activityProgress?.completed, 12);
+    expect(
+      engine.activityProgress!.completed,
+      lessThanOrEqualTo(engine.activityProgress!.total),
+    );
+    expect(
+      activityUpdates,
+      contains(
+        isA<MifareClassicRecoveryActivity>()
+            .having((value) => value.label, 'label', 'Nested nonces')
+            .having((value) => value.completed, 'completed', 2)
+            .having((value) => value.total, 'total', 10),
+      ),
     );
   });
 
@@ -139,6 +161,95 @@ void main() {
       );
     },
     timeout: const Timeout(Duration(minutes: 2)),
+  );
+
+  test('nonce history skips a previously processed Nested capture', () async {
+    SharedPreferences.setMockInitialValues({});
+    final preferences = SharedPreferencesProvider();
+    await preferences.load();
+    await preferences.setMifareClassicNonceHistoryEnabled(true);
+    final serial = _UsbTestSerial();
+
+    MifareClassicRecovery createRecovery(_WeakNestedCard communicator) {
+      final appState = ChameleonGUIState(preferences)
+        ..log = Logger(level: Level.off)
+        ..connector = serial
+        ..communicator = communicator;
+      final checkMarks = List<ChameleonKeyCheckmark>.filled(
+        80,
+        ChameleonKeyCheckmark.disabled,
+      );
+      checkMarks[41] = ChameleonKeyCheckmark.none;
+      return MifareClassicRecovery(
+        appState: appState,
+        update: () {},
+        localizations: lookupAppLocalizations(const Locale('en')),
+        mifareClassicType: MifareClassicType.mini,
+        checkMarks: checkMarks,
+        cardUid: '04 11 22 33',
+      );
+    }
+
+    final firstCard = _WeakNestedCard();
+    final first = createRecovery(firstCard);
+    expect(
+      await first.recoverNestedSingle(hexToBytes('A0A1A2A3A4A5'), 0, 0, 1, 1),
+      isTrue,
+    );
+
+    final repeatedCard = _WeakNestedCard();
+    final repeated = createRecovery(repeatedCard);
+    expect(
+      await repeated.recoverNestedSingle(
+        hexToBytes('A0A1A2A3A4A5'),
+        0,
+        0,
+        1,
+        1,
+      ),
+      isFalse,
+    );
+    expect(repeatedCard.nonceRequests, 5);
+    expect(repeatedCard.attemptedKeys, isEmpty);
+
+    await preferences.setMifareClassicNonceHistoryEnabled(false);
+  });
+
+  test(
+    'cancelled candidate verification does not store a nonce capture',
+    () async {
+      SharedPreferences.setMockInitialValues({});
+      final preferences = SharedPreferencesProvider();
+      await preferences.load();
+      await preferences.setMifareClassicNonceHistoryEnabled(true);
+      final communicator = _WeakNestedCard();
+      final appState = ChameleonGUIState(preferences)
+        ..log = Logger(level: Level.off)
+        ..connector = _UsbTestSerial()
+        ..communicator = communicator;
+      final checkMarks = List<ChameleonKeyCheckmark>.filled(
+        80,
+        ChameleonKeyCheckmark.disabled,
+      );
+      checkMarks[41] = ChameleonKeyCheckmark.none;
+      final engine = MifareClassicRecovery(
+        appState: appState,
+        update: () {},
+        localizations: lookupAppLocalizations(const Locale('en')),
+        mifareClassicType: MifareClassicType.mini,
+        checkMarks: checkMarks,
+        cardUid: '04 11 22 33',
+      );
+      communicator.onAuthMultipleKeys = engine.cancel;
+
+      await expectLater(
+        engine.recoverNestedSingle(hexToBytes('A0A1A2A3A4A5'), 0, 0, 1, 1),
+        throwsA(isA<MifareClassicRecoveryCancelled>()),
+      );
+      expect(preferences.getMifareClassicNonceHistorySummaries(), isEmpty);
+
+      await preferences.setMifareClassicNonceHistoryEnabled(false);
+    },
   );
 
   test(
@@ -282,6 +393,7 @@ class _WeakNestedCard extends ChameleonCommunicator {
   int? knownKeyType;
   int? targetBlock;
   int? targetKeyType;
+  void Function()? onAuthMultipleKeys;
 
   @override
   Future<NTDistance> getMf1NTDistance(
@@ -324,6 +436,7 @@ class _WeakNestedCard extends ChameleonCommunicator {
     int keyType,
     List<Uint8List> keys,
   ) async {
+    onAuthMultipleKeys?.call();
     attemptedKeys.addAll(keys.map(Uint8List.fromList));
     for (final key in keys) {
       if (bytesToHex(key) == bytesToHex(targetKey)) {
