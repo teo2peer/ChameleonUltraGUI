@@ -2386,10 +2386,24 @@ class ChameleonCommunicator {
   }
 
   Future<Uint8List> mf1GetEmulatorBlock(int startBlock, int blockCount) async {
-    return (await sendCmd(
+    if (startBlock < 0 ||
+        startBlock > 255 ||
+        blockCount < 1 ||
+        blockCount > 32 ||
+        startBlock + blockCount > 256) {
+      throw RangeError('Emulator block range is outside MIFARE Classic memory');
+    }
+    final response = await _sendChecked(
       ChameleonCommand.mf1GetBlockData,
       data: Uint8List.fromList([startBlock, blockCount]),
-    ))!.data;
+    );
+    final expectedLength = blockCount * 16;
+    if (response.data.length != expectedLength) {
+      throw FormatException(
+        'Invalid MIFARE emulator read length: expected $expectedLength, got ${response.data.length}',
+      );
+    }
+    return response.data;
   }
 
   Future<Uint8List> mf1GetSnapshotBlocks(
