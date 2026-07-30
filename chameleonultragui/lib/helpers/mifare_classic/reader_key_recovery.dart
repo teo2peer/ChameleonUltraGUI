@@ -46,7 +46,7 @@ enum ReaderKeyRecoveryFailure {
   needsMoreRecords,
   noKey,
   solverError,
-  cancelled
+  cancelled,
 }
 
 class ReaderKeyRecoveryResult {
@@ -67,6 +67,95 @@ class ReaderKeyRecoveryResult {
     this.failure,
     this.error,
   });
+}
+
+int readerKeySectorTrailerBlock(int sector) {
+  if (sector < 0 || sector > 39) {
+    throw RangeError.range(sector, 0, 39, 'sector');
+  }
+  return sector < 32 ? sector * 4 + 3 : 128 + (sector - 32) * 16 + 15;
+}
+
+Uint8List applyReaderKeyToTrailer({
+  required Uint8List trailer,
+  required Uint8List key,
+  required bool keyB,
+}) {
+  if (trailer.length != 16) {
+    throw ArgumentError.value(trailer.length, 'trailer.length', 'must be 16');
+  }
+  if (key.length != 6) {
+    throw ArgumentError.value(key.length, 'key.length', 'must be 6');
+  }
+
+  final output = Uint8List.fromList(trailer);
+  output.setRange(keyB ? 10 : 0, keyB ? 16 : 6, key);
+  if (keyB) {
+    var condition = readerKeyTrailerAccessCondition(output);
+    if (condition == null) {
+      // The firmware rejects all access when any redundant complement differs.
+      // Keep the effective C bits and rebuild only their inverted copies.
+      var invertedC1 = 0;
+      var invertedC2 = 0;
+      var invertedC3 = 0;
+      for (var group = 0; group < 4; group++) {
+        invertedC1 |= (((output[7] >> (4 + group)) & 1) ^ 1) << group;
+        invertedC2 |= (((output[8] >> group) & 1) ^ 1) << group;
+        invertedC3 |= (((output[8] >> (4 + group)) & 1) ^ 1) << group;
+      }
+      output[6] = invertedC1 | (invertedC2 << 4);
+      output[7] = (output[7] & 0xF0) | invertedC3;
+      condition = readerKeyTrailerAccessCondition(output);
+    }
+    if (const {0, 2, 4}.contains(condition)) {
+      // A readable Key B is data, not an authentication key. Change only the
+      // trailer condition to 100 and preserve all data-block access bits.
+      output[6] = (output[6] | 0x80) & 0xF7;
+      output[7] |= 0x88;
+      output[8] &= 0x77;
+    }
+  }
+  return output;
+}
+
+int? readerKeyTrailerAccessCondition(Uint8List trailer) {
+  if (trailer.length != 16) {
+    throw ArgumentError.value(trailer.length, 'trailer.length', 'must be 16');
+  }
+
+  for (var group = 0; group < 4; group++) {
+    final c1 = (trailer[7] >> (4 + group)) & 1;
+    final c2 = (trailer[8] >> group) & 1;
+    final c3 = (trailer[8] >> (4 + group)) & 1;
+    final invertedC1 = (trailer[6] >> group) & 1;
+    final invertedC2 = (trailer[6] >> (4 + group)) & 1;
+    final invertedC3 = (trailer[7] >> group) & 1;
+    if (invertedC1 == c1 || invertedC2 == c2 || invertedC3 == c3) {
+      return null;
+    }
+  }
+
+  const group = 3;
+  final c1 = (trailer[7] >> (4 + group)) & 1;
+  final c2 = (trailer[8] >> group) & 1;
+  final c3 = (trailer[8] >> (4 + group)) & 1;
+  return c1 | (c2 << 1) | (c3 << 2);
+}
+
+Uint8List applyUidToSyntheticManufacturerBlock({
+  required Uint8List block,
+  required Uint8List uid,
+}) {
+  if (block.length != 16) {
+    throw ArgumentError.value(block.length, 'block.length', 'must be 16');
+  }
+  if (uid.length != 4) {
+    throw ArgumentError.value(uid.length, 'uid.length', 'must be 4');
+  }
+  final output = Uint8List.fromList(block);
+  output.setRange(0, 4, uid);
+  output[4] = uid.fold(0, (bcc, byte) => bcc ^ byte);
+  return output;
 }
 
 typedef ReaderMfkey32Solver = Future<int?> Function(Mfkey32Dart request);
@@ -122,21 +211,25 @@ Future<List<ReaderKeyRecoveryResult>> recoverReaderKeys({
 
   for (final group in groups) {
     if (isCancelled?.call() == true) {
-      results.add(_failureResult(
-        group,
-        ReaderKeyRecoveryFailure.cancelled,
-        attemptedPairs: 0,
-      ));
+      results.add(
+        _failureResult(
+          group,
+          ReaderKeyRecoveryFailure.cancelled,
+          attemptedPairs: 0,
+        ),
+      );
       break;
     }
 
     final records = group.records;
     if (records.length < 2) {
-      results.add(_failureResult(
-        group,
-        ReaderKeyRecoveryFailure.needsMoreRecords,
-        attemptedPairs: 0,
-      ));
+      results.add(
+        _failureResult(
+          group,
+          ReaderKeyRecoveryFailure.needsMoreRecords,
+          attemptedPairs: 0,
+        ),
+      );
       onProgress?.call(results.length, groups.length, group.target);
       continue;
     }
@@ -156,15 +249,17 @@ Future<List<ReaderKeyRecoveryResult>> recoverReaderKeys({
           }
           attempts++;
           try {
-            final raw = await solver(Mfkey32Dart(
-              uid: group.target.uid,
-              nt0: records[i].nt,
-              nt1: records[j].nt,
-              nr0Enc: records[i].nr,
-              ar0Enc: records[i].ar,
-              nr1Enc: records[j].nr,
-              ar1Enc: records[j].ar,
-            ));
+            final raw = await solver(
+              Mfkey32Dart(
+                uid: group.target.uid,
+                nt0: records[i].nt,
+                nt1: records[j].nt,
+                nr0Enc: records[i].nr,
+                ar0Enc: records[i].ar,
+                nr1Enc: records[j].nr,
+                ar1Enc: records[j].ar,
+              ),
+            );
             key = _mfkey32Bytes(raw);
           } catch (error) {
             solverError = error;
@@ -182,21 +277,23 @@ Future<List<ReaderKeyRecoveryResult>> recoverReaderKeys({
     }
 
     final cancelled = isCancelled?.call() == true;
-    results.add(ReaderKeyRecoveryResult(
-      target: group.target,
-      key: key,
-      blocks: group.blocks,
-      transcriptCount: records.length,
-      attemptedPairs: attempts,
-      failure: key != null
-          ? null
-          : cancelled
-              ? ReaderKeyRecoveryFailure.cancelled
-              : solverError != null
-                  ? ReaderKeyRecoveryFailure.solverError
-                  : ReaderKeyRecoveryFailure.noKey,
-      error: solverError?.toString(),
-    ));
+    results.add(
+      ReaderKeyRecoveryResult(
+        target: group.target,
+        key: key,
+        blocks: group.blocks,
+        transcriptCount: records.length,
+        attemptedPairs: attempts,
+        failure: key != null
+            ? null
+            : cancelled
+            ? ReaderKeyRecoveryFailure.cancelled
+            : solverError != null
+            ? ReaderKeyRecoveryFailure.solverError
+            : ReaderKeyRecoveryFailure.noKey,
+        error: solverError?.toString(),
+      ),
+    );
     onProgress?.call(results.length, groups.length, group.target);
     if (cancelled) break;
   }
@@ -208,12 +305,16 @@ Future<List<ReaderKeyRecoveryResult>> recoverReaderKeys({
         results[index].target: index,
     };
 
-    for (var leftIndex = 0;
-        leftIndex < groups.length && crossAttempts < maxCrossTargetPairs;
-        leftIndex++) {
-      for (var rightIndex = leftIndex + 1;
-          rightIndex < groups.length && crossAttempts < maxCrossTargetPairs;
-          rightIndex++) {
+    for (
+      var leftIndex = 0;
+      leftIndex < groups.length && crossAttempts < maxCrossTargetPairs;
+      leftIndex++
+    ) {
+      for (
+        var rightIndex = leftIndex + 1;
+        rightIndex < groups.length && crossAttempts < maxCrossTargetPairs;
+        rightIndex++
+      ) {
         final left = groups[leftIndex];
         final right = groups[rightIndex];
         if (left.target.uid != right.target.uid) continue;
@@ -240,15 +341,17 @@ Future<List<ReaderKeyRecoveryResult>> recoverReaderKeys({
             }
             crossAttempts++;
             try {
-              final raw = await solver(Mfkey32Dart(
-                uid: left.target.uid,
-                nt0: leftRecord.nt,
-                nt1: rightRecord.nt,
-                nr0Enc: leftRecord.nr,
-                ar0Enc: leftRecord.ar,
-                nr1Enc: rightRecord.nr,
-                ar1Enc: rightRecord.ar,
-              ));
+              final raw = await solver(
+                Mfkey32Dart(
+                  uid: left.target.uid,
+                  nt0: leftRecord.nt,
+                  nt1: rightRecord.nt,
+                  nr0Enc: leftRecord.nr,
+                  ar0Enc: leftRecord.ar,
+                  nr1Enc: rightRecord.nr,
+                  ar1Enc: rightRecord.ar,
+                ),
+              );
               sharedKey = _mfkey32Bytes(raw);
             } catch (_) {
               break;
@@ -266,12 +369,18 @@ Future<List<ReaderKeyRecoveryResult>> recoverReaderKeys({
           continue;
         }
         if (leftExisting == null) {
-          results[leftResultIndex] = _recoveredResult(left, sharedKey,
-              attemptedPairs: results[leftResultIndex].attemptedPairs + 1);
+          results[leftResultIndex] = _recoveredResult(
+            left,
+            sharedKey,
+            attemptedPairs: results[leftResultIndex].attemptedPairs + 1,
+          );
         }
         if (rightExisting == null) {
-          results[rightResultIndex] = _recoveredResult(right, sharedKey,
-              attemptedPairs: results[rightResultIndex].attemptedPairs + 1);
+          results[rightResultIndex] = _recoveredResult(
+            right,
+            sharedKey,
+            attemptedPairs: results[rightResultIndex].attemptedPairs + 1,
+          );
         }
       }
     }
