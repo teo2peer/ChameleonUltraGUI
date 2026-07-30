@@ -4,6 +4,7 @@ import 'package:chameleonultragui/gui/menu/tools/dictionary_download.dart';
 import 'package:chameleonultragui/gui/menu/tools/emulation_change_history.dart';
 import 'package:chameleonultragui/gui/menu/tools/hf_sniffing.dart';
 import 'package:chameleonultragui/gui/menu/tools/lf_sniffing.dart';
+import 'package:chameleonultragui/gui/menu/tools/pm3_tools.dart';
 import 'package:chameleonultragui/gui/menu/tools/t55xx_password_cleaner.dart';
 import 'package:chameleonultragui/main.dart';
 import 'package:flutter/material.dart';
@@ -18,6 +19,7 @@ class ToolItem {
   final IconData icon;
   final bool isDeviceRequired;
   final bool showWipBadge;
+  final bool openAsPage;
   final Widget? onPressed;
 
   ToolItem({
@@ -26,6 +28,7 @@ class ToolItem {
     required this.icon,
     this.isDeviceRequired = false,
     this.showWipBadge = false,
+    this.openAsPage = false,
     this.onPressed,
   });
 }
@@ -45,51 +48,63 @@ class ToolsPageState extends State<ToolsPage> {
 
     List<ToolItem> tools = [
       ToolItem(
-          name: localizations.compare_cards,
-          description: localizations.compare_cards_description,
-          icon: Icons.difference,
-          onPressed: const CompareCardsMenu()),
+        name: localizations.compare_cards,
+        description: localizations.compare_cards_description,
+        icon: Icons.difference,
+        onPressed: const CompareCardsMenu(),
+      ),
       ToolItem(
-          name: localizations.dictionary_download,
-          description: localizations.dictionary_download_description,
-          icon: Icons.key,
-          onPressed: const DictionaryDownloadMenu()),
+        name: localizations.dictionary_download,
+        description: localizations.dictionary_download_description,
+        icon: Icons.key,
+        onPressed: const DictionaryDownloadMenu(),
+      ),
       ToolItem(
-          name: 'Emulated tag history',
-          description:
-              'Monitor reader-written MIFARE Classic changes and keep block-level history on this phone.',
-          icon: Icons.history,
-          onPressed: const EmulationChangeHistoryMenu()),
+        name: 'Emulated tag history',
+        description:
+            'Monitor reader-written MIFARE Classic changes and keep block-level history on this phone.',
+        icon: Icons.history,
+        onPressed: const EmulationChangeHistoryMenu(),
+      ),
       ToolItem(
-          name: localizations.t55xx_password_cleaner,
-          description: localizations.t55xx_password_cleaner_description,
-          icon: Icons.password,
-          onPressed: const T55XXPasswordCleanerMenu(),
-          isDeviceRequired: true),
+        name: localizations.pm3_tools,
+        description: localizations.pm3_tools_description,
+        icon: Icons.developer_board,
+        onPressed: const Pm3ToolsPage(),
+        openAsPage: true,
+      ),
       ToolItem(
-          name: localizations.lf_sniffing,
-          description: localizations.lf_sniffing_description,
-          icon: Icons.graphic_eq,
-          onPressed: const LfSniffingMenu(),
-          isDeviceRequired: true),
+        name: localizations.t55xx_password_cleaner,
+        description: localizations.t55xx_password_cleaner_description,
+        icon: Icons.password,
+        onPressed: const T55XXPasswordCleanerMenu(),
+        isDeviceRequired: true,
+      ),
       ToolItem(
-          name: localizations.hf_sniffing,
-          description: localizations.hf_sniffing_description,
-          icon: Icons.radar,
-          onPressed: const HfSniffingMenu(),
-          showWipBadge: true,
-          isDeviceRequired: true),
+        name: localizations.lf_sniffing,
+        description: localizations.lf_sniffing_description,
+        icon: Icons.graphic_eq,
+        onPressed: const LfSniffingMenu(),
+        isDeviceRequired: true,
+      ),
       ToolItem(
-          name: localizations.mifare_classic_gen4,
-          description: localizations.mifare_classic_gen4_description,
-          icon: Icons.settings,
-          isDeviceRequired: true),
+        name: localizations.hf_sniffing,
+        description: localizations.hf_sniffing_description,
+        icon: Icons.radar,
+        onPressed: const HfSniffingMenu(),
+        showWipBadge: true,
+        isDeviceRequired: true,
+      ),
+      ToolItem(
+        name: localizations.mifare_classic_gen4,
+        description: localizations.mifare_classic_gen4_description,
+        icon: Icons.settings,
+        isDeviceRequired: true,
+      ),
     ];
 
     return Scaffold(
-      appBar: AppBar(
-        title: Text(localizations.tools),
-      ),
+      appBar: AppBar(title: Text(localizations.tools)),
       body: SingleChildScrollView(
         child: Padding(
           padding: const EdgeInsets.all(16.0),
@@ -108,24 +123,36 @@ class ToolsPageState extends State<ToolsPage> {
               return Stack(
                 children: [
                   ElementButton(
-                      icon: tool.icon,
-                      iconColor: Theme.of(context).colorScheme.primary,
-                      firstLine: tool.name,
-                      secondLine: tool.description,
-                      itemIndex: index,
-                      maxLineLines: 3,
-                      onPressed: tool.onPressed != null &&
-                              (!tool.isDeviceRequired ||
-                                  appState.connector!.connected)
-                          ? () {
+                    icon: tool.icon,
+                    iconColor: Theme.of(context).colorScheme.primary,
+                    firstLine: tool.name,
+                    secondLine: tool.description,
+                    itemIndex: index,
+                    maxLineLines: 3,
+                    onPressed:
+                        tool.onPressed != null &&
+                            (!tool.isDeviceRequired ||
+                                appState.connector!.connected)
+                        ? () {
+                            if (tool.openAsPage) {
+                              Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (_) => tool.onPressed!,
+                                ),
+                              );
+                            } else {
                               showDialog(
-                                  context: context,
-                                  builder: (BuildContext context) {
-                                    return tool.onPressed!;
-                                  });
+                                context: context,
+                                builder: (BuildContext context) {
+                                  return tool.onPressed!;
+                                },
+                              );
                             }
-                          : null,
-                      children: []),
+                          }
+                        : null,
+                    children: [],
+                  ),
                   if (tool.showWipBadge || tool.onPressed == null)
                     Positioned(
                       top: 8,

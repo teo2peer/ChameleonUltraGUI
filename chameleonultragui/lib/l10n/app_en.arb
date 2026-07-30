@@ -1137,5 +1137,18 @@
   "data_sync_unlock": "Unlock",
   "data_sync_file_ready": "Encrypted sync file is ready to share",
   "data_sync_select_file": "Select a .cusync file",
-  "data_sync_unavailable_value": "Not present"
+  "data_sync_unavailable_value": "Not present",
+  "pm3_tools": "PM3 Tools",
+  "pm3_tools_description": "Browse the complete Proxmark3 catalog without replacing existing Chameleon tools.",
+  "pm3_tools_search": "Search commands, protocols, or reasons",
+  "pm3_tools_all": "All",
+  "pm3_tools_mapped": "Mapped",
+  "pm3_tools_portable": "Host port pending",
+  "pm3_tools_unsupported": "Unsupported",
+  "pm3_tools_authorization_required": "Authorized use required",
+  "pm3_tools_authorization_description": "Catalog browsing stays available; mapped actions remain locked until you confirm authorization.",
+  "pm3_tools_authorized": "Authorized use acknowledged",
+  "pm3_tools_no_results": "No PM3 tools match this search and filter.",
+  "pm3_tools_indexed": "{count} indexed",
+  "@pm3_tools_indexed": {"placeholders": {"count": {"type": "int"}}}
 }
