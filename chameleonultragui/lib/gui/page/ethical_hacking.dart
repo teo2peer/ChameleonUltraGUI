@@ -4,6 +4,7 @@ import 'package:chameleonultragui/gui/menu/hacking/auth_trace.dart';
 import 'package:chameleonultragui/gui/menu/hacking/authorized_relay_lab.dart';
 import 'package:chameleonultragui/gui/menu/hacking/autopwn.dart';
 import 'package:chameleonultragui/gui/menu/hacking/autopwn_plus.dart';
+import 'package:chameleonultragui/gui/menu/hacking/autopwn_v2.dart';
 import 'package:chameleonultragui/gui/menu/hacking/backdoor.dart';
 import 'package:chameleonultragui/gui/menu/hacking/ble_app.dart';
 import 'package:chameleonultragui/gui/menu/hacking/ble_audit.dart';
@@ -131,6 +132,13 @@ class EthicalHackingPageState extends State<EthicalHackingPage> {
         localizations.autopwn_plus_description,
         Icons.auto_awesome,
         (c) => _push(c, const AutopwnPlusPage()),
+        deviceRequired: true,
+      ),
+      HackingAttack(
+        'Autopwn v2',
+        'Evidence-driven full-card recovery with adaptive attacks and verified partial dumps',
+        Icons.hub,
+        (c) => _push(c, const AutopwnV2Page()),
         deviceRequired: true,
       ),
       HackingAttack(

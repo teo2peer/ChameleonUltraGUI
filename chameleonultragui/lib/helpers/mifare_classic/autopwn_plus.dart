@@ -37,11 +37,11 @@ class AutopwnPlusVerifiedKey {
   }) : key = Uint8List.fromList(key);
 
   Map<String, Object> toJson() => {
-        'sector': sector,
-        'keyType': keyType == 0 ? 'A' : 'B',
-        'keyHex': bytesToHex(key),
-        'verified': true,
-      };
+    'sector': sector,
+    'keyType': keyType == 0 ? 'A' : 'B',
+    'keyHex': bytesToHex(key),
+    'verified': true,
+  };
 }
 
 class AutopwnPlusCardChanged implements Exception {
@@ -80,12 +80,12 @@ class AutopwnPlusBlock {
   bool get readable => data != null;
 
   Map<String, Object?> toJson() => {
-        'sector': sector,
-        'block': block,
-        'readable': readable,
-        'dataHex': data == null ? null : bytesToHex(data!),
-        'syntheticKeys': syntheticKeys,
-      };
+    'sector': sector,
+    'block': block,
+    'readable': readable,
+    'dataHex': data == null ? null : bytesToHex(data!),
+    'syntheticKeys': syntheticKeys,
+  };
 }
 
 class AutopwnPlusOptions {
@@ -131,20 +131,20 @@ class AutopwnPlusResult {
       verifiedKeys.map((entry) => Uint8List.fromList(entry.key)).toList();
 
   Map<String, Object?> toJson() => {
-        'format': 'chameleon-autopwn-plus',
-        'version': 1,
-        'cancelled': cancelled,
-        'selectedKeysRecovered': selectedKeysRecovered,
-        'verifiedKeySlots': verifiedKeySlots,
-        'selectedKeySlots': selectedKeySlots,
-        'verifiedKeys': verifiedKeys.map((entry) => entry.toJson()).toList(),
-        'timingsMs': {
-          for (final entry in timings.entries)
-            entry.key.name: entry.value.inMilliseconds,
-        },
-        'error': error,
-        'blocks': blocks.map((block) => block.toJson()).toList(),
-      };
+    'format': 'chameleon-autopwn-plus',
+    'version': 1,
+    'cancelled': cancelled,
+    'selectedKeysRecovered': selectedKeysRecovered,
+    'verifiedKeySlots': verifiedKeySlots,
+    'selectedKeySlots': selectedKeySlots,
+    'verifiedKeys': verifiedKeys.map((entry) => entry.toJson()).toList(),
+    'timingsMs': {
+      for (final entry in timings.entries)
+        entry.key.name: entry.value.inMilliseconds,
+    },
+    'error': error,
+    'blocks': blocks.map((block) => block.toJson()).toList(),
+  };
 }
 
 abstract interface class AutopwnPlusRecoveryPort {
@@ -159,7 +159,9 @@ abstract interface class AutopwnPlusRecoveryPort {
   Future<int> reverifySeededKeys(Set<int> sectors);
   List<AutopwnPlusTarget> unresolvedTargets(Set<int> sectors);
   Future<bool> checkTarget(
-      AutopwnPlusTarget target, List<Uint8List> candidates);
+    AutopwnPlusTarget target,
+    List<Uint8List> candidates,
+  );
   Future<void> recoverMissing();
   bool selectedComplete(Set<int> sectors);
   int verifiedSlots(Set<int> sectors);
@@ -201,7 +203,9 @@ List<Uint8List> buildAutopwnPlusCandidates({
 }
 
 List<List<Uint8List>> buildAutopwnPlusWaves(
-    AutopwnPlusProfile profile, List<Uint8List> candidates) {
+  AutopwnPlusProfile profile,
+  List<Uint8List> candidates,
+) {
   final cutoffs = switch (profile) {
     AutopwnPlusProfile.quick => const [8, 24, 64],
     AutopwnPlusProfile.balanced => const [12, 48],
@@ -223,8 +227,8 @@ Duration? estimateAutopwnPlusEta(Duration elapsed, double? progress) {
     return null;
   }
   if (progress >= 1) return Duration.zero;
-  final remainingMicros =
-      (elapsed.inMicroseconds * (1 - progress) / progress).round();
+  final remainingMicros = (elapsed.inMicroseconds * (1 - progress) / progress)
+      .round();
   return Duration(microseconds: remainingMicros);
 }
 
@@ -242,12 +246,14 @@ class AutopwnPlusRunner {
     var blocks = <AutopwnPlusBlock>[];
 
     void report(AutopwnPlusPhase phase, String operation, [double? value]) {
-      onProgress?.call(AutopwnPlusProgress(
-        phase: phase,
-        operation: operation,
-        value: value,
-        elapsed: total.elapsed,
-      ));
+      onProgress?.call(
+        AutopwnPlusProgress(
+          phase: phase,
+          operation: operation,
+          value: value,
+          elapsed: total.elapsed,
+        ),
+      );
     }
 
     Future<void> ensureCard() async {
@@ -257,7 +263,9 @@ class AutopwnPlusRunner {
     }
 
     Future<void> timed(
-        AutopwnPlusPhase phase, Future<void> Function() action) async {
+      AutopwnPlusPhase phase,
+      Future<void> Function() action,
+    ) async {
       final watch = Stopwatch()..start();
       await action();
       watch.stop();
@@ -290,9 +298,11 @@ class AutopwnPlusRunner {
             final target = targets[index];
             final stillUnresolved = recovery
                 .unresolvedTargets(options.sectors)
-                .any((current) =>
-                    current.sector == target.sector &&
-                    current.keyType == target.keyType);
+                .any(
+                  (current) =>
+                      current.sector == target.sector &&
+                      current.keyType == target.keyType,
+                );
             if (!stillUnresolved) continue;
             await ensureCard();
             report(
@@ -312,8 +322,10 @@ class AutopwnPlusRunner {
           !recovery.selectedComplete(options.sectors)) {
         await timed(AutopwnPlusPhase.recovery, () async {
           await ensureCard();
-          report(AutopwnPlusPhase.recovery,
-              'Running card-adaptive cryptanalytic recovery');
+          report(
+            AutopwnPlusPhase.recovery,
+            'Running card-adaptive cryptanalytic recovery',
+          );
           await recovery.recoverMissing();
           await ensureCard();
         });
@@ -321,10 +333,15 @@ class AutopwnPlusRunner {
 
       if (!recovery.isCancelled && options.partialDump) {
         await timed(AutopwnPlusPhase.dump, () async {
-          blocks =
-              await recovery.dumpSelected(options.sectors, (completed, count) {
-            report(AutopwnPlusPhase.dump, 'Reading selected sectors',
-                count == 0 ? 1 : completed / count);
+          blocks = await recovery.dumpSelected(options.sectors, (
+            completed,
+            count,
+          ) {
+            report(
+              AutopwnPlusPhase.dump,
+              'Reading selected sectors',
+              count == 0 ? 1 : completed / count,
+            );
           }, cardGuard: cardGuard);
           await ensureCard();
         });
@@ -363,8 +380,10 @@ class MifareClassicAutopwnPlusPort implements AutopwnPlusRecoveryPort {
   MifareClassicAutopwnPlusPort(this.recovery);
 
   @override
-  int get sectorCount => mfClassicGetSectorCount(recovery.mifareClassicType,
-      isEV1: recovery.isMifareClassicEV1);
+  int get sectorCount => mfClassicGetSectorCount(
+    recovery.mifareClassicType,
+    isEV1: recovery.isMifareClassicEV1,
+  );
 
   @override
   bool get isCancelled => recovery.isCancelled;
@@ -389,6 +408,7 @@ class MifareClassicAutopwnPlusPort implements AutopwnPlusRecoveryPort {
     }
     _selectedSectors = Set.unmodifiable(sectors);
     _dumpedBlocks.clear();
+    recovery.clearActivityProgress();
     recovery.error = '';
     recovery.state = '';
     recovery.keyCheckProgress = null;
@@ -421,19 +441,23 @@ class MifareClassicAutopwnPlusPort implements AutopwnPlusRecoveryPort {
         final key = recovery.validKeys[index];
         if (recovery.checkMarks[index] == ChameleonKeyCheckmark.found &&
             key.isNotEmpty) {
-          seeds.add(AutopwnPlusVerifiedKey(
-            sector: sector,
-            keyType: keyType,
-            key: key,
-          ));
+          seeds.add(
+            AutopwnPlusVerifiedKey(sector: sector, keyType: keyType, key: key),
+          );
         }
         recovery.validKeys[index] = Uint8List(0);
         recovery.checkMarks[index] = ChameleonKeyCheckmark.none;
       }
     }
     recovery.update();
+    recovery.setActivityProgress(
+      'Seed key verification',
+      completed: 0,
+      total: seeds.length,
+    );
 
-    for (final seed in seeds) {
+    for (var seedIndex = 0; seedIndex < seeds.length; seedIndex++) {
+      final seed = seeds[seedIndex];
       if (recovery.isCancelled) throw MifareClassicRecoveryCancelled();
       final index = seed.keyType == 0 ? seed.sector : seed.sector + 40;
       final valid = await recovery.appState.communicator!.mf1Auth(
@@ -448,6 +472,11 @@ class MifareClassicAutopwnPlusPort implements AutopwnPlusRecoveryPort {
         recovery.validKeys[index] = Uint8List(0);
         recovery.checkMarks[index] = ChameleonKeyCheckmark.none;
       }
+      recovery.setActivityProgress(
+        'Seed key verification',
+        completed: seedIndex + 1,
+        total: seeds.length,
+      );
       recovery.update();
     }
     _recalculateComplete();
@@ -456,21 +485,26 @@ class MifareClassicAutopwnPlusPort implements AutopwnPlusRecoveryPort {
 
   @override
   List<AutopwnPlusTarget> unresolvedTargets(Set<int> sectors) => [
-        for (final sector in sectors.toList()..sort())
-          for (var keyType = 0; keyType < 2; keyType++)
-            if (recovery.getSectorState(sector, keyType) !=
-                    ChameleonKeyCheckmark.found &&
-                recovery.getSectorState(sector, keyType) !=
-                    ChameleonKeyCheckmark.disabled)
-              AutopwnPlusTarget(sector, keyType),
-      ];
+    for (final sector in sectors.toList()..sort())
+      for (var keyType = 0; keyType < 2; keyType++)
+        if (recovery.getSectorState(sector, keyType) !=
+                ChameleonKeyCheckmark.found &&
+            recovery.getSectorState(sector, keyType) !=
+                ChameleonKeyCheckmark.disabled)
+          AutopwnPlusTarget(sector, keyType),
+  ];
 
   @override
   Future<bool> checkTarget(
-      AutopwnPlusTarget target, List<Uint8List> candidates) async {
+    AutopwnPlusTarget target,
+    List<Uint8List> candidates,
+  ) async {
     if (candidates.isEmpty) return false;
     final found = await recovery.checkKeysOnSector(
-        candidates, target.keyType, target.sector);
+      candidates,
+      target.keyType,
+      target.sector,
+    );
     _recalculateComplete();
     return found;
   }
@@ -515,17 +549,17 @@ class MifareClassicAutopwnPlusPort implements AutopwnPlusRecoveryPort {
 
   @override
   List<AutopwnPlusVerifiedKey> verifiedKeys(Set<int> sectors) => [
-        for (final sector in sectors.toList()..sort())
-          for (var keyType = 0; keyType < 2; keyType++)
-            if (recovery.getSectorState(sector, keyType) ==
-                    ChameleonKeyCheckmark.found &&
-                recovery.getSectorKey(sector, keyType).isNotEmpty)
-              AutopwnPlusVerifiedKey(
-                sector: sector,
-                keyType: keyType,
-                key: recovery.getSectorKey(sector, keyType),
-              ),
-      ];
+    for (final sector in sectors.toList()..sort())
+      for (var keyType = 0; keyType < 2; keyType++)
+        if (recovery.getSectorState(sector, keyType) ==
+                ChameleonKeyCheckmark.found &&
+            recovery.getSectorKey(sector, keyType).isNotEmpty)
+          AutopwnPlusVerifiedKey(
+            sector: sector,
+            keyType: keyType,
+            key: recovery.getSectorKey(sector, keyType),
+          ),
+  ];
 
   void _recalculateComplete() {
     recovery.allKeysExists = true;
@@ -549,9 +583,16 @@ class MifareClassicAutopwnPlusPort implements AutopwnPlusRecoveryPort {
     final communicator = recovery.appState.communicator!;
     final sorted = sectors.toList()..sort();
     final total = sorted.fold<int>(
-        0, (sum, sector) => sum + mfClassicGetBlockCountBySector(sector));
+      0,
+      (sum, sector) => sum + mfClassicGetBlockCountBySector(sector),
+    );
     _dumpedBlocks.clear();
     var completed = 0;
+    recovery.setActivityProgress(
+      'Card blocks',
+      completed: completed,
+      total: total,
+    );
 
     for (final sector in sorted) {
       if (recovery.isCancelled) throw MifareClassicRecoveryCancelled();
@@ -571,10 +612,11 @@ class MifareClassicAutopwnPlusPort implements AutopwnPlusRecoveryPort {
               false) {
         try {
           batch = await communicator.mf1ReadBlocks(
-              firstBlock,
-              blockCount,
-              0x60 + keyTypes.first,
-              recovery.getSectorKey(sector, keyTypes.first));
+            firstBlock,
+            blockCount,
+            0x60 + keyTypes.first,
+            recovery.getSectorKey(sector, keyTypes.first),
+          );
         } catch (_) {
           batch = const [];
         }
@@ -589,8 +631,11 @@ class MifareClassicAutopwnPlusPort implements AutopwnPlusRecoveryPort {
         if (data == null) {
           for (final keyType in keyTypes) {
             try {
-              final read = await communicator.mf1ReadBlock(block,
-                  0x60 + keyType, recovery.getSectorKey(sector, keyType));
+              final read = await communicator.mf1ReadBlock(
+                block,
+                0x60 + keyType,
+                recovery.getSectorKey(sector, keyType),
+              );
               if (read.length == 16) {
                 data = Uint8List.fromList(read);
                 break;
@@ -613,13 +658,20 @@ class MifareClassicAutopwnPlusPort implements AutopwnPlusRecoveryPort {
           }
         }
         if (data != null) recovery.cardData[block] = Uint8List.fromList(data);
-        _dumpedBlocks.add(AutopwnPlusBlock(
-          sector: sector,
-          block: block,
-          data: data,
-          syntheticKeys: syntheticKeys,
-        ));
+        _dumpedBlocks.add(
+          AutopwnPlusBlock(
+            sector: sector,
+            block: block,
+            data: data,
+            syntheticKeys: syntheticKeys,
+          ),
+        );
         completed++;
+        recovery.setActivityProgress(
+          'Card blocks',
+          completed: completed,
+          total: total,
+        );
         onProgress(completed, total);
       }
     }

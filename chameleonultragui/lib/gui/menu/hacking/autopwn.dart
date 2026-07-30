@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:chameleonultragui/gui/component/error_message.dart';
 import 'package:chameleonultragui/gui/component/key_check_marks.dart';
+import 'package:chameleonultragui/gui/component/mifare_classic_activity_progress.dart';
 import 'package:chameleonultragui/gui/menu/dialogs/dictionary/export.dart';
 import 'package:chameleonultragui/gui/page/read_card.dart'
     show MifareClassicInfo;
@@ -100,6 +101,7 @@ class AutopwnPageState extends State<AutopwnPage> {
       progress.complete(AutopwnPhase.scan, "MIFARE Classic card detected");
       final recovery = mfc.recovery!;
       _activeRecovery = recovery;
+      recovery.clearActivityProgress();
       recovery.autopwnProgress = progress;
       recovery.exhaustiveRecovery = _exhaustiveRecovery;
       setState(() => mfcInfo = mfc);
@@ -252,7 +254,10 @@ class AutopwnPageState extends State<AutopwnPage> {
             const SizedBox(height: 16),
             if (message.isNotEmpty) ErrorMessage(errorMessage: message),
             if (_runProgress != null) ...[
-              AutopwnProgressChecklist(progress: _runProgress!),
+              AutopwnProgressChecklist(
+                progress: _runProgress!,
+                activity: recovery?.activityProgress,
+              ),
               const SizedBox(height: 12),
             ],
             if (recovery != null) ...[
@@ -304,9 +309,14 @@ class AutopwnPageState extends State<AutopwnPage> {
 }
 
 class AutopwnProgressChecklist extends StatelessWidget {
-  const AutopwnProgressChecklist({super.key, required this.progress});
+  const AutopwnProgressChecklist({
+    super.key,
+    required this.progress,
+    this.activity,
+  });
 
   final AutopwnRunProgress progress;
+  final MifareClassicRecoveryActivity? activity;
 
   static const _labels = {
     AutopwnPhase.scan: 'Scan card',
@@ -409,6 +419,7 @@ class AutopwnProgressChecklist extends StatelessWidget {
                 value: progress.overallProgress,
               ),
             ),
+            MifareClassicActivityProgressIndicator(activity: activity),
             if (activeDetail != null && activeDetail.isNotEmpty) ...[
               const SizedBox(height: 8),
               Text('Current step: $activeDetail'),

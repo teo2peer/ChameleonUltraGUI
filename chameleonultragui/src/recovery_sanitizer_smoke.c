@@ -34,7 +34,7 @@ int main(void)
   }
   keys = most_frequent_uint64(large_candidates, large_candidate_count, &key_count);
   assert(keys != NULL);
-  assert(key_count == 100000u);
+  assert(key_count == large_candidate_count);
   recovery_free(keys);
   free(large_candidates);
 

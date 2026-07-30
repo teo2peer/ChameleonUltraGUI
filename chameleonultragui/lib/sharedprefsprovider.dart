@@ -42,6 +42,10 @@ const String dataSyncTransactionReceiptsPreferenceKey =
     'data_sync_tx_receipts_v1';
 const String dataSyncDeferredMutationsPreferenceKey =
     'data_sync_deferred_mutations_v1';
+const String _mifareClassicNonceHistoryEnabledPreferenceKey =
+    'mifare_classic_nonce_history_enabled_v1';
+const String _mifareClassicNonceHistoryPreferenceKey =
+    'mifare_classic_nonce_history_v1';
 const int _dataSyncTransactionVersion = 2;
 const List<String> dataSyncStoredPreferenceKeys = [
   'cards',
@@ -58,6 +62,18 @@ const List<String> dataSyncStoredPreferenceKeys = [
   'sidebar_expanded_index',
   'emulation_change_monitoring',
 ];
+
+class MifareClassicNonceHistorySummary {
+  const MifareClassicNonceHistorySummary({
+    required this.cardUid,
+    required this.sampleCount,
+    required this.byteSize,
+  });
+
+  final String cardUid;
+  final int sampleCount;
+  final int byteSize;
+}
 
 class SyncCheckpoint {
   final int revision;
@@ -748,6 +764,7 @@ class SharedPreferencesProvider extends ChangeNotifier {
   }
 
   late SharedPreferences _sharedPreferences;
+  bool _preferencesLoaded = false;
   Future<void> _dataSyncQueue = Future<void>.value();
   int _queuedDataSyncActions = 0;
   int _syncMutationEpoch = 0;
@@ -796,6 +813,7 @@ class SharedPreferencesProvider extends ChangeNotifier {
       await _dataSyncCheckpointLocked();
       _publishCommittedDataSyncValues(_currentDataSyncValues());
     });
+    _preferencesLoaded = true;
   }
 
   Future<T> withDataSyncCheckpoint<T>(
@@ -1132,6 +1150,157 @@ class SharedPreferencesProvider extends ChangeNotifier {
   void setEmulatedChameleon(bool value) {
     _sharedPreferences.setBool('emulate_device', value);
   }
+
+  bool getMifareClassicNonceHistoryEnabled() =>
+      _preferencesLoaded &&
+      (_sharedPreferences.getBool(
+            _mifareClassicNonceHistoryEnabledPreferenceKey,
+          ) ??
+          false);
+
+  Future<void> setMifareClassicNonceHistoryEnabled(bool enabled) async {
+    final stored = await _sharedPreferences.setBool(
+      _mifareClassicNonceHistoryEnabledPreferenceKey,
+      enabled,
+    );
+    if (!stored || getMifareClassicNonceHistoryEnabled() != enabled) {
+      throw StateError('MIFARE Classic nonce history setting was not stored');
+    }
+    notifyListeners();
+  }
+
+  bool hasMifareClassicNonceSample(String cardUid, String sample) {
+    if (!getMifareClassicNonceHistoryEnabled()) return false;
+    final uid = _normaliseMifareClassicNonceHistoryUid(cardUid);
+    if (uid == null || sample.isEmpty) return false;
+    return _readMifareClassicNonceHistory()[uid]?.contains(
+          _mifareClassicNonceSampleDigest(sample),
+        ) ??
+        false;
+  }
+
+  Future<void> recordMifareClassicNonceSample(
+    String cardUid,
+    String sample,
+  ) async {
+    if (!getMifareClassicNonceHistoryEnabled()) return;
+    final uid = _normaliseMifareClassicNonceHistoryUid(cardUid);
+    if (uid == null || sample.isEmpty) return;
+    final history = _readMifareClassicNonceHistory();
+    final entries = history.putIfAbsent(uid, () => <String>{});
+    if (!entries.add(_mifareClassicNonceSampleDigest(sample))) return;
+    await _writeMifareClassicNonceHistory(history);
+  }
+
+  List<MifareClassicNonceHistorySummary>
+  getMifareClassicNonceHistorySummaries() {
+    if (!_preferencesLoaded) return const [];
+    final history = _readMifareClassicNonceHistory();
+    final summaries = [
+      for (final entry in history.entries)
+        MifareClassicNonceHistorySummary(
+          cardUid: entry.key,
+          sampleCount: entry.value.length,
+          byteSize: utf8
+              .encode(
+                jsonEncode({
+                  'uid': entry.key,
+                  'samples': entry.value.toList()..sort(),
+                }),
+              )
+              .length,
+        ),
+    ];
+    summaries.sort((left, right) => left.cardUid.compareTo(right.cardUid));
+    return List.unmodifiable(summaries);
+  }
+
+  Future<void> clearMifareClassicNonceHistoryForCard(String cardUid) async {
+    if (!_preferencesLoaded) return;
+    final uid = _normaliseMifareClassicNonceHistoryUid(cardUid);
+    if (uid == null) return;
+    final history = _readMifareClassicNonceHistory();
+    if (history.remove(uid) == null) return;
+    await _writeMifareClassicNonceHistory(history);
+  }
+
+  Map<String, Set<String>> _readMifareClassicNonceHistory() {
+    if (!_preferencesLoaded) return {};
+    final encoded = _sharedPreferences.getString(
+      _mifareClassicNonceHistoryPreferenceKey,
+    );
+    if (encoded == null) return {};
+    try {
+      final decoded = jsonDecode(encoded);
+      if (decoded is! Map ||
+          decoded['version'] != 1 ||
+          decoded['cards'] is! Map) {
+        return {};
+      }
+      final history = <String, Set<String>>{};
+      for (final entry in (decoded['cards'] as Map).entries) {
+        final uid = entry.key is String
+            ? _normaliseMifareClassicNonceHistoryUid(entry.key as String)
+            : null;
+        if (uid == null || entry.value is! List) continue;
+        final samples = <String>{
+          for (final sample in entry.value as List)
+            if (sample is String && RegExp(r'^[a-f0-9]{64}$').hasMatch(sample))
+              sample,
+        };
+        if (samples.isNotEmpty) history[uid] = samples;
+      }
+      return history;
+    } catch (_) {
+      return {};
+    }
+  }
+
+  Future<void> _writeMifareClassicNonceHistory(
+    Map<String, Set<String>> history,
+  ) async {
+    if (history.isEmpty) {
+      final removed = await _sharedPreferences.remove(
+        _mifareClassicNonceHistoryPreferenceKey,
+      );
+      if (!removed &&
+          _sharedPreferences.containsKey(
+            _mifareClassicNonceHistoryPreferenceKey,
+          )) {
+        throw StateError('MIFARE Classic nonce history was not removed');
+      }
+    } else {
+      final encoded = jsonEncode({
+        'version': 1,
+        'cards': {
+          for (final uid in history.keys.toList()..sort())
+            uid: history[uid]!.toList()..sort(),
+        },
+      });
+      final stored = await _sharedPreferences.setString(
+        _mifareClassicNonceHistoryPreferenceKey,
+        encoded,
+      );
+      if (!stored ||
+          _sharedPreferences.getString(
+                _mifareClassicNonceHistoryPreferenceKey,
+              ) !=
+              encoded) {
+        throw StateError('MIFARE Classic nonce history was not stored');
+      }
+    }
+    notifyListeners();
+  }
+
+  String? _normaliseMifareClassicNonceHistoryUid(String value) {
+    final uid = value.replaceAll(RegExp(r'[^a-fA-F0-9]'), '').toUpperCase();
+    return uid.length >= 8 && uid.length <= 20 && uid.length.isEven
+        ? uid
+        : null;
+  }
+
+  String _mifareClassicNonceSampleDigest(String sample) =>
+      sha256.convert(utf8.encode(sample)).toString();
 
   List<Dictionary> getDictionaries({int keyLength = 0}) {
     return _decodeStoredDictionaries(

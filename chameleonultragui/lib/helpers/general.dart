@@ -58,12 +58,14 @@ int bytesToU64(Uint8List byteArray) {
 }
 
 int parityToInt(int ntParErr) {
-  return int.parse([
-    (ntParErr >> 3) & 1,
-    (ntParErr >> 2) & 1,
-    (ntParErr >> 1) & 1,
-    ntParErr & 1
-  ].join(''));
+  return int.parse(
+    [
+      (ntParErr >> 3) & 1,
+      (ntParErr >> 2) & 1,
+      (ntParErr >> 1) & 1,
+      ntParErr & 1,
+    ].join(''),
+  );
 }
 
 int _swapEndian(int x) {
@@ -218,8 +220,10 @@ List<TagType> getTagTypes() {
 }
 
 TagType getTagTypeByValue(int value) {
-  return TagType.values.firstWhere((element) => element.value == value,
-      orElse: () => TagType.unknown);
+  return TagType.values.firstWhere(
+    (element) => element.value == value,
+    orElse: () => TagType.unknown,
+  );
 }
 
 String colorToHex(Color color) {
@@ -384,8 +388,10 @@ Future<void> saveTag(CardSave tag, BuildContext context, bool bin) async {
     Uint8List tagDump;
     if (isMifareClassic(tag.tag)) {
       tagDump = mfClassicGetExportBytes(
-          chameleonTagTypeGetMfClassicType(tag.tag), tag.data,
-          isEV1: chameleonTagSaveCheckForMifareClassicEV1(tag));
+        chameleonTagTypeGetMfClassicType(tag.tag),
+        tag.data,
+        isEV1: chameleonTagSaveCheckForMifareClassicEV1(tag),
+      );
     } else {
       List<int> dump = [];
       for (var block in tag.data) {
@@ -402,18 +408,21 @@ Future<void> saveTag(CardSave tag, BuildContext context, bool bin) async {
     var exportTag = tag;
     if (isMifareClassic(tag.tag)) {
       exportTag = CardSave(
-          id: tag.id,
-          uid: tag.uid,
-          sak: tag.sak,
-          atqa: tag.atqa,
-          ats: tag.ats,
-          name: tag.name,
-          tag: tag.tag,
-          data: mfClassicGetExportBlocks(
-              chameleonTagTypeGetMfClassicType(tag.tag), tag.data,
-              isEV1: chameleonTagSaveCheckForMifareClassicEV1(tag)),
-          extraData: tag.extraData,
-          color: tag.color);
+        id: tag.id,
+        uid: tag.uid,
+        sak: tag.sak,
+        atqa: tag.atqa,
+        ats: tag.ats,
+        name: tag.name,
+        tag: tag.tag,
+        data: mfClassicGetExportBlocks(
+          chameleonTagTypeGetMfClassicType(tag.tag),
+          tag.data,
+          isEV1: chameleonTagSaveCheckForMifareClassicEV1(tag),
+        ),
+        extraData: tag.extraData,
+        color: tag.color,
+      );
     }
     await FilePicker.saveFile(
       dialogTitle: '${localizations.output_file}:',
@@ -448,7 +457,7 @@ List<TagType> getTagTypesByFrequency(TagFrequency frequency) {
       TagType.ultralight,
       TagType.ultralightC,
       TagType.ultralight11,
-      TagType.ultralight21
+      TagType.ultralight21,
     ];
   } else if (frequency == TagFrequency.lf) {
     return [
@@ -461,7 +470,7 @@ List<TagType> getTagTypesByFrequency(TagFrequency frequency) {
       TagType.viking,
       TagType.pac,
       TagType.ioProx,
-      TagType.idteck
+      TagType.idteck,
     ];
   }
 
@@ -598,12 +607,14 @@ bool isEM410X(TagType type) {
     TagType.em410X16,
     TagType.em410X32,
     TagType.em410X64,
-    TagType.em410XElectra
+    TagType.em410XElectra,
   ].contains(type);
 }
 
 Future<(HFCardInfo, MifareClassicInfo, MifareUltralightInfo)> readHFInfo(
-    BuildContext context, dynamic updateMifareClassicRecovery) async {
+  BuildContext context,
+  dynamic updateMifareClassicRecovery,
+) async {
   var appState = Provider.of<ChameleonGUIState>(context, listen: false);
   var localizations = AppLocalizations.of(context)!;
 
@@ -626,25 +637,34 @@ Future<(HFCardInfo, MifareClassicInfo, MifareUltralightInfo)> readHFInfo(
     TagType type = TagType.unknown;
 
     if (!await appState.communicator!.detectMf1Support()) {
-      (type, mfuInfo) =
-          await performMifareUltralightScan(appState.communicator!, mfuInfo);
+      (type, mfuInfo) = await performMifareUltralightScan(
+        appState.communicator!,
+        mfuInfo,
+      );
     } else {
       if (context.mounted) {
-        (type, mfcInfo) = await performMifareClassicScan(appState.communicator!,
-            mfcInfo, context, updateMifareClassicRecovery);
+        (type, mfcInfo) = await performMifareClassicScan(
+          appState.communicator!,
+          mfcInfo,
+          context,
+          updateMifareClassicRecovery,
+        );
       }
     }
 
     hfInfo.uid = bytesToHexSpace(card.uid);
+    mfcInfo.recovery?.cardUid = bytesToHex(card.uid);
     hfInfo.sak = card.sak.toRadixString(16).padLeft(2, '0').toUpperCase();
     hfInfo.atqa = bytesToHexSpace(card.atqa);
-    hfInfo.ats =
-        (card.ats.isNotEmpty) ? bytesToHexSpace(card.ats) : localizations.no;
+    hfInfo.ats = (card.ats.isNotEmpty)
+        ? bytesToHexSpace(card.ats)
+        : localizations.no;
     hfInfo.type = type;
     mfcInfo.state = (mfcInfo.type != MifareClassicType.none)
         ? MifareClassicState.checkKeys
         : MifareClassicState.none;
-    hfInfo.tech = chameleonTagToString(type, localizations) +
+    hfInfo.tech =
+        chameleonTagToString(type, localizations) +
         (mfcInfo.isEV1 ? " EV1" : "");
   } catch (e) {
     appState.log!.e(e.toString());

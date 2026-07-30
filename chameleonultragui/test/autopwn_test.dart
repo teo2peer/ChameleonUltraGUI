@@ -115,6 +115,38 @@ void main() {
     expect(completedIcon.color, Colors.green);
   });
 
+  testWidgets('Autopwn shows quantitative activity below overall progress', (
+    tester,
+  ) async {
+    final progress = AutopwnRunProgress(exhaustive: false)
+      ..start(AutopwnPhase.dictionary, 'Checking keys', progress: 0.25);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SingleChildScrollView(
+            child: AutopwnProgressChecklist(
+              progress: progress,
+              activity: const MifareClassicRecoveryActivity(
+                label: 'Key candidates',
+                completed: 12,
+                total: 40,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    expect(
+      find.byKey(const Key('mifare-classic-activity-progress')),
+      findsOneWidget,
+    );
+    expect(find.text('Key candidates'), findsOneWidget);
+    expect(find.text('12/40'), findsOneWidget);
+    expect(find.byType(LinearProgressIndicator), findsNWidgets(3));
+  });
+
   testWidgets('Autopwn checklist remains usable on a narrow scaled viewport', (
     tester,
   ) async {
