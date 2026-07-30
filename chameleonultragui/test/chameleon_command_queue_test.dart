@@ -515,6 +515,40 @@ void main() {
     );
   });
 
+  test('reads one work-slot trailer with strict framing', () async {
+    final serial = _FakeSerial(
+      onCommand: (serial, id) async {
+        if (id == ChameleonCommand.getDeviceCapabilities.value) {
+          await serial.emitCapabilities();
+        } else if (id == ChameleonCommand.mf1GetBlockData.value) {
+          await serial.emit(id, data: List.generate(16, (index) => index));
+        }
+      },
+    );
+
+    final trailer = await _communicator(serial).mf1GetEmulatorBlock(3, 1);
+
+    expect(trailer, List.generate(16, (index) => index));
+    expect(serial.commandData[ChameleonCommand.mf1GetBlockData.value], [3, 1]);
+  });
+
+  test('rejects malformed work-slot block reads', () async {
+    final serial = _FakeSerial(
+      onCommand: (serial, id) async {
+        if (id == ChameleonCommand.getDeviceCapabilities.value) {
+          await serial.emitCapabilities();
+        } else if (id == ChameleonCommand.mf1GetBlockData.value) {
+          await serial.emit(id, data: List.filled(15, 0));
+        }
+      },
+    );
+
+    await expectLater(
+      _communicator(serial).mf1GetEmulatorBlock(3, 1),
+      throwsFormatException,
+    );
+  });
+
   test(
     'T55xx writer sends new password once and validates LF status',
     () async {
@@ -1145,6 +1179,44 @@ void main() {
     expect(records.last.type, 0x61);
     expect(records.last.isNested, isTrue);
     expect(records.last.uid, 0x11223344);
+  });
+
+  test('downloads every paged MF1 reader-key detection record', () async {
+    var page = 0;
+    final serial = _FakeSerial(
+      onCommand: (serial, id) async {
+        if (id == ChameleonCommand.getDeviceCapabilities.value) {
+          await serial.emitCapabilities();
+        } else if (id == ChameleonCommand.mf1GetDetectionResult.value) {
+          final count = page++ == 0 ? 227 : 1;
+          await serial.emit(
+            id,
+            data: [
+              for (var index = 0; index < count; index++)
+                ..._detectionRecord(
+                  index % 64,
+                  index & 1,
+                  0x11223344,
+                  index + 1,
+                  index + 2,
+                  index + 3,
+                ),
+            ],
+          );
+        }
+      },
+    );
+
+    final records = await _communicator(serial).getMf1DetectionRecords(228);
+
+    expect(records, hasLength(228));
+    expect(page, 2);
+    expect(serial.commandData[ChameleonCommand.mf1GetDetectionResult.value], [
+      0,
+      0,
+      0,
+      227,
+    ]);
   });
 
   test('rejects malformed MF1 reader-key detection pages', () async {

@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:math';
 
+import 'package:chameleonultragui/bridge/chameleon.dart';
 import 'package:chameleonultragui/gui/menu/dialogs/dictionary/export.dart';
 import 'package:chameleonultragui/helpers/definitions.dart';
 import 'package:chameleonultragui/helpers/general.dart';
@@ -24,6 +25,20 @@ class _SlotEntry {
   _SlotEntry(this.index, this.label);
 }
 
+class _ReaderKeyCaptureSession {
+  final int generation;
+  final ChameleonCommunicator communicator;
+  final int workSlot;
+  final bool autoApply;
+
+  const _ReaderKeyCaptureSession({
+    required this.generation,
+    required this.communicator,
+    required this.workSlot,
+    required this.autoApply,
+  });
+}
+
 // Reader-key capture (MFKey32). The capture source is chosen with the tabs at
 // the top: emulate a saved/slot card, a fixed UID, or a device-generated random
 // UID. Below, Start capture arms the device and recovered keys are shown/saved.
@@ -35,8 +50,9 @@ class ReaderKeysPage extends StatefulWidget {
 }
 
 class ReaderKeysPageState extends State<ReaderKeysPage>
-    with SingleTickerProviderStateMixin {
+    with SingleTickerProviderStateMixin, WidgetsBindingObserver {
   late TabController _tab;
+  int _lastMode = 0;
 
   // Card mode
   _CardSource _cardSource = _CardSource.saved;
@@ -44,6 +60,12 @@ class ReaderKeysPageState extends State<ReaderKeysPage>
   int? _selectedSlot;
   String _selectedSlotUid = '';
   List<_SlotEntry> _slots = [];
+  List<_SlotEntry> _workSlots = [];
+  int? _workSlot;
+  TagType _workSlotType = TagType.mifare1K;
+  String? _preparedWorkSignature;
+  bool _preparedWorkUsesSyntheticManufacturerBlock = false;
+  ChameleonCommunicator? _observedCommunicator;
 
   // Fixed UID mode
   final TextEditingController _uidCtl = TextEditingController();
@@ -58,28 +80,79 @@ class ReaderKeysPageState extends State<ReaderKeysPage>
   int detectionCount = 0;
   final List<Uint8List> keys = [];
   final Map<ReaderKeyTarget, ReaderKeyRecoveryResult> recoveryResults = {};
+  final Set<ReaderKeyTarget> _appliedTargets = {};
+  final Set<String> _sessionKeyHexes = {};
+  String? _sessionDictionaryId;
+  String? _sessionDictionaryName;
   String outputUid = "";
   int progress = -1;
   Timer? _pollTimer;
   bool _pollInProgress = false;
+  int _lastAutoRecoveryCount = 0;
+  int _captureGeneration = 0;
+  _ReaderKeyCaptureSession? _captureSession;
+  Future<void>? _activeRecovery;
+  _ReaderKeyCaptureSession? _activeRecoverySession;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _tab = TabController(length: 3, vsync: this);
-    _tab.addListener(() => setState(() {}));
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _refreshStatus();
-      _loadSlots();
+    _tab.addListener(() {
+      if (_tab.index != _lastMode) {
+        _lastMode = _tab.index;
+        if (!armed && !recovering) _resetWorkPreparation();
+      }
+      setState(() {});
     });
   }
 
   @override
-  void dispose() {
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final app = context.watch<ChameleonGUIState>();
+    final communicator = app.communicator;
+    if (identical(communicator, _observedCommunicator)) return;
+
+    _observedCommunicator = communicator;
+    _captureGeneration++;
     _pollTimer?.cancel();
-    if (armed) {
-      final communicator = context.read<ChameleonGUIState>().communicator;
-      if (communicator != null) {
+    _pollInProgress = false;
+    armed = false;
+    busy = false;
+    detectionCount = 0;
+    _lastAutoRecoveryCount = 0;
+    _slots = [];
+    _workSlots = [];
+    _workSlot = null;
+    _selectedSlot = null;
+    _selectedSlotUid = '';
+    recoveryResults.clear();
+    keys.clear();
+    outputUid = '';
+    _sessionDictionaryId = null;
+    _sessionDictionaryName = null;
+    _sessionKeyHexes.clear();
+    _resetWorkPreparation();
+
+    if (communicator != null && app.connector?.connected == true) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || !identical(_app.communicator, communicator)) return;
+        unawaited(_refreshStatus());
+        unawaited(_loadSlots());
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _pollTimer?.cancel();
+    final captureSession = _captureSession;
+    if (armed && captureSession != null) {
+      final communicator = captureSession.communicator;
+      if (identical(_observedCommunicator, communicator)) {
         unawaited(() async {
           for (final cleanup in <Future<void> Function()>[
             () => communicator.setMf1ReaderKeysAnim(false),
@@ -98,8 +171,20 @@ class ReaderKeysPageState extends State<ReaderKeysPage>
     super.dispose();
   }
 
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (armed &&
+        !busy &&
+        (state == AppLifecycleState.paused ||
+            state == AppLifecycleState.detached ||
+            state == AppLifecycleState.hidden)) {
+      unawaited(_stop());
+    }
+  }
+
   ChameleonGUIState get _app => context.read<ChameleonGUIState>();
-  bool get _connected => _app.connector?.connected ?? false;
+  bool get _connected =>
+      _app.connector?.connected == true && _app.communicator != null;
 
   void _startPolling() {
     _pollTimer?.cancel();
@@ -110,36 +195,56 @@ class ReaderKeysPageState extends State<ReaderKeysPage>
   }
 
   Future<void> _refreshStatus() async {
-    if (!_connected) return;
+    final communicator = _app.communicator;
+    if (!_connected || communicator == null) return;
+    final generation = _captureGeneration;
     try {
-      final isArmed = await _app.communicator!.isMf1DetectionMode();
-      final count = await _app.communicator!.getMf1DetectionCount();
-      if (!mounted) return;
+      final isArmed = await communicator.isMf1DetectionMode();
+      final count = await communicator.getMf1DetectionCount();
+      if (!mounted ||
+          generation != _captureGeneration ||
+          !identical(_app.communicator, communicator)) {
+        return;
+      }
       setState(() {
         armed = isArmed;
         detectionCount = count;
+        _captureSession = isArmed
+            ? _ReaderKeyCaptureSession(
+                generation: generation,
+                communicator: communicator,
+                workSlot: _workSlot ?? 0,
+                autoApply: false,
+              )
+            : null;
       });
       if (isArmed) _startPolling();
     } catch (_) {}
   }
 
   Future<void> _refreshCount() async {
-    if (!_connected || _pollInProgress) return;
+    final communicator = _app.communicator;
+    if (!_connected || communicator == null || _pollInProgress) return;
     _pollInProgress = true;
     try {
-      final count = await _app.communicator!.getMf1DetectionCount();
+      final count = await communicator.getMf1DetectionCount();
       String uid = _currentRandomUid;
       if (_tab.index == 2) {
         try {
-          final ac = await _app.communicator!.mf1GetAntiCollData();
+          final ac = await communicator.mf1GetAntiCollData();
           uid = bytesToHex(ac.uid).toUpperCase();
         } catch (_) {}
       }
-      if (mounted) {
-        setState(() {
-          detectionCount = count;
-          _currentRandomUid = uid;
-        });
+      if (!mounted || !identical(_app.communicator, communicator)) return;
+      final shouldRecover =
+          armed && count >= 2 && count > _lastAutoRecoveryCount;
+      setState(() {
+        detectionCount = count;
+        _currentRandomUid = uid;
+      });
+      if (shouldRecover && !recovering) {
+        _lastAutoRecoveryCount = count;
+        unawaited(_recoverKeys());
       }
     } catch (_) {
     } finally {
@@ -148,21 +253,32 @@ class ReaderKeysPageState extends State<ReaderKeysPage>
   }
 
   Future<void> _loadSlots() async {
-    if (!_connected) return;
+    final communicator = _app.communicator;
+    if (!_connected || communicator == null) return;
     try {
-      final names = await _app.communicator!.getSlotTagNames();
-      final types = await _app.communicator!.getSlotTagTypes();
-      final enabled = await _app.communicator!.getEnabledSlots();
+      final names = await communicator.getSlotTagNames();
+      final types = await communicator.getSlotTagTypes();
+      final enabled = await communicator.getEnabledSlots();
       final slots = <_SlotEntry>[];
+      final workSlots = <_SlotEntry>[];
       for (int i = 0; i < 8 && i < types.length; i++) {
+        final name = (i < names.length) ? names[i].hf : '';
+        final label = name.isEmpty ? types[i].hf.name : name;
+        workSlots.add(_SlotEntry(i, label));
         if (isMifareClassic(types[i].hf) &&
             i < enabled.length &&
             enabled[i].hf) {
-          final name = (i < names.length) ? names[i].hf : '';
-          slots.add(_SlotEntry(i, name.isEmpty ? types[i].hf.name : name));
+          slots.add(_SlotEntry(i, label));
         }
       }
-      if (mounted) setState(() => _slots = slots);
+      final activeSlot = await communicator.getActiveSlot();
+      if (mounted && identical(_app.communicator, communicator)) {
+        setState(() {
+          _slots = slots;
+          _workSlots = workSlots;
+          _workSlot ??= activeSlot;
+        });
+      }
     } catch (_) {}
   }
 
@@ -183,36 +299,143 @@ class ReaderKeysPageState extends State<ReaderKeysPage>
         .toUpperCase();
   }
 
+  void _resetWorkPreparation() {
+    _preparedWorkSignature = null;
+    _preparedWorkUsesSyntheticManufacturerBlock = false;
+    _captureSession = null;
+    _appliedTargets.clear();
+  }
+
+  String _readerDictionaryName(DateTime value) {
+    String two(int number) => number.toString().padLeft(2, '0');
+    return 'key-reader-${two(value.hour)}-${two(value.minute)}-'
+        '${two(value.day)}-${two(value.month)}-${value.year}';
+  }
+
+  Future<bool> _confirmWorkSlotReset(
+    int slot, {
+    bool modifiesSourceInPlace = false,
+  }) async {
+    if (!mounted) return false;
+    return await showDialog<bool>(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: Text(
+              modifiesSourceInPlace
+                  ? 'Use source slot as work slot?'
+                  : 'Prepare work slot?',
+            ),
+            content: Text(
+              modifiesSourceInPlace
+                  ? 'Recovered keys and, when required, trailer access conditions '
+                        'will be written directly to HF slot ${slot + 1}. LF data is not changed.'
+                  : 'HF data in slot ${slot + 1} will be replaced by the selected card '
+                        'or a synthetic MIFARE Classic card. LF data is not changed.',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('Cancel'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(context, true),
+                child: Text(
+                  modifiesSourceInPlace ? 'Use slot' : 'Prepare slot',
+                ),
+              ),
+            ],
+          ),
+        ) ??
+        false;
+  }
+
+  Future<void> _prepareSyntheticWorkSlot(
+    ChameleonCommunicator communicator,
+    int slot,
+    TagType tag,
+  ) async {
+    await communicator.setReaderDeviceMode(false);
+    await communicator.enableSlot(slot, TagFrequency.hf, true);
+    await communicator.activateSlot(slot);
+    await communicator.setSlotType(slot, tag);
+    await communicator.setDefaultDataToSlot(slot, tag);
+    await communicator.activateSlot(slot);
+    await communicator.saveSlotData();
+    _app.changesMade();
+  }
+
+  Future<void> _copySlotToWorkSlot(
+    ChameleonCommunicator communicator,
+    int sourceSlot,
+    int workSlot,
+  ) async {
+    final slotTypes = await communicator.getSlotTagTypes();
+    if (sourceSlot >= slotTypes.length ||
+        !isMifareClassic(slotTypes[sourceSlot].hf)) {
+      throw StateError('The selected source slot is not MIFARE Classic');
+    }
+    final tag = slotTypes[sourceSlot].hf;
+    await communicator.activateSlot(sourceSlot);
+    final antiCollision = await communicator.mf1GetAntiCollData();
+    final blockCount = mfClassicGetBlockCount(
+      chameleonTagTypeGetMfClassicType(tag),
+    );
+    final dump = <int>[];
+    for (var block = 0; block < blockCount; block += 32) {
+      final count = min(32, blockCount - block);
+      dump.addAll(await communicator.mf1GetEmulatorBlock(block, count));
+    }
+
+    await _prepareSyntheticWorkSlot(communicator, workSlot, tag);
+    await communicator.setMf1AntiCollision(antiCollision);
+    final maxBlocks = 255;
+    for (var block = 0; block < blockCount; block += maxBlocks) {
+      final count = min(maxBlocks, blockCount - block);
+      final start = block * 16;
+      await communicator.setMf1BlockData(
+        block,
+        Uint8List.fromList(dump.sublist(start, start + count * 16)),
+      );
+    }
+    await communicator.saveSlotData();
+    _app.changesMade();
+  }
+
   Future<void> _onSlotSelected(int index) async {
     setState(() {
       _selectedSlot = index;
       _selectedSlotUid = '';
+      _resetWorkPreparation();
     });
-    if (!_connected) return;
+    final communicator = _app.communicator;
+    if (!_connected || communicator == null) return;
     try {
       final ac = await _app.runSlotOperation(() async {
-        await _app.communicator!.activateSlot(index);
-        return _app.communicator!.mf1GetAntiCollData();
+        await communicator.activateSlot(index);
+        return communicator.mf1GetAntiCollData();
       });
-      if (mounted) {
+      if (mounted && identical(_app.communicator, communicator)) {
         setState(() => _selectedSlotUid = bytesToHex(ac.uid).toUpperCase());
       }
     } catch (_) {}
   }
 
-  Future<void> _loadDumpIntoActiveSlot(CardSave card) async {
+  Future<void> _loadDumpIntoActiveSlot(
+    ChameleonCommunicator communicator,
+    CardSave card,
+  ) async {
     final localizations = AppLocalizations.of(context)!;
-    final slot = await _app.communicator!.getActiveSlot();
+    final slot = await communicator.getActiveSlot();
     var tag = card.tag;
     if (chameleonTagSaveCheckForMifareClassicEV1(card)) {
       tag = TagType.mifare2K;
     }
-    await _app.communicator!.setReaderDeviceMode(false);
-    await _app.communicator!.enableSlot(slot, TagFrequency.hf, true);
-    await _app.communicator!.activateSlot(slot);
-    await _app.communicator!.setSlotType(slot, tag);
-    await _app.communicator!.setDefaultDataToSlot(slot, tag);
-    await _app.communicator!.setMf1AntiCollision(
+    await communicator.setReaderDeviceMode(false);
+    await communicator.enableSlot(slot, TagFrequency.hf, true);
+    await communicator.activateSlot(slot);
+    await communicator.setSlotType(slot, tag);
+    await communicator.setDefaultDataToSlot(slot, tag);
+    await communicator.setMf1AntiCollision(
       CardData(
         uid: hexToBytes(card.uid),
         atqa: card.atqa,
@@ -225,7 +448,7 @@ class ReaderKeysPageState extends State<ReaderKeysPage>
     int? chunkStart;
     Future<void> flushChunk() async {
       if (chunkStart == null || blockChunk.isEmpty) return;
-      await _app.communicator!.setMf1BlockData(
+      await communicator.setMf1BlockData(
         chunkStart!,
         Uint8List.fromList(blockChunk),
       );
@@ -247,89 +470,151 @@ class ReaderKeysPageState extends State<ReaderKeysPage>
       await asyncSleep(1);
     }
     await flushChunk();
-    await _app.communicator!.setSlotTagName(
+    await communicator.setSlotTagName(
       slot,
       card.name.isEmpty ? localizations.no_name : card.name,
       TagFrequency.hf,
     );
-    await _app.communicator!.saveSlotData();
+    await communicator.saveSlotData();
     _app.changesMade();
   }
 
   Future<void> _arm() async {
+    if (busy || recovering) return;
     final localizations = AppLocalizations.of(context)!;
+    final communicator = _app.communicator;
+    final observedGeneration = _captureGeneration;
+    if (!_connected || communicator == null) return;
+    final mode = _tab.index;
+    final workSlot = _workSlot;
+    if (workSlot == null) {
+      _showMessage('Select a work slot');
+      return;
+    }
+
+    CardSave? selectedCard;
+    if (mode == 0 && _cardSource == _CardSource.saved) {
+      if (_selectedCardId == null) {
+        _showMessage(localizations.select_a_card);
+        return;
+      }
+      selectedCard = _app.sharedPreferencesProvider.getCards().firstWhere(
+        (card) => card.id == _selectedCardId,
+      );
+    } else if (mode == 0 &&
+        _cardSource == _CardSource.slot &&
+        _selectedSlot == null) {
+      _showMessage(localizations.select_a_card);
+      return;
+    }
+
+    final fixedUid = mode == 1
+        ? _uidCtl.text.replaceAll(' ', '').toUpperCase()
+        : '';
+    if (mode == 1) {
+      if (!isValidHexString(fixedUid)) {
+        _showMessage(localizations.invalid_uid_bytes);
+        return;
+      }
+      final uid = hexToBytes(fixedUid);
+      if (![4, 7, 10].contains(uid.length)) {
+        _showMessage(localizations.invalid_uid_bytes);
+        return;
+      }
+    }
+
+    final signature = switch (mode) {
+      0 when _cardSource == _CardSource.saved =>
+        'saved:${selectedCard!.id}:$workSlot',
+      0 => 'slot:${_selectedSlot!}:$workSlot',
+      1 => 'fixed:$fixedUid:${_workSlotType.value}:$workSlot',
+      _ => 'random:${_workSlotType.value}:$workSlot',
+    };
+    final sourceUsesWorkSlot =
+        mode == 0 &&
+        _cardSource == _CardSource.slot &&
+        _selectedSlot == workSlot;
+    if (_preparedWorkSignature != signature &&
+        !await _confirmWorkSlotReset(
+          workSlot,
+          modifiesSourceInPlace: sourceUsesWorkSlot,
+        )) {
+      return;
+    }
+    if (!mounted ||
+        observedGeneration != _captureGeneration ||
+        !identical(_observedCommunicator, communicator)) {
+      return;
+    }
+
+    _captureGeneration++;
+    final sessionGeneration = _captureGeneration;
+    _captureSession = null;
+    void ensureCurrentSession() {
+      if (!mounted ||
+          sessionGeneration != _captureGeneration ||
+          !identical(_observedCommunicator, communicator)) {
+        throw StateError('Device changed while preparing the work slot');
+      }
+    }
+
     setState(() => busy = true);
     var detectionEnabled = false;
     var animationEnabled = false;
     try {
       await _app.runSlotOperation(() async {
-        final mode = _tab.index; // 0 card, 1 fixed UID, 2 random
-
-        // Establish which card / slot is emulated.
-        if (mode == 0 && _cardSource == _CardSource.saved) {
-          if (_selectedCardId == null) {
-            _showMessage(localizations.select_a_card);
-            setState(() => busy = false);
-            return;
+        if (_preparedWorkSignature != signature) {
+          _appliedTargets.clear();
+          var usesSyntheticManufacturerBlock = false;
+          if (mode == 0 && _cardSource == _CardSource.saved) {
+            await communicator.activateSlot(workSlot);
+            await _loadDumpIntoActiveSlot(communicator, selectedCard!);
+          } else if (mode == 0 && _cardSource == _CardSource.slot) {
+            if (_selectedSlot == workSlot) {
+              await communicator.activateSlot(workSlot);
+            } else {
+              await _copySlotToWorkSlot(communicator, _selectedSlot!, workSlot);
+            }
+          } else {
+            await _prepareSyntheticWorkSlot(
+              communicator,
+              workSlot,
+              _workSlotType,
+            );
+            usesSyntheticManufacturerBlock = true;
           }
-          final card = _app.sharedPreferencesProvider.getCards().firstWhere(
-            (c) => c.id == _selectedCardId,
-          );
-          await _loadDumpIntoActiveSlot(card);
-        } else if (mode == 0 && _cardSource == _CardSource.slot) {
-          if (_selectedSlot == null) {
-            _showMessage(localizations.select_a_card);
-            setState(() => busy = false);
-            return;
-          }
-          await _app.communicator!.activateSlot(_selectedSlot!);
+          ensureCurrentSession();
+          _preparedWorkUsesSyntheticManufacturerBlock =
+              usesSyntheticManufacturerBlock;
+          _preparedWorkSignature = signature;
+        } else {
+          await communicator.activateSlot(workSlot);
         }
+        ensureCurrentSession();
 
-        // The active slot must be MIFARE Classic. In Fixed-UID / Random modes we
-        // reuse whatever slot is active, so if it isn't MFC, fall back to any
-        // configured MIFARE Classic slot instead of failing.
-        final slotTypes = await _app.communicator!.getSlotTagTypes();
-        final enabledSlots = await _app.communicator!.getEnabledSlots();
-        final activeSlot = await _app.communicator!.getActiveSlot();
+        // Refuse to capture against a slot that cannot hold the recovered keys.
+        final slotTypes = await communicator.getSlotTagTypes();
+        final enabledSlots = await communicator.getEnabledSlots();
+        final activeSlot = await communicator.getActiveSlot();
+        ensureCurrentSession();
         final bool activeIsMfc =
             activeSlot < slotTypes.length &&
             activeSlot < enabledSlots.length &&
             enabledSlots[activeSlot].hf &&
             isMifareClassic(slotTypes[activeSlot].hf);
         if (!activeIsMfc) {
-          var mfcSlot = -1;
-          for (
-            var slot = 0;
-            slot < slotTypes.length && slot < enabledSlots.length;
-            slot++
-          ) {
-            if (enabledSlots[slot].hf && isMifareClassic(slotTypes[slot].hf)) {
-              mfcSlot = slot;
-              break;
-            }
-          }
-          if (mfcSlot < 0) {
-            _showMessage(localizations.no_mifare_classic_slot_hint);
-            setState(() => busy = false);
-            return;
-          }
-          await _app.communicator!.activateSlot(mfcSlot);
+          throw StateError(localizations.no_mifare_classic_slot_hint);
         }
 
         // UID handling per mode.
         if (mode == 2) {
-          await _app.communicator!.setMf1RandomUidMode(true);
+          await communicator.setMf1RandomUidMode(true);
         } else {
-          await _app.communicator!.setMf1RandomUidMode(false);
+          await communicator.setMf1RandomUidMode(false);
           if (mode == 1) {
-            final uid = hexToBytes(_uidCtl.text.replaceAll(' ', ''));
-            if (![4, 7, 10].contains(uid.length)) {
-              _showMessage(localizations.invalid_uid_bytes);
-              setState(() => busy = false);
-              return;
-            }
-            final current = await _app.communicator!.mf1GetAntiCollData();
-            await _app.communicator!.setMf1AntiCollision(
+            final uid = hexToBytes(fixedUid);
+            final current = await communicator.mf1GetAntiCollData();
+            await communicator.setMf1AntiCollision(
               CardData(
                 uid: uid,
                 atqa: current.atqa,
@@ -337,48 +622,82 @@ class ReaderKeysPageState extends State<ReaderKeysPage>
                 ats: current.ats,
               ),
             );
+            if (_preparedWorkUsesSyntheticManufacturerBlock &&
+                uid.length == 4) {
+              final blockZero = await communicator.mf1GetEmulatorBlock(0, 1);
+              await communicator.setMf1BlockData(
+                0,
+                applyUidToSyntheticManufacturerBlock(
+                  block: blockZero,
+                  uid: uid,
+                ),
+              );
+              await communicator.saveSlotData();
+              _app.changesMade();
+            }
           }
         }
+        ensureCurrentSession();
 
         // Force the device into emulator/tag mode. Without this, if the device
         // was left in reader mode (the default after any HF read/scan/autopwn) it
         // never emulates a card, so no reader ever authenticates against it and
         // zero nonces are captured. Only the saved-card path set this before (via
         // _loadDumpIntoActiveSlot); slot / fixed-UID / random modes did not.
-        await _app.communicator!.setReaderDeviceMode(false);
+        await communicator.setReaderDeviceMode(false);
 
-        await _app.communicator!.setMf1DetectionStatus(true);
+        await communicator.setMf1DetectionStatus(true);
         detectionEnabled = true;
-        await _app.communicator!.setMf1ReaderKeysAnim(true);
+        await communicator.setMf1ReaderKeysAnim(true);
         animationEnabled = true;
-        if (!mounted) return;
+        ensureCurrentSession();
         setState(() {
+          _captureSession = _ReaderKeyCaptureSession(
+            generation: sessionGeneration,
+            communicator: communicator,
+            workSlot: workSlot,
+            autoApply: mode != 2,
+          );
           armed = true;
           detectionCount = 0;
+          _lastAutoRecoveryCount = 0;
+          _sessionDictionaryId = null;
+          _sessionDictionaryName = _readerDictionaryName(DateTime.now());
+          _sessionKeyHexes.clear();
         });
         _startPolling();
       });
     } catch (e) {
       if (animationEnabled) {
         try {
-          await _app.communicator!.setMf1ReaderKeysAnim(false);
+          await communicator.setMf1ReaderKeysAnim(false);
         } catch (_) {}
       }
       if (detectionEnabled) {
         try {
-          await _app.communicator!.setMf1DetectionStatus(false);
+          await communicator.setMf1DetectionStatus(false);
         } catch (_) {}
       }
       try {
-        await _app.communicator!.setMf1RandomUidMode(false);
+        await communicator.setMf1RandomUidMode(false);
       } catch (_) {}
-      _showMessage(e.toString());
+      if (mounted &&
+          sessionGeneration == _captureGeneration &&
+          identical(_observedCommunicator, communicator)) {
+        _showMessage(e.toString());
+      }
     } finally {
       if (mounted) setState(() => busy = false);
     }
   }
 
   Future<void> _stop() async {
+    final recoverySession = _captureSession;
+    if (recoverySession == null) {
+      if (mounted) setState(() => armed = false);
+      return;
+    }
+    final communicator = recoverySession.communicator;
     setState(() => busy = true);
     _pollTimer?.cancel();
     Object? cleanupError;
@@ -386,9 +705,9 @@ class ReaderKeysPageState extends State<ReaderKeysPage>
       // Current firmware preserves the log when detection is disabled. Freeze
       // capture first so count and paged records form one stable snapshot.
       for (final cleanup in <Future<void> Function()>[
-        () => _app.communicator!.setMf1ReaderKeysAnim(false),
-        () => _app.communicator!.setMf1DetectionStatus(false),
-        () => _app.communicator!.setMf1RandomUidMode(false),
+        () => communicator.setMf1ReaderKeysAnim(false),
+        () => communicator.setMf1DetectionStatus(false),
+        () => communicator.setMf1RandomUidMode(false),
       ]) {
         try {
           await cleanup();
@@ -396,14 +715,21 @@ class ReaderKeysPageState extends State<ReaderKeysPage>
           cleanupError ??= error;
         }
       }
-      if (!recovering) {
-        await _recoverKeys();
+      await _recoverKeys(recoverySession);
+      if (cleanupError != null &&
+          recoverySession.generation == _captureGeneration &&
+          identical(_observedCommunicator, communicator)) {
+        _showMessage(cleanupError.toString());
       }
-      if (cleanupError != null) _showMessage(cleanupError.toString());
     } catch (e) {
-      _showMessage(e.toString());
+      if (recoverySession.generation == _captureGeneration &&
+          identical(_observedCommunicator, communicator)) {
+        _showMessage(e.toString());
+      }
     } finally {
-      if (mounted) {
+      if (mounted &&
+          recoverySession.generation == _captureGeneration &&
+          identical(_observedCommunicator, communicator)) {
         setState(() {
           armed = false;
           busy = false;
@@ -412,24 +738,176 @@ class ReaderKeysPageState extends State<ReaderKeysPage>
     }
   }
 
-  Future<void> _recoverKeys() async {
+  Future<void> _persistSessionKeys(
+    Iterable<ReaderKeyRecoveryResult> results,
+    bool Function() isCurrentSession,
+  ) async {
+    final pending = <String, Uint8List>{};
+    for (final result in results) {
+      final key = result.key;
+      if (key == null) continue;
+      final hex = bytesToHex(key).toUpperCase();
+      if (!_sessionKeyHexes.contains(hex)) pending[hex] = key;
+    }
+    if (pending.isEmpty) return;
+
+    final provider = _app.sharedPreferencesProvider;
+    final dictionaries = List<Dictionary>.from(provider.getDictionaries());
+    var index = _sessionDictionaryId == null
+        ? -1
+        : dictionaries.indexWhere((item) => item.id == _sessionDictionaryId);
+    if (index < 0) {
+      final dictionary = Dictionary(
+        name: _sessionDictionaryName ?? _readerDictionaryName(DateTime.now()),
+        color: Colors.blue,
+        keys: List<Uint8List>.from(pending.values),
+        keyLength: 12,
+      );
+      dictionaries.add(dictionary);
+      _sessionDictionaryId = dictionary.id;
+      _sessionDictionaryName = dictionary.name;
+    } else {
+      final dictionary = dictionaries[index];
+      final merged = <String, Uint8List>{
+        for (final key in dictionary.keys)
+          bytesToHex(key).toUpperCase(): Uint8List.fromList(key),
+        ...pending,
+      };
+      dictionaries[index] = Dictionary(
+        id: dictionary.id,
+        name: dictionary.name,
+        color: dictionary.color,
+        keys: List<Uint8List>.from(merged.values),
+        keyLength: 12,
+      );
+    }
+
+    await provider.setDictionaries(dictionaries);
+    if (!isCurrentSession()) return;
+    _sessionKeyHexes.addAll(pending.keys);
+    _app.changesMade();
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _applyRecoveredKeys(
+    Iterable<ReaderKeyRecoveryResult> results,
+    _ReaderKeyCaptureSession session,
+  ) async {
+    if (!session.autoApply ||
+        session.generation != _captureGeneration ||
+        !identical(_app.communicator, session.communicator)) {
+      return;
+    }
+    final workSlot = session.workSlot;
+    final pending = results
+        .where(
+          (result) =>
+              result.key != null && !_appliedTargets.contains(result.target),
+        )
+        .toList();
+    if (pending.isEmpty) return;
+
+    await _app.runSlotOperation(() async {
+      final communicator = session.communicator;
+      await communicator.activateSlot(workSlot);
+      final types = await communicator.getSlotTagTypes();
+      if (workSlot >= types.length || !isMifareClassic(types[workSlot].hf)) {
+        throw StateError('Work slot is no longer MIFARE Classic');
+      }
+      final blockCount = mfClassicGetBlockCount(
+        chameleonTagTypeGetMfClassicType(types[workSlot].hf),
+      );
+      var changed = false;
+      for (final result in pending) {
+        if (session.generation != _captureGeneration ||
+            !identical(_app.communicator, communicator)) {
+          throw StateError('Reader-key capture session changed');
+        }
+        final trailerBlock = readerKeySectorTrailerBlock(result.target.sector);
+        if (trailerBlock >= blockCount) continue;
+        final trailer = await communicator.mf1GetEmulatorBlock(trailerBlock, 1);
+        final patched = applyReaderKeyToTrailer(
+          trailer: trailer,
+          key: result.key!,
+          keyB: result.target.keyB,
+        );
+        await communicator.setMf1BlockData(trailerBlock, patched);
+        _appliedTargets.add(result.target);
+        changed = true;
+      }
+      if (changed) {
+        if (session.generation != _captureGeneration ||
+            !identical(_app.communicator, communicator)) {
+          throw StateError('Reader-key capture session changed');
+        }
+        await communicator.saveSlotData();
+        _app.changesMade();
+      }
+    });
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _recoverKeys([_ReaderKeyCaptureSession? requestedSession]) {
+    final communicator = requestedSession?.communicator ?? _app.communicator;
+    if (communicator == null) return Future.value();
+    final session =
+        requestedSession ??
+        _captureSession ??
+        _ReaderKeyCaptureSession(
+          generation: _captureGeneration,
+          communicator: communicator,
+          workSlot: _workSlot ?? 0,
+          autoApply: false,
+        );
+    final active = _activeRecovery;
+    final activeSession = _activeRecoverySession;
+    if (active != null && activeSession != null) {
+      if (activeSession.generation == session.generation &&
+          identical(activeSession.communicator, session.communicator)) {
+        return active;
+      }
+      return active.then((_) => _recoverKeys(session));
+    }
+    final operation = _runRecovery(session);
+    _activeRecovery = operation;
+    _activeRecoverySession = session;
+    unawaited(
+      operation.whenComplete(() {
+        if (identical(_activeRecovery, operation)) {
+          _activeRecovery = null;
+          _activeRecoverySession = null;
+        }
+      }),
+    );
+    return operation;
+  }
+
+  Future<void> _runRecovery(_ReaderKeyCaptureSession session) async {
+    final communicator = session.communicator;
+    final generation = session.generation;
+
+    bool isCurrentSession() =>
+        mounted &&
+        generation == _captureGeneration &&
+        identical(_observedCommunicator, communicator);
+
     setState(() {
       recovering = true;
       progress = 0;
     });
     try {
-      final count = await _app.communicator!.getMf1DetectionCount();
-      final detections = await _app.communicator!.getMf1DetectionRecords(count);
-      if (!mounted) return;
+      final count = await communicator.getMf1DetectionCount();
+      final detections = await communicator.getMf1DetectionRecords(count);
+      if (!isCurrentSession()) return;
       final results = await recoverReaderKeys(
         detections: detections,
         solver: (request) async {
           final recovered = await recovery.mfkey32(request);
           return recovered.isEmpty ? null : recovered.first;
         },
-        isCancelled: () => !mounted,
+        isCancelled: () => !isCurrentSession(),
         onProgress: (completed, total, _) {
-          if (mounted) {
+          if (isCurrentSession()) {
             setState(
               () => progress = total == 0
                   ? 100
@@ -438,20 +916,26 @@ class ReaderKeysPageState extends State<ReaderKeysPage>
           }
         },
       );
-      if (!mounted) return;
+      if (!isCurrentSession()) return;
+      final mergedResults = Map<ReaderKeyTarget, ReaderKeyRecoveryResult>.from(
+        recoveryResults,
+      );
+      for (final result in results) {
+        final previous = mergedResults[result.target];
+        if (result.key != null || previous?.key == null) {
+          mergedResults[result.target] = result;
+        }
+      }
+      final unique = <String, Uint8List>{};
+      for (final result in mergedResults.values) {
+        if (result.key != null) {
+          unique[bytesToHex(result.key!).toUpperCase()] = result.key!;
+        }
+      }
       setState(() {
-        for (final result in results) {
-          final previous = recoveryResults[result.target];
-          if (result.key != null || previous?.key == null) {
-            recoveryResults[result.target] = result;
-          }
-        }
-        final unique = <String, Uint8List>{};
-        for (final result in recoveryResults.values) {
-          if (result.key != null) {
-            unique[bytesToHex(result.key!)] = result.key!;
-          }
-        }
+        recoveryResults
+          ..clear()
+          ..addAll(mergedResults);
         keys
           ..clear()
           ..addAll(unique.values);
@@ -465,8 +949,26 @@ class ReaderKeysPageState extends State<ReaderKeysPage>
               .toUpperCase();
         }
       });
+      try {
+        await _persistSessionKeys(results, isCurrentSession);
+      } catch (error) {
+        if (isCurrentSession()) {
+          _showMessage('Recovered keys could not be saved: $error');
+        }
+      }
+      if (isCurrentSession()) {
+        try {
+          await _applyRecoveredKeys(results, session);
+        } catch (error) {
+          if (isCurrentSession()) {
+            _showMessage(
+              'Recovered keys were saved but not loaded into the work slot: $error',
+            );
+          }
+        }
+      }
     } catch (e) {
-      _showMessage(e.toString());
+      if (isCurrentSession()) _showMessage(e.toString());
     } finally {
       if (mounted) {
         setState(() {
@@ -559,6 +1061,89 @@ class ReaderKeysPageState extends State<ReaderKeysPage>
 
   // ---- Per-mode configuration widgets ----
 
+  Widget _buildWorkSlotConfig() {
+    final localizations = AppLocalizations.of(context)!;
+    final syntheticMode = _tab.index != 0;
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Work slot',
+              style: TextStyle(fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 4),
+            const Text(
+              'Recovered keys are written here so the next reader attempt can authenticate. '
+              'Preparing the slot replaces its HF data.',
+              style: TextStyle(fontSize: 12),
+            ),
+            const SizedBox(height: 10),
+            DropdownButtonFormField<int>(
+              initialValue: _workSlot,
+              isExpanded: true,
+              decoration: InputDecoration(
+                labelText: 'MIFARE Classic work slot',
+                border: const OutlineInputBorder(),
+                prefixIcon: const Icon(Icons.build_circle_outlined),
+              ),
+              items: _workSlots
+                  .map(
+                    (entry) => DropdownMenuItem<int>(
+                      value: entry.index,
+                      child: Text(
+                        '${localizations.slot} ${entry.index + 1}: ${entry.label}',
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  )
+                  .toList(),
+              onChanged: (armed || recovering)
+                  ? null
+                  : (value) => setState(() {
+                      _workSlot = value;
+                      _resetWorkPreparation();
+                    }),
+            ),
+            if (syntheticMode) ...[
+              const SizedBox(height: 10),
+              DropdownButtonFormField<TagType>(
+                initialValue: _workSlotType,
+                decoration: const InputDecoration(
+                  labelText: 'Synthetic card size',
+                  border: OutlineInputBorder(),
+                ),
+                items: const [TagType.mifare1K, TagType.mifare4K]
+                    .map(
+                      (type) => DropdownMenuItem(
+                        value: type,
+                        child: Text(
+                          type == TagType.mifare4K
+                              ? 'MIFARE Classic 4K'
+                              : 'MIFARE Classic 1K',
+                        ),
+                      ),
+                    )
+                    .toList(),
+                onChanged: (armed || recovering)
+                    ? null
+                    : (value) {
+                        if (value == null) return;
+                        setState(() {
+                          _workSlotType = value;
+                          _resetWorkPreparation();
+                        });
+                      },
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildCardConfig() {
     var localizations = AppLocalizations.of(context)!;
     final cards = _app.sharedPreferencesProvider
@@ -583,9 +1168,12 @@ class ReaderKeysPageState extends State<ReaderKeysPage>
             ),
           ],
           selected: {_cardSource},
-          onSelectionChanged: armed
+          onSelectionChanged: (armed || recovering)
               ? null
-              : (s) => setState(() => _cardSource = s.first),
+              : (s) => setState(() {
+                  _cardSource = s.first;
+                  _resetWorkPreparation();
+                }),
         ),
         const SizedBox(height: 12),
         if (_cardSource == _CardSource.saved)
@@ -607,9 +1195,12 @@ class ReaderKeysPageState extends State<ReaderKeysPage>
                   ),
                 )
                 .toList(),
-            onChanged: armed
+            onChanged: (armed || recovering)
                 ? null
-                : (v) => setState(() => _selectedCardId = v),
+                : (v) => setState(() {
+                    _selectedCardId = v;
+                    _resetWorkPreparation();
+                  }),
           )
         else ...[
           DropdownButtonFormField<int?>(
@@ -630,7 +1221,7 @@ class ReaderKeysPageState extends State<ReaderKeysPage>
                   ),
                 )
                 .toList(),
-            onChanged: armed
+            onChanged: (armed || recovering)
                 ? null
                 : (v) {
                     if (v != null) _onSlotSelected(v);
@@ -659,7 +1250,8 @@ class ReaderKeysPageState extends State<ReaderKeysPage>
             Expanded(
               child: TextField(
                 controller: _uidCtl,
-                enabled: !armed,
+                enabled: !armed && !recovering,
+                onChanged: (_) => _resetWorkPreparation(),
                 decoration: InputDecoration(
                   labelText: localizations.uid,
                   hintText: "DEADBEEF",
@@ -669,9 +1261,12 @@ class ReaderKeysPageState extends State<ReaderKeysPage>
             ),
             const SizedBox(width: 8),
             OutlinedButton.icon(
-              onPressed: armed
+              onPressed: (armed || recovering)
                   ? null
-                  : () => setState(() => _uidCtl.text = _randomUidHex()),
+                  : () => setState(() {
+                      _uidCtl.text = _randomUidHex();
+                      _resetWorkPreparation();
+                    }),
               icon: const Icon(Icons.casino),
               label: Text(localizations.random_uid),
             ),
@@ -793,7 +1388,9 @@ class ReaderKeysPageState extends State<ReaderKeysPage>
       children: [
         Center(
           child: ElevatedButton.icon(
-            onPressed: busy ? null : (armed ? _stop : _arm),
+            onPressed: busy || (!armed && recovering)
+                ? null
+                : (armed ? _stop : _arm),
             icon: Icon(armed ? Icons.stop : Icons.wifi_tethering),
             label: Text(
               armed ? localizations.stop_capture : localizations.arm_capture,
@@ -832,6 +1429,38 @@ class ReaderKeysPageState extends State<ReaderKeysPage>
           Padding(
             padding: const EdgeInsets.only(top: 8.0),
             child: Text(localizations.recovery_in_progress),
+          ),
+        if (_sessionDictionaryName != null && _sessionKeyHexes.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.only(top: 8),
+            child: Text(
+              'Auto-saved ${_sessionKeyHexes.length} unique key(s) to '
+              '${_sessionDictionaryName!}.',
+              textAlign: TextAlign.center,
+            ),
+          ),
+        if (_appliedTargets.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.only(top: 8),
+            child: Text(
+              '${_appliedTargets.length} sector key(s) loaded into work slot '
+              '${(_workSlot ?? 0) + 1}. Present the Chameleon again; the next '
+              'authentication can now complete.',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: Theme.of(context).colorScheme.primary,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ),
+        if (_tab.index == 2 && keys.isNotEmpty)
+          const Padding(
+            padding: EdgeInsets.only(top: 8),
+            child: Text(
+              'Keys are saved, but cannot be auto-applied while the UID changes '
+              'on every reader activation. Use a fixed UID for learn-and-retry.',
+              textAlign: TextAlign.center,
+            ),
           ),
         ..._buildRecoveryResults(),
         if (keys.isNotEmpty)
@@ -872,9 +1501,9 @@ class ReaderKeysPageState extends State<ReaderKeysPage>
               children: [
                 // Capture mode tabs — disabled while capturing.
                 IgnorePointer(
-                  ignoring: armed,
+                  ignoring: armed || recovering,
                   child: Opacity(
-                    opacity: armed ? 0.5 : 1.0,
+                    opacity: armed || recovering ? 0.5 : 1.0,
                     child: TabBar(
                       controller: _tab,
                       tabs: [
@@ -890,6 +1519,8 @@ class ReaderKeysPageState extends State<ReaderKeysPage>
                     padding: const EdgeInsets.all(16.0),
                     child: Column(
                       children: [
+                        _buildWorkSlotConfig(),
+                        const SizedBox(height: 12),
                         modeConfig,
                         const Divider(height: 32),
                         _buildCaptureSection(),
