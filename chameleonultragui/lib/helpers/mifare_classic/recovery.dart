@@ -851,6 +851,22 @@ class MifareClassicRecovery {
     int knownKeyType,
     int targetSector,
     int targetKeyType,
+  ) async =>
+      await recoverStaticNestedSingleDetailed(
+        knownKey,
+        knownSector,
+        knownKeyType,
+        targetSector,
+        targetKeyType,
+      ) ==
+      StaticNestedAttemptResult.found;
+
+  Future<StaticNestedAttemptResult> recoverStaticNestedSingleDetailed(
+    Uint8List knownKey,
+    int knownSector,
+    int knownKeyType,
+    int targetSector,
+    int targetKeyType,
   ) async {
     _throwIfCancelled();
     int knownBlock = mfClassicGetSectorTrailerBlockBySector(knownSector);
@@ -859,22 +875,28 @@ class MifareClassicRecovery {
     setCheckingSector(targetSector, targetKeyType);
     update();
     try {
-      if (await _recoverStaticNestedKey(
-            knownBlock,
-            0x60 + knownKeyType,
-            knownKey,
-            targetBlock,
-            0x60 + targetKeyType,
-            verifyCandidates: (keys) => checkKeysOnSector(
-              mfClassicConvertKeys(keys),
-              targetKeyType,
-              targetSector,
-            ),
-          ) ==
-          StaticNestedAttemptResult.found) {
+      final result = await _recoverStaticNestedKey(
+        knownBlock,
+        0x60 + knownKeyType,
+        knownKey,
+        targetBlock,
+        0x60 + targetKeyType,
+        verifyCandidates: (keys) => checkKeysOnSector(
+          mfClassicConvertKeys(keys),
+          targetKeyType,
+          targetSector,
+        ),
+      );
+      if (result == StaticNestedAttemptResult.found) {
         state = "";
         update();
-        return true;
+        return result;
+      }
+      if (result == StaticNestedAttemptResult.incompatible) {
+        state = "";
+        setMissingSector(targetSector, targetKeyType);
+        update();
+        return result;
       }
     } catch (e) {
       if (e is MifareClassicRecoveryCancelled) rethrow;
@@ -883,7 +905,7 @@ class MifareClassicRecovery {
     setMissingSector(targetSector, targetKeyType);
     state = "";
     update();
-    return false;
+    return StaticNestedAttemptResult.noKey;
   }
 
   // Standalone Hardnested: recover a target key from a known key on a
