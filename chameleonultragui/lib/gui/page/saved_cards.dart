@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:chameleonultragui/gui/component/card_button.dart';
 import 'package:chameleonultragui/gui/component/element_button.dart';
+import 'package:chameleonultragui/gui/component/module_version_navigation.dart';
 import 'package:chameleonultragui/gui/menu/dialogs/card/view.dart';
 import 'package:chameleonultragui/gui/menu/dialogs/dictionary/edit.dart';
 import 'package:chameleonultragui/gui/menu/dialogs/dictionary/view.dart';
@@ -11,6 +12,7 @@ import 'package:chameleonultragui/helpers/definitions.dart';
 import 'package:chameleonultragui/helpers/general.dart';
 import 'package:chameleonultragui/helpers/mifare_classic/general.dart';
 import 'package:chameleonultragui/helpers/mifare_ultralight/general.dart';
+import 'package:chameleonultragui/helpers/module_versions.dart';
 import 'package:chameleonultragui/helpers/validators.dart';
 import 'package:chameleonultragui/main.dart';
 import 'package:chameleonultragui/sharedprefsprovider.dart';
@@ -89,7 +91,10 @@ class SavedCardsPageState extends State<SavedCardsPage> {
             icon: const Icon(Icons.sync_alt),
             onPressed: () => Navigator.push(
               context,
-              MaterialPageRoute<void>(builder: (_) => const DataSyncPage()),
+              ModulePageRoute<void>(
+                moduleId: ModuleId.dataSync,
+                builder: (_) => const DataSyncPage(),
+              ),
             ),
           ),
         ],

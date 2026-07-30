@@ -40,11 +40,29 @@ class HomePageState extends State<HomePage> {
       appState.log!.e(e);
     }
 
+    // Resilience: a single transient command timeout (e.g. firmware version or
+    // device mode) must not reject the whole load and force a disconnect. The
+    // other reads are already guarded above.
+    List<String> version;
+    try {
+      version = await getVersion();
+    } catch (e) {
+      appState.log!.e(e);
+      version = ["", ""];
+    }
+
+    bool readerMode = false;
+    try {
+      readerMode = await isReaderDeviceMode();
+    } catch (e) {
+      appState.log!.e(e);
+    }
+
     return (
       await getBatteryInfo(),
       await getUsedSlotsOut8(slotTypes),
-      await getVersion(),
-      await isReaderDeviceMode(),
+      version,
+      readerMode,
       await areCapabilitiesSupported()
     );
   }
@@ -206,13 +224,38 @@ class HomePageState extends State<HomePage> {
               body: const Center(child: CircularProgressIndicator()),
             );
           } else if (snapshot.hasError) {
-            appState.disconnect();
+            // Do NOT hard-disconnect on a transient error: keep the link alive
+            // and let the user retry the load or disconnect explicitly. The
+            // connector-level listener still handles a genuinely dead transport.
             return Scaffold(
               appBar: AppBar(
                 title: Text(localizations.home),
               ),
               body: Center(
-                  child: ErrorPage(errorMessage: snapshot.error.toString())),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    ErrorPage(errorMessage: snapshot.error.toString()),
+                    const SizedBox(height: 16),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        IconButton(
+                          onPressed: () => setState(() {}),
+                          icon: const Icon(Icons.refresh),
+                        ),
+                        IconButton(
+                          tooltip: localizations.ble_disconnect,
+                          onPressed: () async {
+                            await appState.disconnect(manual: true);
+                          },
+                          icon: const Icon(Icons.close),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
             );
           } else {
             final (

@@ -1,4 +1,5 @@
 import 'package:chameleonultragui/gui/component/element_button.dart';
+import 'package:chameleonultragui/gui/component/module_version_navigation.dart';
 import 'package:chameleonultragui/gui/menu/hacking/apdu_terminal.dart';
 import 'package:chameleonultragui/gui/menu/hacking/auth_trace.dart';
 import 'package:chameleonultragui/gui/menu/hacking/authorized_relay_lab.dart';
@@ -31,7 +32,7 @@ import 'package:chameleonultragui/gui/menu/tools/pm3_tools.dart';
 import 'package:chameleonultragui/gui/page/read_card.dart';
 import 'package:chameleonultragui/gui/page/reader_keys.dart';
 import 'package:chameleonultragui/gui/page/write_card.dart';
-import 'package:chameleonultragui/helpers/pm3_tool_catalog.dart';
+import 'package:chameleonultragui/helpers/module_versions.dart';
 import 'package:chameleonultragui/main.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_staggered_grid_view/flutter_staggered_grid_view.dart';
@@ -60,12 +61,19 @@ class EthicalHackingPage extends StatefulWidget {
 }
 
 class EthicalHackingPageState extends State<EthicalHackingPage> {
-  void _push(BuildContext context, Widget page) {
-    Navigator.push(context, MaterialPageRoute(builder: (_) => page));
+  void _push(BuildContext context, Widget page, {required ModuleId moduleId}) {
+    Navigator.push(
+      context,
+      ModulePageRoute(moduleId: moduleId, builder: (_) => page),
+    );
   }
 
-  void _dialog(BuildContext context, Widget dialog) {
-    showDialog(context: context, builder: (_) => dialog);
+  void _dialog(BuildContext context, Widget dialog, ModuleId moduleId) {
+    showDialog(
+      context: context,
+      routeSettings: RouteSettings(arguments: moduleId),
+      builder: (_) => dialog,
+    );
   }
 
   Widget _disclaimer(BuildContext context) {
@@ -124,14 +132,15 @@ class EthicalHackingPageState extends State<EthicalHackingPage> {
         localizations.autopwn,
         localizations.autopwn_description,
         Icons.bolt,
-        (c) => _push(c, const AutopwnPage()),
+        (c) => _push(c, const AutopwnPage(), moduleId: ModuleId.autopwn),
         deviceRequired: true,
       ),
       HackingAttack(
         localizations.autopwn_plus,
         localizations.autopwn_plus_description,
         Icons.auto_awesome,
-        (c) => _push(c, const AutopwnPlusPage()),
+        (c) =>
+            _push(c, const AutopwnPlusPage(), moduleId: ModuleId.autopwnPlus),
         deviceRequired: true,
       ),
       HackingAttack(
@@ -145,56 +154,68 @@ class EthicalHackingPageState extends State<EthicalHackingPage> {
         localizations.dictionary_check,
         localizations.dictionary_check_description,
         Icons.menu_book,
-        (c) => _push(c, const AutopwnPage(dictionaryOnly: true)),
+        (c) => _push(
+          c,
+          const AutopwnPage(dictionaryOnly: true),
+          moduleId: ModuleId.dictionaryCheck,
+        ),
         deviceRequired: true,
       ),
       HackingAttack(
         localizations.darkside,
         localizations.darkside_description,
         Icons.dark_mode,
-        (c) => _push(c, const DarksidePage()),
+        (c) => _push(c, const DarksidePage(), moduleId: ModuleId.darkside),
         deviceRequired: true,
       ),
       HackingAttack(
         localizations.nested,
         localizations.nested_description,
         Icons.layers,
-        (c) => _push(c, const NestedPage()),
+        (c) => _push(c, const NestedPage(), moduleId: ModuleId.nested),
         deviceRequired: true,
       ),
       HackingAttack(
         localizations.static_nested,
         localizations.static_nested_description,
         Icons.lock_clock,
-        (c) => _push(c, const NestedPage(variant: NestedVariant.staticNonce)),
+        (c) => _push(
+          c,
+          const NestedPage(variant: NestedVariant.staticNonce),
+          moduleId: ModuleId.staticNested,
+        ),
         deviceRequired: true,
       ),
       HackingAttack(
         localizations.hardnested,
         localizations.hardnested_description,
         Icons.memory,
-        (c) => _push(c, const NestedPage(variant: NestedVariant.hard)),
+        (c) => _push(
+          c,
+          const NestedPage(variant: NestedVariant.hard),
+          moduleId: ModuleId.hardnested,
+        ),
         deviceRequired: true,
       ),
       HackingAttack(
         localizations.backdoor_rf08s,
         localizations.backdoor_rf08s_description,
         Icons.door_back_door,
-        (c) => _push(c, const BackdoorPage()),
+        (c) => _push(c, const BackdoorPage(), moduleId: ModuleId.backdoorRf08s),
         deviceRequired: true,
       ),
       HackingAttack(
         localizations.read_card,
         localizations.recover_keys,
         Icons.sensors,
-        (c) => _push(c, const ReadCardPage()),
+        (c) => _push(c, const ReadCardPage(), moduleId: ModuleId.readCard),
         deviceRequired: true,
       ),
       HackingAttack(
         localizations.mfkey_manual,
         localizations.mfkey_manual_description,
         Icons.vpn_key,
-        (c) => _dialog(c, const MfkeyManualMenu()),
+        (c) => _dialog(c, const MfkeyManualMenu(), ModuleId.mfkeyManual),
       ),
     ];
 
@@ -203,28 +224,36 @@ class EthicalHackingPageState extends State<EthicalHackingPage> {
         localizations.reader_keys_capture,
         localizations.mfkey_manual_description,
         Icons.wifi_tethering,
-        (c) => _push(c, const ReaderKeysPage()),
+        (c) => _push(
+          c,
+          const ReaderKeysPage(),
+          moduleId: ModuleId.readerKeysCapture,
+        ),
         deviceRequired: true,
       ),
       HackingAttack(
         localizations.hf_sniffing,
         localizations.hf_sniffing_description,
         Icons.radar,
-        (c) => _dialog(c, const HfSniffingMenu()),
+        (c) => _dialog(c, const HfSniffingMenu(), ModuleId.hfSniffing),
         deviceRequired: true,
       ),
       HackingAttack(
         localizations.ntag_password_capture,
         localizations.ntag_password_capture_description,
         Icons.password,
-        (c) => _push(c, const NtagPasswordCapturePage()),
+        (c) => _push(
+          c,
+          const NtagPasswordCapturePage(),
+          moduleId: ModuleId.ntagPasswordCapture,
+        ),
         deviceRequired: true,
       ),
       HackingAttack(
         localizations.mfkey32,
         localizations.mfkey_manual_description,
         Icons.key,
-        (c) => _push(c, const Mfkey32Menu()),
+        (c) => _push(c, const Mfkey32Menu(), moduleId: ModuleId.mfkey32),
         deviceRequired: true,
       ),
     ];
@@ -234,34 +263,39 @@ class EthicalHackingPageState extends State<EthicalHackingPage> {
         localizations.value_block_tool,
         localizations.value_block_description,
         Icons.exposure,
-        (c) => _dialog(c, const ValueBlockMenu()),
+        (c) => _dialog(c, const ValueBlockMenu(), ModuleId.valueBlock),
         deviceRequired: true,
       ),
       HackingAttack(
         localizations.write_card,
         localizations.write_card,
         Icons.system_update_alt,
-        (c) => _push(c, const WriteCardPage()),
+        (c) => _push(c, const WriteCardPage(), moduleId: ModuleId.writeCard),
         deviceRequired: true,
       ),
       HackingAttack(
         localizations.wiegand_decoder,
         localizations.wiegand_decoder_description,
         Icons.numbers,
-        (c) => _dialog(c, const WiegandMenu()),
+        (c) => _dialog(c, const WiegandMenu(), ModuleId.wiegand),
       ),
       HackingAttack(
         localizations.emv_emulator,
         localizations.emv_emulator_description,
         Icons.sim_card,
-        (c) => _push(c, const EmvEmulatorPage()),
+        (c) =>
+            _push(c, const EmvEmulatorPage(), moduleId: ModuleId.emvEmulator),
         deviceRequired: true,
       ),
       HackingAttack(
         localizations.keyboard_payload,
         localizations.keyboard_payload_description,
         Icons.keyboard,
-        (c) => _push(c, const KeyboardPayloadPage()),
+        (c) => _push(
+          c,
+          const KeyboardPayloadPage(),
+          moduleId: ModuleId.keyboardPayload,
+        ),
         deviceRequired: true,
       ),
     ];
@@ -271,40 +305,53 @@ class EthicalHackingPageState extends State<EthicalHackingPage> {
         localizations.authorized_relay_title,
         localizations.authorized_relay_description,
         Icons.account_balance_wallet,
-        (c) => _push(c, const AuthorizedRelayLabPage()),
+        (c) => _push(
+          c,
+          const AuthorizedRelayLabPage(),
+          moduleId: ModuleId.authorizedRelay,
+        ),
       ),
       HackingAttack(
         'Synthetic relay-resistance lab',
         'Private-AID Android HCE forwarding with strict payment-traffic rejection and timing reports',
         Icons.security,
-        (c) => _push(c, const RelayResistanceLabPage()),
+        (c) => _push(
+          c,
+          const RelayResistanceLabPage(),
+          moduleId: ModuleId.relayResistance,
+        ),
       ),
       HackingAttack(
         localizations.auth_trace,
         localizations.auth_trace_description,
         Icons.timeline,
-        (c) => _push(c, const AuthTracePage()),
+        (c) => _push(c, const AuthTracePage(), moduleId: ModuleId.authTrace),
         deviceRequired: true,
       ),
       HackingAttack(
         localizations.apdu_terminal,
         localizations.apdu_terminal_description,
         Icons.terminal,
-        (c) => _push(c, const ApduTerminalPage()),
+        (c) =>
+            _push(c, const ApduTerminalPage(), moduleId: ModuleId.apduTerminal),
         deviceRequired: true,
       ),
       HackingAttack(
         localizations.emv_reader,
         localizations.emv_reader_description,
         Icons.contactless,
-        (c) => _push(c, const EmvReaderPage()),
+        (c) => _push(c, const EmvReaderPage(), moduleId: ModuleId.emvReader),
         deviceRequired: true,
       ),
       HackingAttack(
         localizations.purchase_sim,
         localizations.purchase_sim_description,
         Icons.point_of_sale,
-        (c) => _push(c, const EmvTransactionPage()),
+        (c) => _push(
+          c,
+          const EmvTransactionPage(),
+          moduleId: ModuleId.emvTransaction,
+        ),
         deviceRequired: true,
       ),
       HackingAttack(
@@ -312,14 +359,22 @@ class EthicalHackingPageState extends State<EthicalHackingPage> {
         'Test whether an operator-locked phone exposes an EMV wallet and '
             'capture one authorised transit-profile transaction attempt',
         Icons.directions_subway,
-        (c) => _push(c, const TransitGateTestPage()),
+        (c) => _push(
+          c,
+          const TransitGateTestPage(),
+          moduleId: ModuleId.transitGate,
+        ),
         deviceRequired: true,
       ),
       HackingAttack(
         localizations.desfire_reader,
         localizations.desfire_reader_description,
         Icons.storage,
-        (c) => _push(c, const DesfireReaderPage()),
+        (c) => _push(
+          c,
+          const DesfireReaderPage(),
+          moduleId: ModuleId.desfireReader,
+        ),
         deviceRequired: true,
       ),
     ];
@@ -328,8 +383,8 @@ class EthicalHackingPageState extends State<EthicalHackingPage> {
       _Category(
         localizations.pm3_tools,
         Icons.developer_board,
-        (c) => _push(c, const Pm3ToolsPage()),
-        count: pm3CatalogEntries.length,
+        (c) => _push(c, const Pm3ToolsPage(), moduleId: ModuleId.pm3Catalog),
+        count: pm3OperationalToolCount,
       ),
       _Category(
         localizations.mfc_attacks,
@@ -337,6 +392,7 @@ class EthicalHackingPageState extends State<EthicalHackingPage> {
         (c) => _push(
           c,
           HackingCategoryPage(title: localizations.mfc_attacks, attacks: mfc),
+          moduleId: ModuleId.mifareClassicAttacks,
         ),
         count: mfc.length,
       ),
@@ -349,6 +405,7 @@ class EthicalHackingPageState extends State<EthicalHackingPage> {
             title: localizations.capture_sniffing,
             attacks: capture,
           ),
+          moduleId: ModuleId.captureAndSniffing,
         ),
         count: capture.length,
       ),
@@ -361,6 +418,7 @@ class EthicalHackingPageState extends State<EthicalHackingPage> {
             title: localizations.emulation_magic,
             attacks: emulation,
           ),
+          moduleId: ModuleId.emulationAndMagic,
         ),
         count: emulation.length,
       ),
@@ -373,6 +431,7 @@ class EthicalHackingPageState extends State<EthicalHackingPage> {
             title: localizations.diagnostics,
             attacks: diagnostics,
           ),
+          moduleId: ModuleId.protocolDiagnostics,
         ),
         count: diagnostics.length,
       ),
@@ -387,6 +446,7 @@ class EthicalHackingPageState extends State<EthicalHackingPage> {
             advertisingLabTab: BleAdvertisingLabPage(embedded: true),
             stressBroadcastTab: BleStressPage(embedded: true),
           ),
+          moduleId: ModuleId.bleAudit,
         ),
         count: 4,
       ),

@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:chameleonultragui/gui/component/module_version_navigation.dart';
+import 'package:chameleonultragui/helpers/module_versions.dart';
 
 // Localizations
 import 'package:chameleonultragui/generated/i18n/app_localizations.dart';
@@ -38,10 +40,23 @@ class _BleAppPageState extends State<BleAppPage>
   void initState() {
     super.initState();
     _tab = TabController(length: 4, vsync: this);
+    _tab.addListener(_updateModuleVersion);
+  }
+
+  void _updateModuleVersion() {
+    if (!mounted) return;
+    const modules = [
+      ModuleId.bleAudit,
+      ModuleId.bleRadioIdentity,
+      ModuleId.bleAdvertisingLab,
+      ModuleId.bleStressBroadcast,
+    ];
+    ModuleVersionScope.maybeNotifierOf(context)?.value = modules[_tab.index];
   }
 
   @override
   void dispose() {
+    _tab.removeListener(_updateModuleVersion);
     _tab.dispose();
     super.dispose();
   }

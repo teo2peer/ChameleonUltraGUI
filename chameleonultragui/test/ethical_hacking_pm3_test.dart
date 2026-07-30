@@ -10,7 +10,9 @@ import 'package:shared_preferences/shared_preferences.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  testWidgets('Ethical Hacking opens the complete PM3 catalog', (tester) async {
+  testWidgets('Ethical Hacking opens PM3 categories and tool interfaces', (
+    tester,
+  ) async {
     SharedPreferences.setMockInitialValues({});
     final preferences = SharedPreferencesProvider();
     await preferences.load();
@@ -30,13 +32,25 @@ void main() {
     );
 
     expect(find.text('PM3 Tools'), findsOneWidget);
-    expect(find.text('893 tools'), findsOneWidget);
+    expect(find.text('29 tools'), findsOneWidget);
 
     await tester.tap(find.text('PM3 Tools'));
     await tester.pumpAndSettle();
 
-    expect(find.text('893 indexed'), findsOneWidget);
-    expect(find.text('Mapped'), findsWidgets);
+    expect(find.text('ISO14443-A'), findsOneWidget);
+    expect(find.text('MIFARE Classic'), findsOneWidget);
+    expect(find.text('Low frequency'), findsOneWidget);
+    expect(find.text('Smart cards'), findsOneWidget);
+    expect(find.text('Offline analysis'), findsOneWidget);
+
+    await tester.tap(find.text('ISO14443-A'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('PM3 Tools / ISO14443-A'), findsOneWidget);
+    expect(find.text('hf 14a info'), findsOneWidget);
+    expect(find.text('hf 14a raw'), findsOneWidget);
+    expect(find.text('hf 14a apdu'), findsOneWidget);
+    expect(find.text('hf 14a sniff'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 }

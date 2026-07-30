@@ -7,12 +7,15 @@ import 'package:chameleonultragui/connector/serial_ble.dart';
 import 'package:chameleonultragui/connector/serial_emulator.dart';
 import 'package:chameleonultragui/connector/serial_macos.dart';
 import 'package:chameleonultragui/gui/component/device_found_banner.dart';
+import 'package:chameleonultragui/gui/component/module_version_footer.dart';
+import 'package:chameleonultragui/gui/component/module_version_navigation.dart';
 import 'package:chameleonultragui/gui/page/tools.dart';
 import 'package:chameleonultragui/helpers/font.dart';
 import 'package:chameleonultragui/helpers/emulation_change.dart';
 import 'package:chameleonultragui/helpers/definitions.dart';
 import 'package:chameleonultragui/helpers/general.dart';
 import 'package:chameleonultragui/helpers/mifare_classic/general.dart';
+import 'package:chameleonultragui/helpers/module_versions.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
@@ -904,6 +907,12 @@ class MainPage extends StatefulWidget {
 
 class _MainPageState extends State<MainPage> {
   var selectedIndex = 0;
+  final ValueNotifier<ModuleId> _activeModule = ValueNotifier(ModuleId.device);
+  late final ModuleNavigationObserver _moduleNavigationObserver =
+      ModuleNavigationObserver(
+        activeModule: _activeModule,
+        rootModule: ModuleId.device,
+      );
 
   // Port of a device the user dismissed from the "device found" banner, so it
   // stays hidden until a different device appears or we reconnect.
@@ -976,6 +985,12 @@ class _MainPageState extends State<MainPage> {
     WidgetsBinding.instance.addPostFrameCallback(
       (_) => updateNavigationRailWidth(context),
     );
+  }
+
+  @override
+  void dispose() {
+    _activeModule.dispose();
+    super.dispose();
   }
 
   @override
@@ -1060,6 +1075,11 @@ class _MainPageState extends State<MainPage> {
       // If not connected, and not on home, tools, settings, ethical hacking hub
       // or dev page, go to home page (reader keys, index 7, requires a device)
       selectedIndex = 0;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          _moduleNavigationObserver.setRootModule(ModuleId.device);
+        }
+      });
     }
 
     switch (selectedIndex) {
@@ -1109,7 +1129,6 @@ class _MainPageState extends State<MainPage> {
       default:
         throw UnimplementedError('no widget for $selectedIndex');
     }
-
     try {
       WakelockPlus.toggle(enable: page is FlashingPage);
     } catch (_) {}
@@ -1187,6 +1206,23 @@ class _MainPageState extends State<MainPage> {
         ),
       ).useCustomSystemFont(Brightness.dark),
       themeMode: widget.sharedPreferencesProvider.getTheme(), // Dark Theme
+      navigatorObservers: [_moduleNavigationObserver],
+      builder: (context, child) {
+        return ModuleVersionScope(
+          notifier: _activeModule,
+          child: Column(
+            children: [
+              Expanded(child: child ?? const SizedBox.shrink()),
+              ValueListenableBuilder<ModuleId>(
+                valueListenable: _activeModule,
+                builder: (context, moduleId, _) {
+                  return ModuleVersionFooter(moduleId: moduleId);
+                },
+              ),
+            ],
+          ),
+        );
+      },
       home: LayoutBuilder(
         // Build Page
         builder: (context, constraints) {
@@ -1194,7 +1230,7 @@ class _MainPageState extends State<MainPage> {
             left: false,
             right: false,
             top: false,
-            bottom: true,
+            bottom: false,
             child: Scaffold(
               body: Column(
                 children: [
@@ -1291,6 +1327,9 @@ class _MainPageState extends State<MainPage> {
                                   ],
                                   selectedIndex: selectedIndex,
                                   onDestinationSelected: (value) {
+                                    _moduleNavigationObserver.setRootModule(
+                                      _moduleForIndex(value),
+                                    );
                                     setState(() {
                                       selectedIndex = value;
                                     });
@@ -1331,6 +1370,22 @@ class _MainPageState extends State<MainPage> {
         },
       ),
     );
+  }
+
+  ModuleId _moduleForIndex(int index) {
+    return switch (index) {
+      0 => ModuleId.device,
+      1 => ModuleId.slotManager,
+      2 => ModuleId.library,
+      3 => ModuleId.readCard,
+      4 => ModuleId.writeCard,
+      5 => ModuleId.tools,
+      6 => ModuleId.settings,
+      7 => ModuleId.readerKeysCapture,
+      8 => ModuleId.ethicalHacking,
+      9 => ModuleId.debug,
+      _ => ModuleId.appShell,
+    };
   }
 }
 

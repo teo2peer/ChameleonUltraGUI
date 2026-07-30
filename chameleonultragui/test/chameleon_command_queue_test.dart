@@ -4,6 +4,7 @@ import 'dart:typed_data';
 import 'package:chameleonultragui/bridge/chameleon.dart';
 import 'package:chameleonultragui/connector/serial_abstract.dart';
 import 'package:chameleonultragui/helpers/definitions.dart';
+import 'package:chameleonultragui/helpers/pm3_protocol.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:logger/logger.dart';
 
@@ -1281,6 +1282,247 @@ void main() {
         communicator.hf14a4DesfireScan(),
         throwsA(isA<ChameleonCommandException>()),
       );
+    },
+  );
+
+  test('PM3 raw bridge sends exact flags, timeout, and bit length', () async {
+    final serial = _FakeSerial(
+      onCommand: (serial, id) async {
+        if (id == ChameleonCommand.getDeviceCapabilities.value) {
+          await serial.emitCapabilities();
+        } else if (id == ChameleonCommand.hf14ARawCommand.value) {
+          await serial.emit(id, status: 0, data: [0x04, 0x00]);
+        }
+      },
+    );
+    final response = await _communicator(serial).hf14aRaw(
+      Pm3Hf14aRawRequest(
+        data: Uint8List.fromList([0x26]),
+        bitLength: 7,
+        responseTimeoutMs: 100,
+        activateField: true,
+        waitResponse: true,
+        appendCrc: false,
+        autoSelect: false,
+        keepField: true,
+        checkResponseCrc: false,
+      ),
+    );
+
+    expect(serial.commandData[ChameleonCommand.hf14ARawCommand.value], [
+      0xc8,
+      0,
+      100,
+      0,
+      7,
+      0x26,
+    ]);
+    expect(response.status, 0);
+    expect(response.data, [0x04, 0x00]);
+  });
+
+  test('PM3 persistent select validates and parses card metadata', () async {
+    final serial = _FakeSerial(
+      onCommand: (serial, id) async {
+        if (id == ChameleonCommand.getDeviceCapabilities.value) {
+          await serial.emitCapabilities();
+        } else if (id == ChameleonCommand.hf14aScanKeep.value) {
+          await serial.emit(
+            id,
+            status: 0,
+            data: [4, 1, 2, 3, 4, 0x04, 0x00, 0x20, 2, 0x75, 0x77],
+          );
+        }
+      },
+    );
+
+    final card = await _communicator(serial).scan14443aTagKeep();
+
+    expect(card!.uid, [1, 2, 3, 4]);
+    expect(card.atqa, [0, 4]);
+    expect(card.sak, 0x20);
+    expect(card.ats, [0x75, 0x77]);
+  });
+
+  test('PM3 HF config bridge preserves the four firmware enum bytes', () async {
+    final serial = _FakeSerial(
+      onCommand: (serial, id) async {
+        if (id == ChameleonCommand.getDeviceCapabilities.value) {
+          await serial.emitCapabilities();
+        } else if (id == ChameleonCommand.hf14aGetConfig.value) {
+          await serial.emit(id, data: [0, 1, 2, 0]);
+        } else if (id == ChameleonCommand.hf14aSetConfig.value) {
+          await serial.emit(id);
+        }
+      },
+    );
+    final communicator = _communicator(serial);
+
+    final config = await communicator.getHf14aConfig();
+    await communicator.setHf14aConfig(config);
+
+    expect(config.uidCl2, 1);
+    expect(config.uidCl3, 2);
+    expect(serial.commandData[ChameleonCommand.hf14aSetConfig.value], [
+      0,
+      1,
+      2,
+      0,
+    ]);
+  });
+
+  test('PM3 T55xx writer emits the documented 11-byte payload', () async {
+    final serial = _FakeSerial(
+      onCommand: (serial, id) async {
+        if (id == ChameleonCommand.getDeviceCapabilities.value) {
+          await serial.emitCapabilities();
+        } else if (id == ChameleonCommand.writeT55xxBlock.value) {
+          await serial.emit(id, status: 0x40);
+        }
+      },
+    );
+
+    await _communicator(serial).writeT55xxBlock(
+      block: 3,
+      word: 0x11223344,
+      password: 0x20206666,
+      page1: true,
+    );
+
+    expect(serial.commandData[ChameleonCommand.writeT55xxBlock.value], [
+      3,
+      0x11,
+      0x22,
+      0x33,
+      0x44,
+      1,
+      0x20,
+      0x20,
+      0x66,
+      0x66,
+      1,
+    ]);
+  });
+
+  test('PM3 Jablotron writer emits UID and password candidates', () async {
+    final serial = _FakeSerial(
+      onCommand: (serial, id) async {
+        if (id == ChameleonCommand.getDeviceCapabilities.value) {
+          await serial.emitCapabilities();
+        } else if (id == ChameleonCommand.writeJablotronToT5577.value) {
+          await serial.emit(id, status: 0x40);
+        }
+      },
+    );
+
+    await _communicator(serial).writeJablotronToT55XX(
+      Uint8List.fromList([1, 2, 3, 4, 5]),
+      Uint8List.fromList([0x11, 0x22, 0x33, 0x44]),
+      [
+        Uint8List.fromList([0, 0, 0, 0]),
+        Uint8List.fromList([0x20, 0x20, 0x66, 0x66]),
+      ],
+    );
+
+    expect(serial.commandData[ChameleonCommand.writeJablotronToT5577.value], [
+      1,
+      2,
+      3,
+      4,
+      5,
+      0x11,
+      0x22,
+      0x33,
+      0x44,
+      0,
+      0,
+      0,
+      0,
+      0x20,
+      0x20,
+      0x66,
+      0x66,
+    ]);
+  });
+
+  test('PM3 LF ADC and Jablotron bridges enforce firmware statuses', () async {
+    final serial = _FakeSerial(
+      onCommand: (serial, id) async {
+        if (id == ChameleonCommand.getDeviceCapabilities.value) {
+          await serial.emitCapabilities();
+        } else if (id == ChameleonCommand.readLfAdc.value) {
+          await serial.emit(id, status: 0x40, data: [0x10, 0x20, 0x30]);
+        } else if (id == ChameleonCommand.scanJablotronTag.value) {
+          await serial.emit(id, status: 0x40, data: [1, 2, 3, 4, 5]);
+        }
+      },
+    );
+    final communicator = _communicator(serial);
+
+    expect(await communicator.readLfAdc(), [0x10, 0x20, 0x30]);
+    expect(await communicator.readJablotron(), [1, 2, 3, 4, 5]);
+  });
+
+  test(
+    'PM3 ioProx bridge parses fields and emits big-endian card number',
+    () async {
+      final response = [
+        2,
+        17,
+        0x12,
+        0x34,
+        0x00,
+        0xf0,
+        17,
+        2,
+        0x12,
+        0x34,
+        0xaa,
+        0xbb,
+        0,
+        0,
+        0,
+        0,
+      ];
+      final serial = _FakeSerial(
+        onCommand: (serial, id) async {
+          if (id == ChameleonCommand.getDeviceCapabilities.value) {
+            await serial.emitCapabilities();
+          } else if (id == ChameleonCommand.ioProxDecodeRaw.value ||
+              id == ChameleonCommand.ioProxComposeId.value) {
+            await serial.emit(id, data: response);
+          }
+        },
+      );
+      final communicator = _communicator(serial);
+
+      final decoded = await communicator.decodeIoProxRaw(
+        Uint8List.fromList(response.sublist(4, 12)),
+      );
+      final composed = await communicator.composeIoProxId(
+        version: 2,
+        facilityCode: 17,
+        cardNumber: 0x1234,
+      );
+
+      expect(decoded.cardNumber, 0x1234);
+      expect(composed.raw, response.sublist(4, 12));
+      expect(serial.commandData[ChameleonCommand.ioProxDecodeRaw.value], [
+        0x00,
+        0xf0,
+        17,
+        2,
+        0x12,
+        0x34,
+        0xaa,
+        0xbb,
+      ]);
+      expect(serial.commandData[ChameleonCommand.ioProxComposeId.value], [
+        2,
+        17,
+        0x12,
+        0x34,
+      ]);
     },
   );
 }

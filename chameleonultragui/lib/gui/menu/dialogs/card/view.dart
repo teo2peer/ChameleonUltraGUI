@@ -1,9 +1,11 @@
 import 'package:chameleonultragui/gui/menu/dialogs/card/edit.dart';
 import 'package:chameleonultragui/gui/menu/dialogs/dictionary/export.dart';
 import 'package:chameleonultragui/gui/menu/pages/dump_editor.dart';
+import 'package:chameleonultragui/gui/component/module_version_navigation.dart';
 import 'package:chameleonultragui/helpers/definitions.dart';
 import 'package:chameleonultragui/helpers/mifare_classic/general.dart';
 import 'package:chameleonultragui/helpers/mifare_ultralight/general.dart';
+import 'package:chameleonultragui/helpers/module_versions.dart';
 import 'package:flutter/material.dart';
 import 'package:chameleonultragui/helpers/general.dart';
 import 'package:chameleonultragui/sharedprefsprovider.dart';
@@ -303,7 +305,8 @@ class CardViewMenuState extends State<CardViewMenu> {
                 onPressed: () {
                   Navigator.push(
                     context,
-                    MaterialPageRoute(
+                    ModulePageRoute(
+                      moduleId: ModuleId.dumpEditor,
                       builder: (context) => DumpEditor(
                         cardSave: widget.tagSave,
                         onSave: (dumpData) async {

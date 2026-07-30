@@ -1,318 +1,390 @@
 import 'package:chameleonultragui/generated/i18n/app_localizations.dart';
+import 'package:chameleonultragui/gui/component/module_version_navigation.dart';
 import 'package:chameleonultragui/gui/menu/hacking/apdu_terminal.dart';
 import 'package:chameleonultragui/gui/menu/hacking/autopwn.dart';
 import 'package:chameleonultragui/gui/menu/hacking/darkside.dart';
 import 'package:chameleonultragui/gui/menu/hacking/desfire_reader.dart';
 import 'package:chameleonultragui/gui/menu/hacking/emv_reader.dart';
+import 'package:chameleonultragui/gui/menu/hacking/emv_transaction.dart';
 import 'package:chameleonultragui/gui/menu/hacking/nested.dart';
 import 'package:chameleonultragui/gui/menu/hacking/value_block.dart';
 import 'package:chameleonultragui/gui/menu/hacking/wiegand.dart';
 import 'package:chameleonultragui/gui/menu/tools/hf_sniffing.dart';
 import 'package:chameleonultragui/gui/menu/tools/lf_sniffing.dart';
-import 'package:chameleonultragui/gui/page/connect.dart';
+import 'package:chameleonultragui/gui/menu/tools/pm3_hf14a_tools.dart';
+import 'package:chameleonultragui/gui/menu/tools/pm3_lf_tools.dart';
+import 'package:chameleonultragui/gui/menu/tools/pm3_offline_tools.dart';
 import 'package:chameleonultragui/gui/page/read_card.dart';
-import 'package:chameleonultragui/gui/page/slot_manager.dart';
-import 'package:chameleonultragui/gui/page/write_card.dart';
-import 'package:chameleonultragui/helpers/pm3_tool_catalog.dart';
+import 'package:chameleonultragui/helpers/module_versions.dart';
 import 'package:chameleonultragui/main.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_staggered_grid_view/flutter_staggered_grid_view.dart';
 import 'package:provider/provider.dart';
 
-class Pm3ToolsPage extends StatefulWidget {
+const int pm3ToolCategoryCount = 5;
+const int pm3OperationalToolCount = 29;
+
+class Pm3ToolsPage extends StatelessWidget {
   const Pm3ToolsPage({super.key});
 
-  @override
-  State<Pm3ToolsPage> createState() => _Pm3ToolsPageState();
-}
-
-class _Pm3ToolsPageState extends State<Pm3ToolsPage> {
-  final _searchController = TextEditingController();
-  Pm3ToolSupport? _supportFilter;
-
-  @override
-  void dispose() {
-    _searchController.dispose();
-    super.dispose();
-  }
+  List<_Pm3Category> _categories() => [
+    _Pm3Category(
+      title: 'ISO14443-A',
+      description: 'Reader, raw frames, ISO-DEP, and live card capture.',
+      icon: Icons.nfc,
+      tools: [
+        _Pm3Tool(
+          'hf 14a info',
+          'Inspect UID, ATQA, SAK, ATS, cascade handling, and RATS.',
+          Icons.contactless,
+          (context) => _push(context, const Pm3Hf14aInspectorPage()),
+        ),
+        _Pm3Tool(
+          'hf 14a raw',
+          'Transmit a bounded ISO14443-A frame with PM3-compatible flags.',
+          Icons.terminal,
+          (context) => _push(context, const Pm3Hf14aRawPage()),
+        ),
+        _Pm3Tool(
+          'hf 14a apdu',
+          'Send an ISO14443-4 APDU and inspect the response.',
+          Icons.send,
+          (context) =>
+              _push(context, const ApduTerminalPage(), ModuleId.apduTerminal),
+        ),
+        _Pm3Tool(
+          'hf 14a sniff',
+          'Capture the reader/card exchange while the device emulates a card.',
+          Icons.radar,
+          (context) =>
+              _dialog(context, const HfSniffingMenu(), ModuleId.hfSniffing),
+        ),
+      ],
+    ),
+    _Pm3Category(
+      title: 'MIFARE Classic',
+      description: 'Recover, read, write, trace, and emulate Classic cards.',
+      icon: Icons.key,
+      tools: [
+        _Pm3Tool(
+          'hf mf info / dump',
+          'Inspect a MIFARE Classic card, recover keys, and dump readable blocks.',
+          Icons.credit_card,
+          (context) => _push(context, const ReadCardPage(), ModuleId.readCard),
+        ),
+        _Pm3Tool(
+          'hf mf autopwn',
+          'Run dictionary, Darkside, Nested, Hardnested, static, and backdoor recovery.',
+          Icons.bolt,
+          (context) => _push(context, const AutopwnPage(), ModuleId.autopwn),
+        ),
+        _Pm3Tool(
+          'hf mf darkside',
+          'Acquire and solve a first key from a weak-PRNG card.',
+          Icons.dark_mode,
+          (context) => _push(context, const DarksidePage(), ModuleId.darkside),
+        ),
+        _Pm3Tool(
+          'hf mf nested',
+          'Recover a target key from a known key on weak-PRNG cards.',
+          Icons.layers,
+          (context) => _push(context, const NestedPage(), ModuleId.nested),
+        ),
+        _Pm3Tool(
+          'hf mf staticnested',
+          'Run the static-nonce variant against compatible Classic cards.',
+          Icons.lock_clock,
+          (context) => _push(
+            context,
+            const NestedPage(variant: NestedVariant.staticNonce),
+            ModuleId.staticNested,
+          ),
+        ),
+        _Pm3Tool(
+          'hf mf hardnested',
+          'Acquire nonces and run hardened nested recovery.',
+          Icons.memory,
+          (context) => _push(
+            context,
+            const NestedPage(variant: NestedVariant.hard),
+            ModuleId.hardnested,
+          ),
+        ),
+        _Pm3Tool(
+          'hf mf value',
+          'Increment, decrement, restore, and transfer a value block.',
+          Icons.exposure,
+          (context) =>
+              _dialog(context, const ValueBlockMenu(), ModuleId.valueBlock),
+        ),
+      ],
+    ),
+    _Pm3Category(
+      title: 'Low frequency',
+      description:
+          'LF discovery, signal capture, ioProx, and T55xx operations.',
+      icon: Icons.sensors,
+      tools: [
+        _Pm3Tool(
+          'lf search',
+          'Run each supported LF reader and report every recognized protocol.',
+          Icons.radar,
+          (context) => _push(context, const Pm3LfDiscoveryPage()),
+        ),
+        _Pm3Tool(
+          'lf read ADC',
+          'Capture the direct LF ADC window for signal analysis.',
+          Icons.graphic_eq,
+          (context) => _push(context, const Pm3LfAdcPage()),
+        ),
+        _Pm3Tool(
+          'lf sniff',
+          'Capture an LF waveform, inspect it, and decode Manchester candidates.',
+          Icons.timeline,
+          (context) =>
+              _dialog(context, const LfSniffingMenu(), ModuleId.lfSniffing),
+        ),
+        _Pm3Tool(
+          'lf ioProx codec',
+          'Decode raw ioProx bytes or compose the device card structure.',
+          Icons.account_tree,
+          (context) => _push(context, const Pm3IoProxCodecPage()),
+        ),
+        _Pm3Tool(
+          'lf t55xx write',
+          'Write an explicit 32-bit T55xx block, with optional password and page.',
+          Icons.edit_note,
+          (context) => _push(context, const Pm3T55xxBlockWriterPage()),
+        ),
+        _Pm3Tool(
+          'lf jablotron clone',
+          'Read a Jablotron UID and write it to a password-protected T55xx tag.',
+          Icons.copy,
+          (context) => _push(context, const Pm3JablotronClonePage()),
+        ),
+      ],
+    ),
+    _Pm3Category(
+      title: 'Smart cards',
+      description:
+          'Read ISO-DEP applications through dedicated EMV and DESFire workflows.',
+      icon: Icons.sim_card,
+      tools: [
+        _Pm3Tool(
+          'emv reader',
+          'Read contactless EMV application data and decoded APDUs.',
+          Icons.contactless,
+          (context) =>
+              _push(context, const EmvReaderPage(), ModuleId.emvReader),
+        ),
+        _Pm3Tool(
+          'emv transaction',
+          'Perform an offline EMV GENERATE AC simulation without bank authorisation.',
+          Icons.point_of_sale,
+          (context) => _push(
+            context,
+            const EmvTransactionPage(),
+            ModuleId.emvTransaction,
+          ),
+        ),
+        _Pm3Tool(
+          'hf mfdes info',
+          'Enumerate DESFire version, applications, and accessible file IDs.',
+          Icons.storage,
+          (context) =>
+              _push(context, const DesfireReaderPage(), ModuleId.desfireReader),
+        ),
+        _Pm3Tool(
+          'hf 14a apdu terminal',
+          'Issue an arbitrary ISO-DEP APDU to a card you control.',
+          Icons.code,
+          (context) =>
+              _push(context, const ApduTerminalPage(), ModuleId.apduTerminal),
+        ),
+      ],
+    ),
+    _Pm3Category(
+      title: 'Offline analysis',
+      description: 'Host-side decoders that do not need a connected reader.',
+      icon: Icons.analytics,
+      tools: [
+        _Pm3Tool(
+          'data num',
+          'Convert arbitrary-precision decimal, hexadecimal, and binary values.',
+          Icons.calculate,
+          (context) => _push(
+            context,
+            const Pm3OfflineToolPage(tool: Pm3OfflineTool.number),
+          ),
+          deviceRequired: false,
+        ),
+        _Pm3Tool(
+          'data xor',
+          'XOR byte strings with an explicit or automatically selected mask.',
+          Icons.compare_arrows,
+          (context) => _push(
+            context,
+            const Pm3OfflineToolPage(tool: Pm3OfflineTool.xor),
+          ),
+          deviceRequired: false,
+        ),
+        _Pm3Tool(
+          'analyse lrc',
+          'Calculate the PM3 rolling-XOR LRC byte.',
+          Icons.functions,
+          (context) => _push(
+            context,
+            const Pm3OfflineToolPage(tool: Pm3OfflineTool.lrc),
+          ),
+          deviceRequired: false,
+        ),
+        _Pm3Tool(
+          'analyse nuid',
+          'Generate a four-byte NUID from a seven-byte UID.',
+          Icons.fingerprint,
+          (context) => _push(
+            context,
+            const Pm3OfflineToolPage(tool: Pm3OfflineTool.nuid),
+          ),
+          deviceRequired: false,
+        ),
+        _Pm3Tool(
+          'analyse chksum',
+          'Calculate PM3 byte, nibble, crumb, complement, XOR, and BSD checksums.',
+          Icons.rule,
+          (context) => _push(
+            context,
+            const Pm3OfflineToolPage(tool: Pm3OfflineTool.checksum),
+          ),
+          deviceRequired: false,
+        ),
+        _Pm3Tool(
+          'analyse freq',
+          'Calculate RFID wavelengths, near-field ranges, and LC resonance.',
+          Icons.waves,
+          (context) => _push(context, const Pm3FrequencyPage()),
+          deviceRequired: false,
+        ),
+        _Pm3Tool(
+          'analyse units',
+          'Convert ISO14443-A ETU, microseconds, and 3.39 MHz SSP cycles.',
+          Icons.straighten,
+          (context) => _push(context, const Pm3UnitsPage()),
+          deviceRequired: false,
+        ),
+        _Pm3Tool(
+          'wiegand decode',
+          'Decode an access-control value into facility code and card number.',
+          Icons.numbers,
+          (context) => _dialog(context, const WiegandMenu(), ModuleId.wiegand),
+          deviceRequired: false,
+        ),
+      ],
+    ),
+  ];
 
   @override
   Widget build(BuildContext context) {
-    final appState = context.watch<ChameleonGUIState>();
+    final app = context.watch<ChameleonGUIState>();
     final localizations = AppLocalizations.of(context)!;
-    final acknowledged = appState.sharedPreferencesProvider
-        .getEthicalHackingAck();
-    final connected = appState.connector?.connected ?? false;
-    final sections = filterPm3Catalog(_searchController.text, _supportFilter);
-    final rows = <Object>[
-      for (final section in sections) ...[section, ...section.tools],
-    ];
+    final acknowledged = app.sharedPreferencesProvider.getEthicalHackingAck();
+    final categories = _categories();
 
     return Scaffold(
       appBar: AppBar(title: Text(localizations.pm3_tools)),
-      body: LayoutBuilder(
-        builder: (context, constraints) {
-          final horizontalPadding = constraints.maxWidth >= 700 ? 24.0 : 12.0;
-          return Center(
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 1000),
-              child: ListView.builder(
-                keyboardDismissBehavior:
-                    ScrollViewKeyboardDismissBehavior.onDrag,
-                padding: EdgeInsets.fromLTRB(
-                  horizontalPadding,
-                  16,
-                  horizontalPadding,
-                  32,
+      body: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          Text(
+            'Operational PM3-compatible workflows for Chameleon Ultra. Each entry invokes a device command or a host implementation; this is not a command catalogue.',
+            style: Theme.of(context).textTheme.bodyLarge,
+          ),
+          const SizedBox(height: 12),
+          Chip(
+            label: Text(
+              '$pm3OperationalToolCount operational tools in $pm3ToolCategoryCount categories',
+            ),
+          ),
+          if (!acknowledged) ...[
+            const SizedBox(height: 12),
+            Card(
+              color: Theme.of(context).colorScheme.errorContainer,
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Authorisation required',
+                      style: Theme.of(context).textTheme.titleMedium,
+                    ),
+                    const SizedBox(height: 6),
+                    const Text(
+                      'Use these RF operations only on hardware and systems you own or are explicitly authorised to test.',
+                    ),
+                    const SizedBox(height: 12),
+                    FilledButton(
+                      onPressed: () => app.sharedPreferencesProvider
+                          .setEthicalHackingAck(true),
+                      child: Text(localizations.accept),
+                    ),
+                  ],
                 ),
-                itemCount: rows.isEmpty ? 2 : rows.length + 1,
-                itemBuilder: (context, index) {
-                  if (index == 0) {
-                    return Padding(
-                      padding: const EdgeInsets.only(bottom: 8),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          Text(
-                            localizations.pm3_tools_description,
-                            style: Theme.of(context).textTheme.bodyLarge,
-                          ),
-                          const SizedBox(height: 12),
-                          if (!acknowledged)
-                            Card(
-                              color: Theme.of(
-                                context,
-                              ).colorScheme.errorContainer,
-                              child: Padding(
-                                padding: const EdgeInsets.all(16),
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(
-                                      localizations
-                                          .pm3_tools_authorization_required,
-                                      style: Theme.of(
-                                        context,
-                                      ).textTheme.titleMedium,
-                                    ),
-                                    const SizedBox(height: 6),
-                                    Text(
-                                      localizations
-                                          .pm3_tools_authorization_description,
-                                    ),
-                                    const SizedBox(height: 12),
-                                    FilledButton(
-                                      onPressed: () {
-                                        appState.sharedPreferencesProvider
-                                            .setEthicalHackingAck(true);
-                                        setState(() {});
-                                      },
-                                      child: Text(localizations.accept),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            )
-                          else
-                            Align(
-                              alignment: Alignment.centerLeft,
-                              child: Chip(
-                                avatar: const Icon(
-                                  Icons.verified_user,
-                                  size: 18,
-                                ),
-                                label: Text(localizations.pm3_tools_authorized),
-                              ),
-                            ),
-                          const SizedBox(height: 12),
-                          Wrap(
-                            spacing: 8,
-                            runSpacing: 8,
-                            children: [
-                              Chip(
-                                label: Text(
-                                  localizations.pm3_tools_indexed(
-                                    pm3CatalogEntries.length,
-                                  ),
-                                ),
-                              ),
-                              _SupportChip(
-                                label: localizations.pm3_tools_mapped,
-                                support: Pm3ToolSupport.mapped,
-                                count: pm3CatalogCount(Pm3ToolSupport.mapped),
-                              ),
-                              _SupportChip(
-                                label: localizations.pm3_tools_portable,
-                                support: Pm3ToolSupport.portable,
-                                count: pm3CatalogCount(Pm3ToolSupport.portable),
-                              ),
-                              _SupportChip(
-                                label: localizations.pm3_tools_unsupported,
-                                support: Pm3ToolSupport.unsupported,
-                                count: pm3CatalogCount(
-                                  Pm3ToolSupport.unsupported,
-                                ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 12),
-                          TextField(
-                            controller: _searchController,
-                            decoration: InputDecoration(
-                              border: const OutlineInputBorder(),
-                              hintText: localizations.pm3_tools_search,
-                              prefixIcon: const Icon(Icons.search),
-                              suffixIcon: _searchController.text.isEmpty
-                                  ? null
-                                  : IconButton(
-                                      tooltip: localizations.clear,
-                                      onPressed: () {
-                                        _searchController.clear();
-                                        setState(() {});
-                                      },
-                                      icon: const Icon(Icons.clear),
-                                    ),
-                            ),
-                            onChanged: (_) => setState(() {}),
-                          ),
-                          const SizedBox(height: 8),
-                          Wrap(
-                            spacing: 8,
-                            runSpacing: 8,
-                            children: [
-                              _filterChip(localizations.pm3_tools_all, null),
-                              _filterChip(
-                                localizations.pm3_tools_mapped,
-                                Pm3ToolSupport.mapped,
-                              ),
-                              _filterChip(
-                                localizations.pm3_tools_portable,
-                                Pm3ToolSupport.portable,
-                              ),
-                              _filterChip(
-                                localizations.pm3_tools_unsupported,
-                                Pm3ToolSupport.unsupported,
-                              ),
-                            ],
-                          ),
-                        ],
-                      ),
-                    );
-                  }
-
-                  if (rows.isEmpty) {
-                    return Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 32),
-                      child: Center(
-                        child: Text(localizations.pm3_tools_no_results),
-                      ),
-                    );
-                  }
-
-                  final row = rows[index - 1];
-                  if (row is Pm3ToolSection) {
-                    return _SectionHeader(section: row);
-                  }
-                  final entry = row as Pm3Tool;
-                  final deviceMissing = entry.requiresDevice && !connected;
-                  final enabled =
-                      entry.support == Pm3ToolSupport.mapped &&
-                      acknowledged &&
-                      !deviceMissing;
-                  return _ToolCard(
-                    entry: entry,
-                    deviceMissing: deviceMissing,
-                    enabled: enabled,
-                    onTap: enabled ? () => _open(entry.target!) : null,
-                  );
-                },
               ),
             ),
-          );
-        },
-      ),
-    );
-  }
-
-  Widget _filterChip(String label, Pm3ToolSupport? support) {
-    return FilterChip(
-      label: Text(label),
-      selected: _supportFilter == support,
-      onSelected: (_) => setState(() => _supportFilter = support),
-    );
-  }
-
-  void _open(Pm3ToolTarget target) {
-    switch (target) {
-      case Pm3ToolTarget.device:
-        _push(const ConnectPage());
-      case Pm3ToolTarget.readCard:
-        _push(const ReadCardPage());
-      case Pm3ToolTarget.writeCard:
-        _push(const WriteCardPage());
-      case Pm3ToolTarget.slotManager:
-        _push(const SlotManagerPage());
-      case Pm3ToolTarget.hfSniffing:
-        _dialog(const HfSniffingMenu());
-      case Pm3ToolTarget.lfSniffing:
-        _dialog(const LfSniffingMenu());
-      case Pm3ToolTarget.apduTerminal:
-        _push(const ApduTerminalPage());
-      case Pm3ToolTarget.emvReader:
-        _push(const EmvReaderPage());
-      case Pm3ToolTarget.desfireReader:
-        _push(const DesfireReaderPage());
-      case Pm3ToolTarget.autopwn:
-        _push(const AutopwnPage());
-      case Pm3ToolTarget.darkside:
-        _push(const DarksidePage());
-      case Pm3ToolTarget.nested:
-        _push(const NestedPage());
-      case Pm3ToolTarget.staticNested:
-        _push(const NestedPage(variant: NestedVariant.staticNonce));
-      case Pm3ToolTarget.hardnested:
-        _push(const NestedPage(variant: NestedVariant.hard));
-      case Pm3ToolTarget.valueBlock:
-        _dialog(const ValueBlockMenu());
-      case Pm3ToolTarget.wiegand:
-        _dialog(const WiegandMenu());
-    }
-  }
-
-  void _push(Widget page) {
-    Navigator.push(context, MaterialPageRoute(builder: (_) => page));
-  }
-
-  void _dialog(Widget dialog) {
-    showDialog(context: context, builder: (_) => dialog);
-  }
-}
-
-class _SectionHeader extends StatelessWidget {
-  final Pm3ToolSection section;
-
-  const _SectionHeader({required this.section});
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(4, 20, 4, 8),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Expanded(
-                child: Text(
-                  section.title,
-                  style: Theme.of(context).textTheme.titleLarge,
+          ],
+          const SizedBox(height: 16),
+          AlignedGridView.count(
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            crossAxisCount: MediaQuery.of(context).size.width >= 700 ? 2 : 1,
+            mainAxisSpacing: 12,
+            crossAxisSpacing: 12,
+            itemCount: categories.length,
+            itemBuilder: (context, index) {
+              final category = categories[index];
+              return Card(
+                clipBehavior: Clip.antiAlias,
+                child: InkWell(
+                  key: ValueKey('pm3-category-${category.title}'),
+                  onTap: acknowledged
+                      ? () =>
+                            _push(context, _Pm3CategoryPage(category: category))
+                      : null,
+                  child: Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Icon(
+                          category.icon,
+                          size: 32,
+                          color: Theme.of(context).colorScheme.primary,
+                        ),
+                        const SizedBox(width: 14),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                category.title,
+                                style: Theme.of(context).textTheme.titleMedium,
+                              ),
+                              const SizedBox(height: 4),
+                              Text(category.description),
+                              const SizedBox(height: 10),
+                              Chip(
+                                label: Text('${category.tools.length} tools'),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
                 ),
-              ),
-              Chip(label: Text('${section.tools.length}')),
-            ],
-          ),
-          Text(
-            section.description,
-            style: Theme.of(context).textTheme.bodySmall,
+              );
+            },
           ),
         ],
       ),
@@ -320,104 +392,126 @@ class _SectionHeader extends StatelessWidget {
   }
 }
 
-class _ToolCard extends StatelessWidget {
-  final Pm3Tool entry;
-  final bool deviceMissing;
-  final bool enabled;
-  final VoidCallback? onTap;
+class _Pm3CategoryPage extends StatelessWidget {
+  final _Pm3Category category;
 
-  const _ToolCard({
-    required this.entry,
-    required this.deviceMissing,
-    required this.enabled,
-    required this.onTap,
-  });
+  const _Pm3CategoryPage({required this.category});
 
   @override
   Widget build(BuildContext context) {
-    final localizations = AppLocalizations.of(context)!;
-    final status = deviceMissing
-        ? localizations.device_required
-        : switch (entry.support) {
-            Pm3ToolSupport.mapped => localizations.pm3_tools_mapped,
-            Pm3ToolSupport.portable => localizations.pm3_tools_portable,
-            Pm3ToolSupport.unsupported => localizations.pm3_tools_unsupported,
-          };
-    final reason = deviceMissing ? localizations.device_required : entry.reason;
-
-    return Semantics(
-      button: true,
-      enabled: enabled,
-      label: '${entry.command}. $status. $reason',
-      child: Card(
-        clipBehavior: Clip.antiAlias,
-        child: InkWell(
-          key: ValueKey('pm3-tool-${entry.id}'),
-          onTap: onTap,
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Opacity(
-              opacity: enabled ? 1 : 0.62,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Wrap(
-                    spacing: 12,
-                    runSpacing: 8,
-                    crossAxisAlignment: WrapCrossAlignment.center,
+    final connected =
+        context.watch<ChameleonGUIState>().connector?.connected ?? false;
+    return Scaffold(
+      appBar: AppBar(title: Text('PM3 Tools / ${category.title}')),
+      body: ListView.separated(
+        padding: const EdgeInsets.all(16),
+        itemCount: category.tools.length + 1,
+        separatorBuilder: (_, _) => const SizedBox(height: 10),
+        itemBuilder: (context, index) {
+          if (index == 0) {
+            return Text(
+              category.description,
+              style: Theme.of(context).textTheme.bodyLarge,
+            );
+          }
+          final tool = category.tools[index - 1];
+          final unavailable = tool.deviceRequired && !connected;
+          return Card(
+            clipBehavior: Clip.antiAlias,
+            child: InkWell(
+              key: ValueKey('pm3-tool-${tool.title}'),
+              onTap: unavailable ? null : () => tool.open(context),
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Opacity(
+                  opacity: unavailable ? 0.55 : 1,
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      SelectableText(
-                        entry.command,
-                        style: Theme.of(context).textTheme.titleMedium
-                            ?.copyWith(
-                              fontFamily: 'monospace',
-                              fontWeight: FontWeight.w700,
+                      Icon(
+                        tool.icon,
+                        color: Theme.of(context).colorScheme.primary,
+                      ),
+                      const SizedBox(width: 14),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              tool.title,
+                              style: Theme.of(context).textTheme.titleMedium
+                                  ?.copyWith(fontFamily: 'RobotoMono'),
                             ),
+                            const SizedBox(height: 5),
+                            Text(tool.description),
+                            if (unavailable) ...[
+                              const SizedBox(height: 8),
+                              const Text('Connect a device to use this tool.'),
+                            ],
+                          ],
+                        ),
                       ),
-                      _SupportChip(
-                        label: status,
-                        support: entry.support,
-                        count: null,
-                      ),
+                      const Icon(Icons.chevron_right),
                     ],
                   ),
-                  const SizedBox(height: 8),
-                  Text(entry.summary),
-                  const SizedBox(height: 4),
-                  Text(reason, style: Theme.of(context).textTheme.bodySmall),
-                ],
+                ),
               ),
             ),
-          ),
-        ),
+          );
+        },
       ),
     );
   }
 }
 
-class _SupportChip extends StatelessWidget {
-  final String label;
-  final Pm3ToolSupport support;
-  final int? count;
+class _Pm3Category {
+  final String title;
+  final String description;
+  final IconData icon;
+  final List<_Pm3Tool> tools;
 
-  const _SupportChip({
-    required this.label,
-    required this.support,
-    required this.count,
+  const _Pm3Category({
+    required this.title,
+    required this.description,
+    required this.icon,
+    required this.tools,
   });
+}
 
-  @override
-  Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    final (icon, color) = switch (support) {
-      Pm3ToolSupport.mapped => (Icons.link, colorScheme.primary),
-      Pm3ToolSupport.portable => (Icons.construction, colorScheme.tertiary),
-      Pm3ToolSupport.unsupported => (Icons.block, colorScheme.error),
-    };
-    return Chip(
-      avatar: Icon(icon, color: color, size: 18),
-      label: Text(count == null ? label : '$label: $count'),
-      side: BorderSide(color: color),
-    );
-  }
+class _Pm3Tool {
+  final String title;
+  final String description;
+  final IconData icon;
+  final bool deviceRequired;
+  final void Function(BuildContext) open;
+
+  const _Pm3Tool(
+    this.title,
+    this.description,
+    this.icon,
+    this.open, {
+    this.deviceRequired = true,
+  });
+}
+
+void _push(
+  BuildContext context,
+  Widget page, [
+  ModuleId moduleId = ModuleId.pm3Catalog,
+]) {
+  Navigator.of(
+    context,
+  ).push(ModulePageRoute(moduleId: moduleId, builder: (_) => page));
+}
+
+void _dialog(
+  BuildContext context,
+  Widget dialog, [
+  ModuleId moduleId = ModuleId.pm3Catalog,
+]) {
+  showDialog<void>(
+    context: context,
+    routeSettings: RouteSettings(arguments: moduleId),
+    builder: (_) => dialog,
+  );
 }
