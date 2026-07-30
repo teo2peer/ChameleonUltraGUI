@@ -318,7 +318,8 @@ class SettingsMainPageState extends State<SettingsMainPage> {
                         trailing: const Icon(Icons.chevron_right),
                         onTap: () => Navigator.push(
                           context,
-                          MaterialPageRoute<void>(
+                          ModulePageRoute<void>(
+                            moduleId: ModuleId.mifareClassicNonceHistory,
                             builder: (_) =>
                                 const MifareClassicNonceHistoryPage(),
                           ),

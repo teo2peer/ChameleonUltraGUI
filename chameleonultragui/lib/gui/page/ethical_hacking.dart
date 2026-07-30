@@ -147,7 +147,7 @@ class EthicalHackingPageState extends State<EthicalHackingPage> {
         'Autopwn v2',
         'Evidence-driven full-card recovery with adaptive attacks and verified partial dumps',
         Icons.hub,
-        (c) => _push(c, const AutopwnV2Page()),
+        (c) => _push(c, const AutopwnV2Page(), moduleId: ModuleId.autopwnV2),
         deviceRequired: true,
       ),
       HackingAttack(

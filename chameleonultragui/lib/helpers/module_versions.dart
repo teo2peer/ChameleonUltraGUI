@@ -28,6 +28,8 @@ enum ModuleId {
   bluetoothLab,
   autopwn,
   autopwnPlus,
+  autopwnV2,
+  mifareClassicNonceHistory,
   dictionaryCheck,
   darkside,
   nested,
@@ -212,6 +214,16 @@ const moduleVersions = <ModuleId, ModuleRelease>{
   ),
   ModuleId.autopwnPlus: ModuleRelease(
     name: 'Autopwn Plus',
+    version: '1.0.0',
+    updatedAt: _initialReleaseDate,
+  ),
+  ModuleId.autopwnV2: ModuleRelease(
+    name: 'Autopwn v2',
+    version: '1.0.0',
+    updatedAt: _initialReleaseDate,
+  ),
+  ModuleId.mifareClassicNonceHistory: ModuleRelease(
+    name: 'MIFARE Classic Nonce History',
     version: '1.0.0',
     updatedAt: _initialReleaseDate,
   ),
