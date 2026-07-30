@@ -31,7 +31,6 @@ import 'package:chameleonultragui/gui/menu/tools/pm3_tools.dart';
 import 'package:chameleonultragui/gui/page/read_card.dart';
 import 'package:chameleonultragui/gui/page/reader_keys.dart';
 import 'package:chameleonultragui/gui/page/write_card.dart';
-import 'package:chameleonultragui/helpers/pm3_tool_catalog.dart';
 import 'package:chameleonultragui/helpers/module_versions.dart';
 import 'package:chameleonultragui/main.dart';
 import 'package:flutter/material.dart';
@@ -61,11 +60,7 @@ class EthicalHackingPage extends StatefulWidget {
 }
 
 class EthicalHackingPageState extends State<EthicalHackingPage> {
-  void _push(
-    BuildContext context,
-    Widget page, {
-    required ModuleId moduleId,
-  }) {
+  void _push(BuildContext context, Widget page, {required ModuleId moduleId}) {
     Navigator.push(
       context,
       ModulePageRoute(moduleId: moduleId, builder: (_) => page),
@@ -143,11 +138,8 @@ class EthicalHackingPageState extends State<EthicalHackingPage> {
         localizations.autopwn_plus,
         localizations.autopwn_plus_description,
         Icons.auto_awesome,
-        (c) => _push(
-          c,
-          const AutopwnPlusPage(),
-          moduleId: ModuleId.autopwnPlus,
-        ),
+        (c) =>
+            _push(c, const AutopwnPlusPage(), moduleId: ModuleId.autopwnPlus),
         deviceRequired: true,
       ),
       HackingAttack(
@@ -201,11 +193,7 @@ class EthicalHackingPageState extends State<EthicalHackingPage> {
         localizations.backdoor_rf08s,
         localizations.backdoor_rf08s_description,
         Icons.door_back_door,
-        (c) => _push(
-          c,
-          const BackdoorPage(),
-          moduleId: ModuleId.backdoorRf08s,
-        ),
+        (c) => _push(c, const BackdoorPage(), moduleId: ModuleId.backdoorRf08s),
         deviceRequired: true,
       ),
       HackingAttack(
@@ -287,11 +275,8 @@ class EthicalHackingPageState extends State<EthicalHackingPage> {
         localizations.emv_emulator,
         localizations.emv_emulator_description,
         Icons.sim_card,
-        (c) => _push(
-          c,
-          const EmvEmulatorPage(),
-          moduleId: ModuleId.emvEmulator,
-        ),
+        (c) =>
+            _push(c, const EmvEmulatorPage(), moduleId: ModuleId.emvEmulator),
         deviceRequired: true,
       ),
       HackingAttack(
@@ -339,11 +324,8 @@ class EthicalHackingPageState extends State<EthicalHackingPage> {
         localizations.apdu_terminal,
         localizations.apdu_terminal_description,
         Icons.terminal,
-        (c) => _push(
-          c,
-          const ApduTerminalPage(),
-          moduleId: ModuleId.apduTerminal,
-        ),
+        (c) =>
+            _push(c, const ApduTerminalPage(), moduleId: ModuleId.apduTerminal),
         deviceRequired: true,
       ),
       HackingAttack(
@@ -394,7 +376,7 @@ class EthicalHackingPageState extends State<EthicalHackingPage> {
         localizations.pm3_tools,
         Icons.developer_board,
         (c) => _push(c, const Pm3ToolsPage(), moduleId: ModuleId.pm3Catalog),
-        count: pm3CatalogEntries.length,
+        count: pm3OperationalToolCount,
       ),
       _Category(
         localizations.mfc_attacks,
