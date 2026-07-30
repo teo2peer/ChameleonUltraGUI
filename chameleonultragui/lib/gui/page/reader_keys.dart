@@ -7,6 +7,7 @@ import 'package:chameleonultragui/helpers/definitions.dart';
 import 'package:chameleonultragui/helpers/general.dart';
 import 'package:chameleonultragui/helpers/mifare_classic/general.dart';
 import 'package:chameleonultragui/helpers/mifare_classic/reader_key_recovery.dart';
+import 'package:chameleonultragui/helpers/mifare_classic/reader_key_guidance.dart';
 import 'package:chameleonultragui/main.dart';
 import 'package:chameleonultragui/recovery/recovery.dart' as recovery;
 import 'package:chameleonultragui/sharedprefsprovider.dart';
@@ -1386,6 +1387,8 @@ class ReaderKeysPageState extends State<ReaderKeysPage>
     var localizations = AppLocalizations.of(context)!;
     return Column(
       children: [
+        _buildCaptureGuidance(),
+        const SizedBox(height: 16),
         Center(
           child: ElevatedButton.icon(
             onPressed: busy || (!armed && recovering)
@@ -1473,6 +1476,101 @@ class ReaderKeysPageState extends State<ReaderKeysPage>
             ),
           ),
       ],
+    );
+  }
+
+  Widget _buildCaptureGuidance() {
+    final guidance = readerKeyGuidanceFor(
+      connected: _connected,
+      armed: armed,
+      busy: busy,
+      recovering: recovering,
+      randomUid: _tab.index == 2,
+      detectionCount: detectionCount,
+      resultCount: recoveryResults.length,
+      appliedTargetCount: _appliedTargets.length,
+    );
+    final colorScheme = Theme.of(context).colorScheme;
+    final (background, foreground) = switch (guidance.tone) {
+      ReaderKeyGuidanceTone.success => (
+        colorScheme.primaryContainer,
+        colorScheme.onPrimaryContainer,
+      ),
+      ReaderKeyGuidanceTone.warning => (
+        colorScheme.tertiaryContainer,
+        colorScheme.onTertiaryContainer,
+      ),
+      ReaderKeyGuidanceTone.danger => (
+        colorScheme.errorContainer,
+        colorScheme.onErrorContainer,
+      ),
+      ReaderKeyGuidanceTone.neutral => (
+        colorScheme.surfaceContainerHighest,
+        colorScheme.onSurface,
+      ),
+    };
+    final icon = switch (guidance.step) {
+      ReaderKeyGuidanceStep.unavailable => Icons.usb_off,
+      ReaderKeyGuidanceStep.ready => Icons.tune,
+      ReaderKeyGuidanceStep.preparing => Icons.settings_suggest,
+      ReaderKeyGuidanceStep.approach => Icons.contactless,
+      ReaderKeyGuidanceStep.remove => Icons.back_hand,
+      ReaderKeyGuidanceStep.processing => Icons.sync,
+      ReaderKeyGuidanceStep.repeat => Icons.repeat,
+      ReaderKeyGuidanceStep.complete => Icons.check_circle,
+    };
+
+    return Semantics(
+      container: true,
+      liveRegion: true,
+      excludeSemantics: true,
+      label: '${guidance.title}. ${guidance.description}',
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(20),
+        decoration: BoxDecoration(
+          color: background,
+          border: Border.all(color: foreground, width: 2),
+          borderRadius: BorderRadius.circular(20),
+        ),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(icon, color: foreground, size: 36),
+            const SizedBox(width: 16),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'PASO ACTUAL',
+                    style: TextStyle(
+                      color: foreground,
+                      fontSize: 12,
+                      fontWeight: FontWeight.bold,
+                      letterSpacing: 1.2,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    guidance.title,
+                    style: TextStyle(
+                      color: foreground,
+                      fontSize: 22,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    guidance.description,
+                    style: TextStyle(color: foreground, fontSize: 15),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 
