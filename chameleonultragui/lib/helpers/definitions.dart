@@ -55,6 +55,8 @@ enum ChameleonCommand {
   keyboardSetTemporaryBleName(1048),
   keyboardArmBle(1049),
   activeSlotSnapshot(1050),
+  getKeyboardHidEnable(1051),
+  setKeyboardHidEnable(1052),
 
   // button config
   getButtonPressConfig(1026),
