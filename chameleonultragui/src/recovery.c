@@ -22,6 +22,8 @@
 
 #define MEM_CHUNK 10000
 #define TRY_KEYS 50
+#define MAX_NESTED_OUTPUT_KEYS 100000
+#define MAX_NESTED_PRNG_DISTANCE 65534
 
 typedef struct
 {
@@ -176,53 +178,46 @@ int uint64_compare(const void *a, const void *b)
   return (*(uint64_t *)a > *(uint64_t *)b) - (*(uint64_t *)a < *(uint64_t *)b);
 }
 
+typedef struct
+{
+  uint64_t key;
+  uint32_t support;
+} KeyFrequency;
+
+static int key_frequency_compare(const void *a, const void *b)
+{
+  const KeyFrequency *left = a;
+  const KeyFrequency *right = b;
+  if (left->support != right->support)
+  {
+    return left->support < right->support ? 1 : -1;
+  }
+  return (left->key > right->key) - (left->key < right->key);
+}
+
 uint64_t *most_frequent_uint64(uint64_t *keys, uint32_t size, uint32_t *outputKeyCount)
 {
-  if (size == 0)
+  if (outputKeyCount == NULL)
+  {
+    return NULL;
+  }
+  *outputKeyCount = 0;
+  if (keys == NULL || size == 0)
   {
     return NULL;
   }
 
-  uint64_t i, maxFreq = 1, currentFreq = 1, currentItem = keys[0];
-  uint64_t *output = calloc(size, sizeof(uint64_t));
-  if (output == NULL)
+  KeyFrequency *frequencies = calloc(size, sizeof(KeyFrequency));
+  if (frequencies == NULL)
   {
     return NULL;
   }
   qsort(keys, size, sizeof(uint64_t), uint64_compare);
 
-  for (i = 1; i < size; i++)
-  {
-    if (keys[i] == keys[i - 1])
-    {
-      currentFreq++;
-    }
-    else
-    {
-      if (currentFreq > maxFreq)
-      {
-        maxFreq = currentFreq;
-      }
-      currentFreq = 1;
-    }
-  }
-  if (currentFreq > maxFreq)
-  {
-    maxFreq = currentFreq;
-  }
-
-  // No repeated key means the nonce pair produced no usable consensus. Returning
-  // every unique state can create hundreds of thousands of false candidates and
-  // must be treated as an invalid sample instead.
-  if (maxFreq < 2)
-  {
-    free(output);
-    return NULL;
-  }
-
-  currentItem = keys[0];
-  currentFreq = 1;
-  for (i = 1; i <= size; i++)
+  uint32_t uniqueCount = 0;
+  uint32_t currentFreq = 1;
+  uint64_t currentItem = keys[0];
+  for (uint32_t i = 1; i <= size; i++)
   {
     if (i < size && keys[i] == keys[i - 1])
     {
@@ -230,11 +225,9 @@ uint64_t *most_frequent_uint64(uint64_t *keys, uint32_t size, uint32_t *outputKe
     }
     else
     {
-      if (currentFreq == maxFreq)
-      {
-        output[*outputKeyCount] = currentItem;
-        *outputKeyCount += 1;
-      }
+      frequencies[uniqueCount].key = currentItem;
+      frequencies[uniqueCount].support = currentFreq;
+      uniqueCount++;
       if (i < size)
       {
         currentItem = keys[i];
@@ -243,6 +236,22 @@ uint64_t *most_frequent_uint64(uint64_t *keys, uint32_t size, uint32_t *outputKe
     }
   }
 
+  qsort(frequencies, uniqueCount, sizeof(KeyFrequency), key_frequency_compare);
+  uint32_t outputCount = uniqueCount < MAX_NESTED_OUTPUT_KEYS
+                             ? uniqueCount
+                             : MAX_NESTED_OUTPUT_KEYS;
+  uint64_t *output = calloc(outputCount, sizeof(uint64_t));
+  if (output == NULL)
+  {
+    free(frequencies);
+    return NULL;
+  }
+  for (uint32_t i = 0; i < outputCount; i++)
+  {
+    output[i] = frequencies[i].key;
+  }
+  free(frequencies);
+  *outputKeyCount = outputCount;
   return output;
 }
 
@@ -440,7 +449,7 @@ uint64_t *nested_run(NtpKs1 *pNK, uint32_t sizePNK, uint32_t authuid, uint32_t *
   return keys;
 }
 
-// Return 1 if the nonce is invalid else return 0
+// Return 1 if the nonce parity is valid, otherwise return 0.
 static uint8_t valid_nonce(uint32_t Nt, uint32_t NtEnc, uint32_t Ks1, uint8_t *parity)
 {
   return (
@@ -471,6 +480,10 @@ FFI_PLUGIN_EXPORT uint64_t *nested(Nested *data, uint32_t *outputKeyCount)
 
   uint32_t authuid = data->uid;
   uint32_t dist = data->dist;
+  if (dist < 14 || dist > MAX_NESTED_PRNG_DISTANCE)
+  {
+    return NULL;
+  }
 
   // process all args.
   for (i = 0; i < 2; i++)
@@ -494,7 +507,7 @@ FFI_PLUGIN_EXPORT uint64_t *nested(Nested *data, uint32_t *outputKeyCount)
     }
     // Try to recover the keystream1
     nttest = prng_successor(nt1, dist - 14);
-    for (m = dist - 14; m <= dist + 14; m += 1)
+    for (m = 0; m <= 28; m += 1)
     {
       ks1 = nt2 ^ nttest;
       if (valid_nonce(nttest, nt2, ks1, par_arr))

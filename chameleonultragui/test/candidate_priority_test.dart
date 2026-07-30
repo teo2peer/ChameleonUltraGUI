@@ -17,8 +17,9 @@ void main() {
 
     test('short lists can still apply probability priors when requested', () {
       final keys = [key(1), key(2), key(3)];
-      final out = prioritiseCandidates(
-          keys, {bytesToHex(keys[2])}, minLength: 0);
+      final out = prioritiseCandidates(keys, {
+        bytesToHex(keys[2]),
+      }, minLength: 0);
       expect(hexes(out), hexes([keys[2], keys[0], keys[1]]));
     });
 
@@ -29,13 +30,16 @@ void main() {
 
       expect(out.length, keys.length);
       expect(
-          hexes(out).toSet(), hexes(keys).toSet()); // same set, nothing dropped
+        hexes(out).toSet(),
+        hexes(keys).toSet(),
+      ); // same set, nothing dropped
       expect(bytesToHex(out[0]), bytesToHex(keys[40])); // likely first (stable)
       expect(bytesToHex(out[1]), bytesToHex(keys[65]));
 
       final rest = hexes(out.sublist(2));
-      final expectedRest =
-          hexes(keys.where((k) => !likely.contains(bytesToHex(k))).toList());
+      final expectedRest = hexes(
+        keys.where((k) => !likely.contains(bytesToHex(k))).toList(),
+      );
       expect(rest, expectedRest); // non-priority keeps original relative order
     });
 
@@ -55,15 +59,17 @@ void main() {
       expect(result.support, 1);
     });
 
-    test('disjoint samples are rejected instead of replacing prior evidence',
-        () {
-      final result = rankCandidateConsensus([
-        {1, 2},
-        {3, 4},
-      ]);
-      expect(result.candidates, isEmpty);
-      expect(result.support, 1);
-    });
+    test(
+      'disjoint samples are rejected instead of replacing prior evidence',
+      () {
+        final result = rankCandidateConsensus([
+          {1, 2},
+          {3, 4},
+        ]);
+        expect(result.candidates, isEmpty);
+        expect(result.support, 1);
+      },
+    );
 
     test('ranks candidates by support across captures', () {
       final result = rankCandidateConsensus([
@@ -92,6 +98,42 @@ void main() {
       ]);
       expect(result.candidates, [10, 30]);
       expect(result.support, 2);
+    });
+  });
+
+  group('rankCandidatesBySupport', () {
+    test('puts repeated candidates first without dropping singletons', () {
+      final ranked = rankCandidatesBySupport([
+        [30, 10, 42],
+        [20, 42, 10],
+        [42, 99],
+      ]);
+
+      expect(ranked, [42, 10, 20, 30, 99]);
+    });
+
+    test('does not count duplicates twice within one capture', () {
+      final ranked = rankCandidatesBySupport([
+        [7, 7, 8],
+        [8],
+      ]);
+
+      expect(ranked, [8, 7]);
+    });
+  });
+
+  group('prioritiseAndLimitCandidates', () {
+    test('moves likely candidates ahead of the verification budget', () {
+      final candidates = List<int>.generate(100, (index) => index);
+
+      final selected = prioritiseAndLimitCandidates(candidates, {42, 99}, 5);
+
+      expect(selected, [42, 99, 0, 1, 2]);
+    });
+
+    test('deduplicates candidates and enforces zero budget', () {
+      expect(prioritiseAndLimitCandidates([1, 1, 2, 3], {}, 3), [1, 2, 3]);
+      expect(prioritiseAndLimitCandidates([1, 2], {2}, 0), isEmpty);
     });
   });
 

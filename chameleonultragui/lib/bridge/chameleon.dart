@@ -669,10 +669,18 @@ class ChameleonCommunicator {
       ChameleonCommand.mf1NTDistanceDetect,
       data: Uint8List.fromList([keyType, block, ...keyKnown]),
     );
+    if (resp == null || resp.status != 0 || resp.data.length < 8) {
+      throw StateError('Invalid MIFARE Classic NT distance response');
+    }
+
+    final distance = bytesToU32(resp.data.sublist(4, 8));
+    if (distance > 65534) {
+      throw StateError('Invalid MIFARE Classic NT distance value: $distance');
+    }
 
     return NTDistance(
-      uid: bytesToU32(resp!.data.sublist(0, 4)),
-      distance: bytesToU32(resp.data.sublist(4, 8)),
+      uid: bytesToU32(resp.data.sublist(0, 4)),
+      distance: distance,
     );
   }
 
@@ -709,9 +717,17 @@ class ChameleonCommunicator {
       ]),
       timeout: const Duration(seconds: 30),
     );
+    if (resp == null || resp.status != 0) {
+      throw StateError('MIFARE Classic nonce acquisition failed');
+    }
+    final payloadLength = resp.data.length - i;
+    final itemLength = level == NTLevel.static ? 8 : 9;
+    if (payloadLength < 0 || payloadLength % itemLength != 0) {
+      throw StateError('Malformed MIFARE Classic nonce response');
+    }
     var nonces = NestedNonces(nonces: []);
 
-    while (i < resp!.data.length) {
+    while (i < resp.data.length) {
       if (level == NTLevel.static) {
         nonces.nonces.add(
           NestedNonce(
