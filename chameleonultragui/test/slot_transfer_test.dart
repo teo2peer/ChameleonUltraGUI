@@ -7,6 +7,98 @@ Uint8List block(int value) =>
     Uint8List.fromList(List.filled(mifareClassicBlockSize, value));
 
 void main() {
+  group('validateSlotDump', () {
+    test('accepts a complete fixed-size dump', () {
+      expect(
+        () => validateSlotDump(
+          List.generate(72, block),
+          expectedCount: 72,
+          recordSize: mifareClassicBlockSize,
+        ),
+        returnsNormally,
+      );
+    });
+
+    test('accepts sparse and canonical padded dumps', () {
+      final padded = List.generate(256, (_) => Uint8List(0));
+      for (var index = 0; index < 64; index++) {
+        padded[index] = block(index);
+      }
+      expect(
+        () => validateSlotDump(
+          padded,
+          expectedCount: 64,
+          recordSize: mifareClassicBlockSize,
+          maxStoredCount: 256,
+        ),
+        returnsNormally,
+      );
+      expect(
+        () => validateSlotDump(
+          List.generate(68, block),
+          expectedCount: 72,
+          recordSize: mifareClassicBlockSize,
+        ),
+        returnsNormally,
+      );
+      expect(
+        () => validateSlotDump(
+          List.generate(16, (index) => Uint8List(4)),
+          expectedCount: 48,
+          recordSize: 4,
+        ),
+        returnsNormally,
+      );
+    });
+
+    test('rejects data outside the declared card geometry', () {
+      final records = List.generate(256, (_) => Uint8List(0));
+      records[64] = block(64);
+      expect(
+        () => validateSlotDump(
+          records,
+          expectedCount: 64,
+          recordSize: mifareClassicBlockSize,
+          maxStoredCount: 256,
+        ),
+        throwsFormatException,
+      );
+    });
+
+    test('rejects malformed records before upload', () {
+      final records = List.generate(64, block)..[17] = Uint8List(15);
+      expect(
+        () => validateSlotDump(
+          records,
+          expectedCount: 64,
+          recordSize: mifareClassicBlockSize,
+        ),
+        throwsFormatException,
+      );
+    });
+  });
+
+  group('planFixedSizeSlotUpload', () {
+    test('preserves sparse page indices and chunk limits', () {
+      final pages = <Uint8List>[
+        Uint8List(0),
+        Uint8List.fromList([1, 1, 1, 1]),
+        Uint8List.fromList([2, 2, 2, 2]),
+        Uint8List(0),
+        Uint8List.fromList([4, 4, 4, 4]),
+      ];
+      final chunks = planFixedSizeSlotUpload(
+        pages,
+        recordCount: 8,
+        recordSize: 4,
+        maxChunkBytes: 8,
+      );
+
+      expect(chunks.map((chunk) => chunk.startRecord), [1, 4]);
+      expect(chunks.map((chunk) => chunk.data.length), [8, 4]);
+    });
+  });
+
   group('planMifareClassicUpload', () {
     test('preserves indices across leading, middle, and trailing gaps', () {
       final blocks = <Uint8List>[
@@ -36,14 +128,19 @@ void main() {
       expect(chunks.map((chunk) => chunk.startBlock), [0, 8]);
       expect(chunks.map((chunk) => chunk.data.length), [128, 32]);
       expect(
-          chunks.every(
-              (chunk) => chunk.data.length <= mifareClassicMaxUploadBytes),
-          isTrue);
+        chunks.every(
+          (chunk) => chunk.data.length <= mifareClassicMaxUploadBytes,
+        ),
+        isTrue,
+      );
     });
 
     test('treats malformed and missing entries as gaps', () {
-      final chunks =
-          planMifareClassicUpload([block(0), Uint8List(15), block(2)], 5);
+      final chunks = planMifareClassicUpload([
+        block(0),
+        Uint8List(15),
+        block(2),
+      ], 5);
 
       expect(chunks.map((chunk) => chunk.startBlock), [0, 2]);
       expect(chunks.map((chunk) => chunk.data.length), [16, 16]);
@@ -58,9 +155,15 @@ void main() {
         for (final read in reads) {
           expect(read.blockCount, inInclusiveRange(1, 16));
           expect(
-              read.startBlock + read.blockCount, lessThanOrEqualTo(blockCount));
-          visited.addAll(List.generate(
-              read.blockCount, (offset) => read.startBlock + offset));
+            read.startBlock + read.blockCount,
+            lessThanOrEqualTo(blockCount),
+          );
+          visited.addAll(
+            List.generate(
+              read.blockCount,
+              (offset) => read.startBlock + offset,
+            ),
+          );
         }
 
         expect(visited, List.generate(blockCount, (block) => block));

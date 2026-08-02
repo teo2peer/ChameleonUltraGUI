@@ -41,6 +41,29 @@ Uint8List hexToBytes(String hex) {
   return Uint8List.fromList(bytes);
 }
 
+void validateHfAntiCollisionData(CardData card) {
+  if (card.uid.length != 4 && card.uid.length != 7 && card.uid.length != 10) {
+    throw ArgumentError.value(
+      card.uid.length,
+      'uid.length',
+      'must be 4, 7, or 10',
+    );
+  }
+  if (card.atqa.length != 2) {
+    throw ArgumentError.value(card.atqa.length, 'atqa.length', 'must be 2');
+  }
+  if (card.sak < 0 || card.sak > 0xff) {
+    throw RangeError.range(card.sak, 0, 0xff, 'sak');
+  }
+  if (card.ats.length > 0xff) {
+    throw ArgumentError.value(
+      card.ats.length,
+      'ats.length',
+      'must be at most 255',
+    );
+  }
+}
+
 int bytesToU8(Uint8List byteArray) {
   return byteArray.buffer.asByteData().getUint8(0);
 }

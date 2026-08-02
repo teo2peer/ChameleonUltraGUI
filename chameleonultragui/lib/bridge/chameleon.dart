@@ -16,6 +16,7 @@ const Duration isoDepSessionControlTimeout = Duration(seconds: 6);
 const int activeSlotSnapshotProtocolVersion = 2;
 const int activeSlotSnapshotCommitMaxMilliseconds = 46000;
 const Duration activeSlotSnapshotSaveTimeout = Duration(seconds: 55);
+const Duration slotPersistenceTimeout = Duration(seconds: 150);
 const int _activeSlotSnapshotBegin = 0;
 const int _activeSlotSnapshotSaveRelease = 1;
 const int _activeSlotSnapshotAbort = 2;
@@ -1016,7 +1017,11 @@ class ChameleonCommunicator {
   Future<void> activateSlot(int slot) async {
     // Slot 0-7
     const command = ChameleonCommand.setActiveSlot;
-    final resp = await sendCmd(command, data: Uint8List.fromList([slot]));
+    final resp = await sendCmd(
+      command,
+      data: Uint8List.fromList([slot]),
+      timeout: slotPersistenceTimeout,
+    );
     if (resp == null || resp.status != chameleonStatusSuccess) {
       throw ChameleonCommandException(command, resp?.status ?? 0xffff);
     }
@@ -1038,6 +1043,7 @@ class ChameleonCommunicator {
     final resp = await sendCmd(
       command,
       data: Uint8List.fromList([slot, ...u16ToBytes(type.value)]),
+      timeout: slotPersistenceTimeout,
     );
     if (resp == null || resp.status != chameleonStatusSuccess) {
       throw ChameleonCommandException(command, resp?.status ?? 0xffff);
@@ -1049,6 +1055,7 @@ class ChameleonCommunicator {
     final resp = await sendCmd(
       command,
       data: Uint8List.fromList([slot, frequency.value, status ? 1 : 0]),
+      timeout: slotPersistenceTimeout,
     );
     if (resp == null || resp.status != chameleonStatusSuccess) {
       throw ChameleonCommandException(command, resp?.status ?? 0xffff);
@@ -1200,6 +1207,7 @@ class ChameleonCommunicator {
   }
 
   Future<void> setMf1AntiCollision(CardData card) async {
+    validateHfAntiCollisionData(card);
     await _sendChecked(
       ChameleonCommand.mf1SetAntiCollision,
       data: Uint8List.fromList([
@@ -2095,6 +2103,7 @@ class ChameleonCommunicator {
     await _sendChecked(
       ChameleonCommand.setSlotTagNick,
       data: Uint8List.fromList([index, frequency.value, ...utf8.encode(name)]),
+      timeout: slotPersistenceTimeout,
     );
   }
 
@@ -2169,7 +2178,10 @@ class ChameleonCommunicator {
   }
 
   Future<void> saveSlotData() async {
-    final response = await sendCmd(ChameleonCommand.saveSlotNicks);
+    final response = await sendCmd(
+      ChameleonCommand.saveSlotNicks,
+      timeout: slotPersistenceTimeout,
+    );
     if (response == null || response.status != chameleonStatusSuccess) {
       throw ChameleonCommandException(
         ChameleonCommand.saveSlotNicks,
@@ -2480,12 +2492,15 @@ class ChameleonCommunicator {
   }
 
   Future<List<EnabledSlotInfo>> getEnabledSlots() async {
-    var resp = await sendCmd(ChameleonCommand.getEnabledSlots);
+    final resp = await _sendChecked(ChameleonCommand.getEnabledSlots);
+    if (resp.data.length != 16 || resp.data.any((value) => value > 1)) {
+      throw const FormatException('Invalid enabled-slots response');
+    }
     List<EnabledSlotInfo> slots = [];
     for (var slot = 0; slot < 8; slot++) {
       slots.add(
         EnabledSlotInfo(
-          hf: resp!.data[slot * 2] != 0,
+          hf: resp.data[slot * 2] != 0,
           lf: resp.data[slot * 2 + 1] != 0,
         ),
       );
@@ -2854,16 +2869,41 @@ class ChameleonCommunicator {
   }
 
   Future<Uint8List> mf0EmulatorReadPages(int from, int count) async {
-    return (await sendCmd(
+    if (from < 0 || from > 255 || count < 1 || from + count > 256) {
+      throw RangeError(
+        'Emulator page range is outside MIFARE Ultralight memory',
+      );
+    }
+    final response = await _sendChecked(
       ChameleonCommand.mf0NtagReadEmuPageData,
       data: Uint8List.fromList([from, count]),
-    ))!.data;
+    );
+    final expectedLength = count * 4;
+    if (response.data.length != expectedLength) {
+      throw FormatException(
+        'Invalid MIFARE Ultralight emulator read length: expected $expectedLength, got ${response.data.length}',
+      );
+    }
+    return response.data;
   }
 
   Future<void> mf0EmulatorWritePages(int from, Uint8List data) async {
+    if (data.isEmpty || data.length % 4 != 0) {
+      throw ArgumentError.value(
+        data.length,
+        'data.length',
+        'must be a positive multiple of 4',
+      );
+    }
+    final count = data.length ~/ 4;
+    if (from < 0 || from > 255 || from + count > 256) {
+      throw RangeError(
+        'Emulator page range is outside MIFARE Ultralight memory',
+      );
+    }
     await _sendChecked(
       ChameleonCommand.mf0NtagWriteEmuPageData,
-      data: Uint8List.fromList([from, data.length >> 2, ...data]),
+      data: Uint8List.fromList([from, count, ...data]),
     );
   }
 

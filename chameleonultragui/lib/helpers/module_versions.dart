@@ -79,8 +79,8 @@ const moduleVersions = <ModuleId, ModuleRelease>{
   ),
   ModuleId.device: ModuleRelease(
     name: 'Device',
-    version: '1.0.0',
-    updatedAt: _initialReleaseDate,
+    version: '1.1.0',
+    updatedAt: '2026-08-02',
   ),
   ModuleId.library: ModuleRelease(
     name: 'Library',
@@ -89,8 +89,8 @@ const moduleVersions = <ModuleId, ModuleRelease>{
   ),
   ModuleId.slotManager: ModuleRelease(
     name: 'Slot Manager',
-    version: '1.0.0',
-    updatedAt: _initialReleaseDate,
+    version: '1.1.0',
+    updatedAt: '2026-08-02',
   ),
   ModuleId.readCard: ModuleRelease(
     name: 'Read Card',

@@ -22,6 +22,13 @@ void main() {
     expect(moduleReleaseFor(ModuleId.autopwnPlus).version, '1.0.0');
   });
 
+  test('slot manager release includes reliable dump uploads', () {
+    final release = moduleReleaseFor(ModuleId.slotManager);
+    expect(release.version, '1.1.0');
+    expect(release.updatedAt, '2026-08-02');
+    expect(moduleReleaseFor(ModuleId.device).version, '1.1.0');
+  });
+
   testWidgets('footer renders the selected module release', (tester) async {
     await tester.pumpWidget(
       const MaterialApp(

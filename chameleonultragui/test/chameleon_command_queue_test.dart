@@ -179,6 +179,88 @@ void main() {
     );
   });
 
+  test('slot persistence timeout covers the firmware FDS commit budget', () {
+    expect(
+      slotPersistenceTimeout.inMilliseconds,
+      greaterThan(3 * activeSlotSnapshotCommitMaxMilliseconds),
+    );
+  });
+
+  test('getEnabledSlots validates status before parsing', () async {
+    final serial = _FakeSerial(
+      onCommand: (serial, id) async {
+        if (id == ChameleonCommand.getDeviceCapabilities.value) {
+          await serial.emitCapabilities();
+        } else if (id == ChameleonCommand.getEnabledSlots.value) {
+          await serial.emit(id, status: 0x70);
+        }
+      },
+    );
+
+    await expectLater(
+      _communicator(serial).getEnabledSlots(),
+      throwsA(isA<ChameleonCommandException>()),
+    );
+  });
+
+  test('getEnabledSlots rejects truncated and non-boolean payloads', () async {
+    for (final payload in [
+      List.filled(15, 0),
+      [...List.filled(15, 0), 2],
+    ]) {
+      final serial = _FakeSerial(
+        onCommand: (serial, id) async {
+          if (id == ChameleonCommand.getDeviceCapabilities.value) {
+            await serial.emitCapabilities();
+          } else if (id == ChameleonCommand.getEnabledSlots.value) {
+            await serial.emit(id, data: payload);
+          }
+        },
+      );
+
+      await expectLater(
+        _communicator(serial).getEnabledSlots(),
+        throwsFormatException,
+      );
+    }
+  });
+
+  test('getEnabledSlots parses exactly eight HF/LF pairs', () async {
+    final payload = List.generate(16, (index) => index.isEven ? 1 : 0);
+    final serial = _FakeSerial(
+      onCommand: (serial, id) async {
+        if (id == ChameleonCommand.getDeviceCapabilities.value) {
+          await serial.emitCapabilities();
+        } else if (id == ChameleonCommand.getEnabledSlots.value) {
+          await serial.emit(id, data: payload);
+        }
+      },
+    );
+
+    final slots = await _communicator(serial).getEnabledSlots();
+
+    expect(slots, hasLength(8));
+    expect(slots.every((slot) => slot.hf && !slot.lf), isTrue);
+  });
+
+  test('setMf1AntiCollision rejects malformed data before transport', () async {
+    final serial = _FakeSerial();
+    final communicator = _communicator(serial);
+
+    await expectLater(
+      communicator.setMf1AntiCollision(
+        CardData(
+          uid: Uint8List(3),
+          atqa: Uint8List(2),
+          sak: 8,
+          ats: Uint8List(0),
+        ),
+      ),
+      throwsArgumentError,
+    );
+    expect(serial.commands, isEmpty);
+  });
+
   test(
     'active-slot snapshot uses exact versioned big-endian wire contract',
     () async {
