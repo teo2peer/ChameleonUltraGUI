@@ -32,13 +32,14 @@ void main() {
       await preferences.setTheme(ThemeMode.dark);
       await preferences.setThemeColor(7);
       await preferences.setLocale(const Locale('de', 'AT'));
+      await preferences.setHfCaptureRetentionDays(90);
 
       final encoded = preferences.dumpSettingsToJson();
       final decoded = jsonDecode(encoded) as Map<String, dynamic>;
       final settings = decoded['settings'] as Map<String, dynamic>;
 
       expect(decoded.keys.toSet(), {'version', 'settings'});
-      expect(decoded['version'], 1);
+      expect(decoded['version'], 2);
       expect(settings.keys.toSet(), {
         'app_theme',
         'app_theme_color',
@@ -50,11 +51,17 @@ void main() {
         'sidebar_auto_expanded',
         'sidebar_expanded_index',
         'emulation_change_monitoring',
+        'hf_capture_retention_days',
       });
       expect(settings['app_theme'], ThemeMode.dark.index);
       expect(settings['app_theme_color'], 7);
       expect(settings['locale'], 'de-AT');
+      expect(settings['hf_capture_retention_days'], 90);
       expect(encoded, isNot(contains('plaintext-')));
+
+      await preferences.setHfCaptureRetentionDays(7);
+      await preferences.restoreSettingsFromJson(encoded);
+      expect(preferences.getHfCaptureRetentionDays(), 90);
     },
   );
 
@@ -81,11 +88,25 @@ void main() {
     expect(preferences.getConfirmDelete(), isTrue);
   });
 
+  test('version 1 settings backup migrates capture retention safely', () async {
+    await preferences.setHfCaptureRetentionDays(90);
+
+    await preferences.restoreSettingsFromJson(
+      jsonEncode({
+        'version': 1,
+        'settings': {'confirm_delete': false},
+      }),
+    );
+
+    expect(preferences.getConfirmDelete(), isFalse);
+    expect(preferences.getHfCaptureRetentionDays(), 30);
+  });
+
   test(
     'restore rejects unknown keys, types, versions, and oversized input',
     () async {
       final invalidBackups = <Object>[
-        {'version': 2, 'settings': <String, Object>{}},
+        {'version': 3, 'settings': <String, Object>{}},
         {
           'version': 1,
           'settings': {'cards': <Object>[]},
@@ -118,9 +139,11 @@ void main() {
     final raw = await SharedPreferences.getInstance();
     await raw.setInt('app_theme', 99);
     await raw.setInt('app_theme_color', 99);
+    await raw.setInt('hf_capture_retention_days', 0);
 
     expect(preferences.getTheme(), ThemeMode.system);
     expect(preferences.getThemeColorIndex(), 0);
+    expect(preferences.getHfCaptureRetentionDays(), 30);
   });
 
   test(

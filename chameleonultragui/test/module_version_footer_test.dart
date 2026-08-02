@@ -18,8 +18,20 @@ void main() {
   });
 
   test('Autopwn variants keep independent versions', () {
-    expect(moduleReleaseFor(ModuleId.autopwn).version, '1.1.0');
-    expect(moduleReleaseFor(ModuleId.autopwnPlus).version, '1.0.0');
+    expect(moduleReleaseFor(ModuleId.autopwn).version, '1.2.0');
+    expect(moduleReleaseFor(ModuleId.autopwnPlus).version, '1.1.0');
+    expect(moduleReleaseFor(ModuleId.autopwnV2).version, '1.1.0');
+  });
+
+  test('capture, batching, and sync owners expose updated releases', () {
+    expect(moduleReleaseFor(ModuleId.dataSync).version, '1.2.0');
+    expect(moduleReleaseFor(ModuleId.captureAndSniffing).version, '1.1.0');
+    expect(moduleReleaseFor(ModuleId.mifareClassicAttacks).version, '1.1.0');
+    expect(moduleReleaseFor(ModuleId.dictionaryCheck).version, '1.1.0');
+  });
+
+  test('continuous capture exposes its durability revision', () {
+    expect(moduleReleaseFor(ModuleId.hfContinuousCapture).version, '1.2.0');
   });
 
   testWidgets('footer renders the selected module release', (tester) async {

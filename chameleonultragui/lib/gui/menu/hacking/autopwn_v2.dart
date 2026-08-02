@@ -503,6 +503,11 @@ class _AutopwnV2PageState extends State<AutopwnV2Page> {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             _introCard(),
+            const SizedBox(height: 8),
+            Text(
+              AppLocalizations.of(context)!.autopwn_keep_card_present,
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
             const SizedBox(height: 12),
             _dictionaryCard(),
             const SizedBox(height: 12),

@@ -197,33 +197,42 @@ class _HfSniffingMenuState extends State<HfSniffingMenu> {
     });
 
     try {
-      final first = group.exchanges[0];
-      final second = group.exchanges[1];
       final uid = int.parse(group.uid, radix: 16);
+      if (group.canRecoverMfkey64) {
+        final exchange = group.exchanges.firstWhere(
+          (candidate) => candidate.at != null,
+        );
+        final mfkey64Result = await recovery.mfkey64(
+          recovery.Mfkey64Dart(
+            uid: uid,
+            nt: exchange.nt,
+            nrEnc: exchange.nr,
+            arEnc: exchange.ar,
+            atEnc: exchange.at!,
+          ),
+        );
 
-      final mfkey64Result = await recovery.mfkey64(
-        recovery.Mfkey64Dart(
-          uid: uid,
-          nt: first.nt,
-          nrEnc: first.nr,
-          arEnc: first.ar,
-          atEnc: second.nt,
-        ),
-      );
-
-      if (mfkey64Result.isNotEmpty && mfkey64Result.first != _kNoKey) {
-        if (!mounted) {
+        if (mfkey64Result.isNotEmpty && mfkey64Result.first != _kNoKey) {
+          if (!mounted) {
+            return;
+          }
+          setState(() {
+            _recoveryStates[group.id] = _HfSniffRecoveryState(
+              key: mfkey64Result.first,
+              method: 'mfkey64',
+            );
+          });
           return;
         }
-        setState(() {
-          _recoveryStates[group.id] = _HfSniffRecoveryState(
-            key: mfkey64Result.first,
-            method: 'mfkey64',
-          );
-        });
-        return;
       }
 
+      if (!group.canRecoverMfkey32) {
+        throw StateError(
+          'The capture does not contain complete MFKey evidence',
+        );
+      }
+      final first = group.exchanges[0];
+      final second = group.exchanges[1];
       final mfkey32Result = await recovery.mfkey32(
         recovery.Mfkey32Dart(
           uid: uid,
@@ -697,7 +706,7 @@ class _HfSniffingMenuState extends State<HfSniffingMenu> {
                 style: const TextStyle(fontFamily: 'RobotoMono'),
               ),
               const SizedBox(height: 6),
-              if (group.canRecover)
+              if (group.canRecoverMfkey32)
                 SelectableText(
                   buildMfkey32Command(group),
                   style: const TextStyle(fontFamily: 'RobotoMono'),
@@ -715,7 +724,7 @@ class _HfSniffingMenuState extends State<HfSniffingMenu> {
                     icon: const Icon(Icons.copy),
                     label: Text(localizations.hf_sniff_mfkey64),
                   ),
-                  if (group.canRecover)
+                  if (group.canRecoverMfkey32)
                     OutlinedButton.icon(
                       onPressed: () => _copyText(
                         buildMfkey32Command(group),
@@ -828,14 +837,15 @@ class _HfSniffingMenuState extends State<HfSniffingMenu> {
                   icon: const Icon(Icons.copy),
                   label: Text(localizations.hf_sniff_mfkey64),
                 ),
-                OutlinedButton.icon(
-                  onPressed: () => _copyText(
-                    buildMfkey32Command(group),
-                    localizations.hf_sniff_command_copied,
+                if (group.canRecoverMfkey32)
+                  OutlinedButton.icon(
+                    onPressed: () => _copyText(
+                      buildMfkey32Command(group),
+                      localizations.hf_sniff_command_copied,
+                    ),
+                    icon: const Icon(Icons.copy),
+                    label: Text(localizations.hf_sniff_mfkey32),
                   ),
-                  icon: const Icon(Icons.copy),
-                  label: Text(localizations.hf_sniff_mfkey32),
-                ),
               ],
             ),
             const SizedBox(height: 10),

@@ -320,6 +320,7 @@
   "value_block_tool": "Value block",
   "value_block_description": "Increment / decrement / restore / transfer a value block",
   "start_autopwn": "Start Autopwn",
+  "autopwn_keep_card_present": "Keep the same card still on the antenna until recovery finishes. RF resets and automatic reselection are expected.",
   "run_dictionary_only": "Dictionary only",
   "all_keys_recovered": "All keys recovered",
   "recover_key": "Recover key",

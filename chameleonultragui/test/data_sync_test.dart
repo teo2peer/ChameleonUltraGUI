@@ -57,7 +57,7 @@ void main() {
         updatedAt: DateTime.utc(2026, 7, 12),
       );
 
-  test('version 1 snapshot round trips every data category', () {
+  test('current snapshot round trips every data category', () {
     final original = SyncSnapshot(
       cards: [
         card('card-1', [
@@ -100,7 +100,7 @@ void main() {
 
     expect(() => SyncSnapshot.fromJson('{bad json'), throwsFormatException);
     expect(
-      () => SyncSnapshot.fromJson(jsonEncode({...valid, 'version': 2})),
+      () => SyncSnapshot.fromJson(jsonEncode({...valid, 'version': 4})),
       throwsFormatException,
     );
     expect(
@@ -115,6 +115,17 @@ void main() {
       () => SyncSnapshot(settings: {'unsafe': Object()}),
       throwsFormatException,
     );
+  });
+
+  test('legacy safe settings gain the default capture retention', () {
+    final legacy = SyncSnapshot().toJsonMap()
+      ..['version'] = 2
+      ..['settings'] = <String, Object>{'app_theme': 0};
+
+    final restored = SyncSnapshot.fromJson(jsonEncode(legacy));
+
+    expect(restored.version, SyncSnapshot.currentVersion);
+    expect(restored.settings['hf_capture_retention_days'], 30);
   });
 
   test('semantic validation rejects invalid card and dictionary geometry', () {

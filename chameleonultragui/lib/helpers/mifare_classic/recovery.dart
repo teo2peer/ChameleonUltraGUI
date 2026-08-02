@@ -345,6 +345,122 @@ class MifareClassicRecovery {
     return prioritiseCandidates(keys, likely, minLength: 0);
   }
 
+  Uint8List _maskForTargets(List<(int, int)> targets) {
+    final mask = Uint8List.fromList(List.filled(10, 0xff));
+    for (final (sector, keyType) in targets) {
+      final slot = sector * 2 + keyType;
+      mask[slot ~/ 8] &= ~(1 << (7 - slot % 8));
+    }
+    return mask;
+  }
+
+  Future<void> _verifyCardIdentity() async {
+    final expectedUid = cardUid;
+    if (expectedUid == null) return;
+    final card = await appState.communicator!.scan14443aTag();
+    _throwIfCancelled();
+    if (card == null || bytesToHex(card.uid) != expectedUid) {
+      throw StateError('The card changed during MIFARE Classic recovery');
+    }
+  }
+
+  Future<int?> _checkKeysAcrossTargets(
+    List<Uint8List> keys,
+    List<(int, int)> targets, {
+    String activityLabel = 'Key candidates',
+  }) async {
+    final communicator = appState.communicator!;
+    if (targets.isEmpty || keys.isEmpty) return 0;
+    if (communicator.supportsCommandSync(
+          ChameleonCommand.mf1CheckKeysOfSectors,
+        ) ==
+        false) {
+      return null;
+    }
+
+    keys = _prioritiseCandidates(keys);
+    final isBle = appState.connector!.connectionType == ConnectionType.ble;
+    final keyChunkSize = isBle ? 8 : 12;
+    final attemptBudget = isBle ? 16 : 48;
+    final totalAttempts = targets.length * keys.length;
+    var completedAttempts = 0;
+    var foundCount = 0;
+    _updateActivityProgress(activityLabel, completed: 0, total: totalAttempts);
+
+    for (final keyChunk in keys.partition(keyChunkSize)) {
+      _throwIfCancelled();
+      final unresolved = [
+        for (final target in targets)
+          if (getSectorState(target.$1, target.$2) ==
+              ChameleonKeyCheckmark.none)
+            target,
+      ];
+      if (unresolved.isEmpty) break;
+      final targetChunkSize = (attemptBudget ~/ (keyChunk.length + 2))
+          .clamp(1, unresolved.length)
+          .toInt();
+      for (final targetChunk in unresolved.partition(targetChunkSize)) {
+        _throwIfCancelled();
+        for (final (sector, keyType) in targetChunk) {
+          setCheckingSector(sector, keyType);
+        }
+        final result = await communicator.mf1CheckKeysOfSectors(
+          _maskForTargets(targetChunk),
+          keyChunk,
+        );
+        _throwIfCancelled();
+        if (result == null) {
+          for (final (sector, keyType) in targetChunk) {
+            setMissingSector(sector, keyType);
+          }
+          return null;
+        }
+        await _verifyCardIdentity();
+
+        final requestedSlots = {
+          for (final (sector, keyType) in targetChunk) sector * 2 + keyType,
+        };
+        final verified = <(int, int, Uint8List)>[];
+        for (final entry in result.entries) {
+          if (!requestedSlots.contains(entry.key) || entry.value.length != 6) {
+            continue;
+          }
+          final sector = entry.key ~/ 2;
+          final keyType = entry.key % 2;
+          final trailer = mfClassicGetSectorTrailerBlockBySector(sector);
+          if (await communicator.mf1Auth(
+            trailer,
+            0x60 + keyType,
+            entry.value,
+          )) {
+            _throwIfCancelled();
+            verified.add((sector, keyType, entry.value));
+          }
+        }
+        if (verified.isNotEmpty) await _verifyCardIdentity();
+        for (final (sector, keyType, key) in verified) {
+          setKeyAsFound(sector, keyType, key);
+          foundCount++;
+        }
+        for (final (sector, keyType) in targetChunk) {
+          setMissingSector(sector, keyType);
+        }
+        completedAttempts += targetChunk.length * keyChunk.length;
+        _updateActivityProgress(
+          activityLabel,
+          completed: completedAttempts.clamp(0, totalAttempts).toInt(),
+          total: totalAttempts,
+        );
+      }
+    }
+    _updateActivityProgress(
+      activityLabel,
+      completed: totalAttempts,
+      total: totalAttempts,
+    );
+    return foundCount;
+  }
+
   Future<bool> checkKeysOnSector(
     List<Uint8List> keys,
     int keyType,
@@ -497,6 +613,12 @@ class MifareClassicRecovery {
             (sector, keyType),
     ];
     if (targets.isEmpty) return;
+    final bulkResult = await _checkKeysAcrossTargets(
+      [key],
+      targets,
+      activityLabel: 'Reused key checks',
+    );
+    if (bulkResult != null) return;
     _updateActivityProgress(
       'Reused key checks',
       completed: 0,
@@ -580,16 +702,26 @@ class MifareClassicRecovery {
       isEV1: isMifareClassicEV1,
     );
 
-    // Keep the default path per-sector. The all-sector bulk command can run
-    // longer than the host response timeout on real cards; if the host times out
-    // while firmware is still checking, the following command stream becomes
-    // desynchronised and autopwn fails. Re-enable only with firmware-side
-    // bounded batches/cancellation.
-
     final totalChecks = passes.length * sectorCount * 2;
     var completedChecks = 0;
     for (var pass = 0; pass < passes.length; pass++) {
       final keyList = passes[pass];
+      final targets = <(int, int)>[
+        for (var sector = 0; sector < sectorCount; sector++)
+          for (var keyType = 0; keyType < 2; keyType++)
+            if (getSectorState(sector, keyType) == ChameleonKeyCheckmark.none)
+              (sector, keyType),
+      ];
+      final bulkResult = await _checkKeysAcrossTargets(keyList, targets);
+      if (bulkResult != null) {
+        completedChecks += sectorCount * 2;
+        _updatePhase(
+          AutopwnPhase.dictionary,
+          "Pass ${pass + 1}/${passes.length}: bounded multi-sector key scan",
+          progress: totalChecks == 0 ? 1 : completedChecks / totalChecks,
+        );
+        continue;
+      }
       for (var sector = 0; sector < sectorCount; sector++) {
         _throwIfCancelled();
         for (var keyType = 0; keyType < 2; keyType++) {

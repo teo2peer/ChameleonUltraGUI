@@ -18,6 +18,7 @@ import 'package:chameleonultragui/gui/menu/hacking/desfire_reader.dart';
 import 'package:chameleonultragui/gui/menu/hacking/emv_emulator.dart';
 import 'package:chameleonultragui/gui/menu/hacking/emv_reader.dart';
 import 'package:chameleonultragui/gui/menu/hacking/emv_transaction.dart';
+import 'package:chameleonultragui/gui/menu/hacking/hf_continuous_capture.dart';
 import 'package:chameleonultragui/gui/menu/hacking/keyboard_payload.dart';
 import 'package:chameleonultragui/gui/menu/hacking/mfkey_manual.dart';
 import 'package:chameleonultragui/gui/menu/hacking/nested.dart';
@@ -220,6 +221,17 @@ class EthicalHackingPageState extends State<EthicalHackingPage> {
     ];
 
     final capture = <HackingAttack>[
+      HackingAttack(
+        'Continuous HF capture',
+        'Loss-aware USB/BLE streaming with CRC pages, durable storage, and reconnect resume',
+        Icons.stream,
+        (c) => _push(
+          c,
+          const HfContinuousCapturePage(),
+          moduleId: ModuleId.hfContinuousCapture,
+        ),
+        deviceRequired: true,
+      ),
       HackingAttack(
         localizations.reader_keys_capture,
         localizations.mfkey_manual_description,

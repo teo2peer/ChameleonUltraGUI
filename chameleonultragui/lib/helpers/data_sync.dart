@@ -49,7 +49,7 @@ class SyncState {
 }
 
 class SyncSnapshot {
-  static const int currentVersion = 1;
+  static const int currentVersion = 3;
 
   final int version;
   final List<CardSave> cards;
@@ -102,7 +102,10 @@ class SyncSnapshot {
       'keyboardScripts',
       'settings',
     }, 'snapshot');
-    if (root['version'] is! int || root['version'] != currentVersion) {
+    final encodedVersion = root['version'];
+    if (encodedVersion is! int ||
+        encodedVersion < 1 ||
+        encodedVersion > currentVersion) {
       throw const FormatException('Unsupported sync snapshot version');
     }
 
@@ -112,11 +115,16 @@ class SyncSnapshot {
     final settingData = _stringMap(root['settings'], 'settings');
 
     try {
+      final settings = _decodeSettings(settingData);
+      if (encodedVersion < 3 &&
+          !settings.containsKey('hf_capture_retention_days')) {
+        settings['hf_capture_retention_days'] = 30;
+      }
       return SyncSnapshot(
         cards: cardData.map(_decodeCard),
         dictionaries: dictionaryData.map(_decodeDictionary),
         keyboardScripts: scriptData.map(_decodeScript),
-        settings: _decodeSettings(settingData),
+        settings: settings,
       );
     } on FormatException {
       rethrow;

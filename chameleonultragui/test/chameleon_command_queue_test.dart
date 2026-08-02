@@ -4,6 +4,7 @@ import 'dart:typed_data';
 import 'package:chameleonultragui/bridge/chameleon.dart';
 import 'package:chameleonultragui/connector/serial_abstract.dart';
 import 'package:chameleonultragui/helpers/definitions.dart';
+import 'package:chameleonultragui/helpers/hf_capture.dart';
 import 'package:chameleonultragui/helpers/pm3_protocol.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:logger/logger.dart';
@@ -1525,7 +1526,146 @@ void main() {
       ]);
     },
   );
+
+  test(
+    'continuous HF capture bridge uses the versioned big-endian contract',
+    () async {
+      const sessionId = 0x10203040;
+      final serial = _FakeSerial(
+        onCommand: (serial, id) async {
+          if (id == ChameleonCommand.getDeviceCapabilities.value) {
+            await serial.emitCapabilities();
+          } else if (id == ChameleonCommand.hfCaptureGet.value) {
+            await serial.emit(
+              id,
+              data: [
+                ..._hfCaptureMetadata(sessionId),
+                ..._u32Bytes(0),
+                ..._u32Bytes(0),
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+              ],
+            );
+          } else if (id == ChameleonCommand.hfCaptureStop.value) {
+            await serial.emit(
+              id,
+              data: _hfCaptureMetadata(sessionId, state: 2),
+            );
+          } else if (id == ChameleonCommand.hfCaptureStart.value) {
+            await serial.emit(id, data: _hfCaptureMetadata(sessionId, mode: 1));
+          } else {
+            await serial.emit(id, data: _hfCaptureMetadata(sessionId));
+          }
+        },
+      );
+      final communicator = _communicator(serial);
+
+      final started = await communicator.hfCaptureStart(
+        HfCaptureMode.passive,
+        startToken: 0x12345678,
+      );
+      await communicator.hfCaptureStatus(sessionId, startToken: 0x12345678);
+      final page = await communicator.hfCaptureGet(
+        sessionId,
+        acknowledgeSequence: 7,
+        acknowledgeDeliveryToken: 0x0102030405060708,
+        requestedBytes: 1024,
+      );
+      final stopped = await communicator.hfCaptureStop(sessionId);
+
+      expect(started.mode, HfCaptureMode.passive);
+      expect(page.records, isEmpty);
+      expect(stopped.state, HfCaptureState.stopped);
+      expect(serial.commandData[ChameleonCommand.hfCaptureStart.value], [
+        2,
+        1,
+        0x12,
+        0x34,
+        0x56,
+        0x78,
+      ]);
+      expect(serial.commandData[ChameleonCommand.hfCaptureStatus.value], [
+        2,
+        0x10,
+        0x20,
+        0x30,
+        0x40,
+        0x12,
+        0x34,
+        0x56,
+        0x78,
+      ]);
+      expect(serial.commandData[ChameleonCommand.hfCaptureGet.value], [
+        2,
+        0x10,
+        0x20,
+        0x30,
+        0x40,
+        1,
+        0,
+        0,
+        0,
+        7,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        4,
+        0,
+      ]);
+    },
+  );
 }
+
+List<int> _hfCaptureMetadata(
+  int sessionId, {
+  int state = 1,
+  int mode = 0,
+  int startToken = 0x12345678,
+}) => [
+  2,
+  state,
+  mode,
+  0,
+  ..._u32Bytes(sessionId),
+  ..._u32Bytes(0),
+  ..._u32Bytes(0),
+  ..._u32Bytes(0),
+  ..._u32Bytes(0),
+  ..._u32Bytes(0),
+  0,
+  0,
+  0x20,
+  0,
+  ...List<int>.filled(8, 0),
+  ..._u32Bytes(7),
+  ..._u32Bytes(startToken),
+];
+
+List<int> _u32Bytes(int value) => [
+  (value >> 24) & 0xFF,
+  (value >> 16) & 0xFF,
+  (value >> 8) & 0xFF,
+  value & 0xFF,
+];
 
 List<int> _detectionRecord(
   int block,

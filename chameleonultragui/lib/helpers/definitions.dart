@@ -92,6 +92,11 @@ enum ChameleonCommand {
   hf14aScanKeep(2016),
   hf14aAuthTrace(2017),
   hf14aSniff(2020),
+  hfCaptureStart(2021),
+  hfCaptureStatus(2022),
+  hfCaptureGet(2023),
+  hfCaptureStop(2024),
+  hfCaptureEvent(2025),
   hf14aSetFieldOn(2100),
   hf14aSetFieldOff(2101),
   hf14aGetConfig(2200),
@@ -355,21 +360,19 @@ class CardData {
   Uint8List atqa;
   Uint8List ats;
 
-  CardData(
-      {required this.uid,
-      required this.sak,
-      required this.atqa,
-      required this.ats});
+  CardData({
+    required this.uid,
+    required this.sak,
+    required this.atqa,
+    required this.ats,
+  });
 }
 
 class IsoDepReaderSessionInfo {
   final int sessionId;
   final CardData card;
 
-  const IsoDepReaderSessionInfo({
-    required this.sessionId,
-    required this.card,
-  });
+  const IsoDepReaderSessionInfo({required this.sessionId, required this.card});
 }
 
 class ChameleonMessage {
@@ -377,8 +380,11 @@ class ChameleonMessage {
   int status;
   Uint8List data;
 
-  ChameleonMessage(
-      {required this.command, required this.status, required this.data});
+  ChameleonMessage({
+    required this.command,
+    required this.status,
+    required this.data,
+  });
 }
 
 // One device seen by the passive BLE scanner (listen-only).
@@ -388,30 +394,34 @@ class BleScanResult {
   int rssi;
   Uint8List adv; // raw advertising payload
 
-  BleScanResult(
-      {required this.addr,
-      required this.addrType,
-      required this.rssi,
-      required this.adv});
+  BleScanResult({
+    required this.addr,
+    required this.addrType,
+    required this.rssi,
+    required this.adv,
+  });
 }
 
 // One GATT characteristic discovered on the connected fuzzing target.
 class BleCharacteristic {
   int handle; // value handle
-  int props; // bit0 broadcast,1 read,2 write-nr,3 write,4 notify,5 indicate,6 signed-write
+  int
+  props; // bit0 broadcast,1 read,2 write-nr,3 write,4 notify,5 indicate,6 signed-write
   int uuidType;
   int uuid;
 
-  BleCharacteristic(
-      {required this.handle,
-      required this.props,
-      required this.uuidType,
-      required this.uuid});
+  BleCharacteristic({
+    required this.handle,
+    required this.props,
+    required this.uuidType,
+    required this.uuid,
+  });
 }
 
 // Snapshot of the directed fuzzing harness state.
 class BleCentralState {
-  int connState; // 0 idle,1 connecting,2 connected,3 disconnected,4 cancelling,5 disconnecting
+  int
+  connState; // 0 idle,1 connecting,2 connected,3 disconnected,4 cancelling,5 disconnecting
   int discState; // 0 idle,1 discovering,2 done,3 error
   int charCount;
   int fuzzState; // 0 idle,1 running,2 stopped/finished
@@ -429,24 +439,25 @@ class BleCentralState {
   int notificationCount;
   bool hasOperationState;
 
-  BleCentralState(
-      {required this.connState,
-      required this.discState,
-      required this.charCount,
-      required this.fuzzState,
-      required this.fuzzSent,
-      required this.targetAlive,
-      required this.lastReason,
-      this.probeState = 0,
-      this.probeResult = 0,
-      this.probeIndex = 0,
-      this.probeTotal = 0,
-      this.floodState = 0,
-      this.floodSent = 0,
-      this.readState = 0,
-      this.writeState = 0,
-      this.notificationCount = 0,
-      this.hasOperationState = false});
+  BleCentralState({
+    required this.connState,
+    required this.discState,
+    required this.charCount,
+    required this.fuzzState,
+    required this.fuzzSent,
+    required this.targetAlive,
+    required this.lastReason,
+    this.probeState = 0,
+    this.probeResult = 0,
+    this.probeIndex = 0,
+    this.probeTotal = 0,
+    this.floodState = 0,
+    this.floodSent = 0,
+    this.readState = 0,
+    this.writeState = 0,
+    this.notificationCount = 0,
+    this.hasOperationState = false,
+  });
 }
 
 class IsoDepDebugCounters {
@@ -470,11 +481,12 @@ class BleFuzzLogEntry {
   int status; // 0 = stack accepted the write, else low byte of nrf error
   Uint8List data; // first bytes of the payload (up to 16)
 
-  BleFuzzLogEntry(
-      {required this.index,
-      required this.length,
-      required this.status,
-      required this.data});
+  BleFuzzLogEntry({
+    required this.index,
+    required this.length,
+    required this.status,
+    required this.data,
+  });
 }
 
 enum NTLevel { static, weak, hard, backdoor, unknown }
@@ -568,13 +580,14 @@ class Darkside {
   int nr;
   int ar;
 
-  Darkside(
-      {required this.uid,
-      required this.nt1,
-      required this.par,
-      required this.ks1,
-      required this.nr,
-      required this.ar});
+  Darkside({
+    required this.uid,
+    required this.nt1,
+    required this.par,
+    required this.ks1,
+    required this.nr,
+    required this.ar,
+  });
 }
 
 class DetectionResult {
@@ -586,14 +599,15 @@ class DetectionResult {
   int nr;
   int ar;
 
-  DetectionResult(
-      {required this.block,
-      required this.type,
-      required this.isNested,
-      required this.uid,
-      required this.nt,
-      required this.nr,
-      required this.ar});
+  DetectionResult({
+    required this.block,
+    required this.type,
+    required this.isNested,
+    required this.uid,
+    required this.nt,
+    required this.nr,
+    required this.ar,
+  });
 }
 
 class FirmwareVersion {
@@ -643,12 +657,13 @@ class EmulatorSettings {
   bool isAntiColl;
   MifareWriteMode writeMode;
 
-  EmulatorSettings(
-      {required this.isDetectionEnabled,
-      required this.isGen1a,
-      required this.isGen2,
-      required this.isAntiColl,
-      required this.writeMode});
+  EmulatorSettings({
+    required this.isDetectionEnabled,
+    required this.isGen1a,
+    required this.isGen2,
+    required this.isAntiColl,
+    required this.writeMode,
+  });
 }
 
 class DeviceSettings {
@@ -661,15 +676,16 @@ class DeviceSettings {
   String key;
   int? wakeTimeSeconds;
 
-  DeviceSettings(
-      {this.animation = AnimationSetting.none,
-      this.aPress = ButtonConfig.disable,
-      this.bPress = ButtonConfig.disable,
-      this.aLongPress = ButtonConfig.disable,
-      this.bLongPress = ButtonConfig.disable,
-      this.pairingEnabled = false,
-      this.key = "",
-      this.wakeTimeSeconds});
+  DeviceSettings({
+    this.animation = AnimationSetting.none,
+    this.aPress = ButtonConfig.disable,
+    this.bPress = ButtonConfig.disable,
+    this.aLongPress = ButtonConfig.disable,
+    this.bLongPress = ButtonConfig.disable,
+    this.pairingEnabled = false,
+    this.key = "",
+    this.wakeTimeSeconds,
+  });
 }
 
 enum MifareClassicValueBlockOperator {
@@ -705,8 +721,9 @@ class EM410XCard extends LFCard {
 
     if (bytes.length == 5 || bytes.length == 13) {
       return EM410XCard(
-          type: bytes.length == 13 ? TagType.em410XElectra : TagType.em410X,
-          uid: bytes);
+        type: bytes.length == 13 ? TagType.em410XElectra : TagType.em410X,
+        uid: bytes,
+      );
     }
 
     TagType type = TagType.em410X;
@@ -723,10 +740,7 @@ class EM410XCard extends LFCard {
       }
     }
 
-    return EM410XCard(
-      type: type,
-      uid: uid,
-    );
+    return EM410XCard(type: type, uid: uid);
   }
 
   factory EM410XCard.fromUID(String uid, {TagType type = TagType.em410X}) {
@@ -744,11 +758,12 @@ class HIDCard extends LFCard {
 
   factory HIDCard.fromBytes(Uint8List bytes) {
     return HIDCard(
-        hidType: bytesToU8(bytes.sublist(0, 1)),
-        facilityCode: bytesToU32(bytes.sublist(1, 5)),
-        uid: bytes.sublist(5, 10),
-        issueLevel: bytesToU8(bytes.sublist(10, 11)),
-        oem: bytesToU16(bytes.sublist(11, 13)));
+      hidType: bytesToU8(bytes.sublist(0, 1)),
+      facilityCode: bytesToU32(bytes.sublist(1, 5)),
+      uid: bytes.sublist(5, 10),
+      issueLevel: bytesToU8(bytes.sublist(10, 11)),
+      oem: bytesToU16(bytes.sublist(11, 13)),
+    );
   }
 
   factory HIDCard.fromUID(String uid) {
@@ -757,13 +772,15 @@ class HIDCard extends LFCard {
 
   @override
   String toString() {
-    return bytesToHexSpace(Uint8List.fromList([
-      hidType,
-      ...u32ToBytes(facilityCode),
-      ...uid,
-      issueLevel,
-      ...u16ToBytes(oem)
-    ]));
+    return bytesToHexSpace(
+      Uint8List.fromList([
+        hidType,
+        ...u32ToBytes(facilityCode),
+        ...uid,
+        issueLevel,
+        ...u16ToBytes(oem),
+      ]),
+    );
   }
 
   @override
@@ -793,13 +810,14 @@ class HIDCard extends LFCard {
     return out;
   }
 
-  HIDCard(
-      {super.type = TagType.hidProx,
-      required this.hidType,
-      required this.facilityCode,
-      required super.uid,
-      required this.issueLevel,
-      required this.oem});
+  HIDCard({
+    super.type = TagType.hidProx,
+    required this.hidType,
+    required this.facilityCode,
+    required super.uid,
+    required this.issueLevel,
+    required this.oem,
+  });
 }
 
 class VikingCard extends LFCard {
@@ -811,10 +829,7 @@ class VikingCard extends LFCard {
     return VikingCard.fromBytes(hexToBytes(uid));
   }
 
-  VikingCard({
-    super.type = TagType.viking,
-    required super.uid,
-  });
+  VikingCard({super.type = TagType.viking, required super.uid});
 }
 
 class PacCard extends LFCard {
@@ -826,10 +841,7 @@ class PacCard extends LFCard {
     return PacCard.fromBytes(hexToBytes(uid));
   }
 
-  PacCard({
-    super.type = TagType.pac,
-    required super.uid,
-  });
+  PacCard({super.type = TagType.pac, required super.uid});
 }
 
 class IoProxCard extends LFCard {
@@ -841,10 +853,7 @@ class IoProxCard extends LFCard {
     return IoProxCard.fromBytes(hexToBytes(uid));
   }
 
-  IoProxCard({
-    super.type = TagType.ioProx,
-    required super.uid,
-  });
+  IoProxCard({super.type = TagType.ioProx, required super.uid});
 }
 
 class IdteckCard extends LFCard {
@@ -856,8 +865,5 @@ class IdteckCard extends LFCard {
     return IdteckCard.fromBytes(hexToBytes(uid));
   }
 
-  IdteckCard({
-    super.type = TagType.idteck,
-    required super.uid,
-  });
+  IdteckCard({super.type = TagType.idteck, required super.uid});
 }

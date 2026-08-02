@@ -15,7 +15,7 @@ import 'package:uuid/uuid.dart';
 // Localizations
 import 'package:chameleonultragui/generated/i18n/app_localizations.dart';
 
-const int _legacySettingsFormatVersion = 1;
+const int _legacySettingsFormatVersion = 2;
 const int _legacySettingsMaxEncodedBytes = 16 * 1024;
 const Set<String> _legacyBooleanSettingKeys = {
   'confirm_delete',
@@ -31,6 +31,7 @@ const Set<String> _legacyScalarSettingKeys = {
   'app_theme_color',
   'locale',
   'sidebar_expanded_index',
+  'hf_capture_retention_days',
 };
 
 const String dataSyncMetaPreferenceKey = 'data_sync_meta_v1';
@@ -61,6 +62,7 @@ const List<String> dataSyncStoredPreferenceKeys = [
   'sidebar_auto_expanded',
   'sidebar_expanded_index',
   'emulation_change_monitoring',
+  'hf_capture_retention_days',
 ];
 
 class MifareClassicNonceHistorySummary {
@@ -457,6 +459,7 @@ bool _validDeferredScalar(String key, Object? value) => switch (key) {
           (locale) => locale.toLanguageTag() == value,
         ),
   'sidebar_expanded_index' => value is int && value >= 0 && value <= 2,
+  'hf_capture_retention_days' => value is int && value >= 1 && value <= 365,
   'confirm_delete' ||
   'auto_scan_enabled' ||
   'auto_connect_first_found' ||
@@ -1337,6 +1340,18 @@ class SharedPreferencesProvider extends ChangeNotifier {
   Future<void> setEmulationChangeMonitoring(bool value) =>
       _setSynchronizedScalar('emulation_change_monitoring', value);
 
+  int getHfCaptureRetentionDays() {
+    final days = _visibleInt('hf_capture_retention_days') ?? 30;
+    return days >= 1 && days <= 365 ? days : 30;
+  }
+
+  Future<void> setHfCaptureRetentionDays(int days) {
+    if (days < 1 || days > 365) {
+      throw RangeError.range(days, 1, 365, 'days');
+    }
+    return _setSynchronizedScalar('hf_capture_retention_days', days);
+  }
+
   bool getAuthorizedRelayAppleTransit() {
     return _sharedPreferences.getBool('authorized_relay_apple_transit') ??
         false;
@@ -1483,6 +1498,7 @@ class SharedPreferencesProvider extends ChangeNotifier {
       'sidebar_auto_expanded': getSideBarAutoExpansion(),
       'sidebar_expanded_index': getSideBarExpandedIndex(),
       'emulation_change_monitoring': getEmulationChangeMonitoring(),
+      'hf_capture_retention_days': getHfCaptureRetentionDays(),
     };
     _validateLegacySettings(settings);
     return jsonEncode({
@@ -1506,10 +1522,19 @@ class SharedPreferencesProvider extends ChangeNotifier {
         decoded.containsKey('version') &&
         decoded.containsKey('settings')) {
       final version = decoded['version'];
-      if (version is! int || version != _legacySettingsFormatVersion) {
+      if (version is! int ||
+          version < 1 ||
+          version > _legacySettingsFormatVersion) {
         throw const FormatException('Unsupported settings backup version');
       }
       candidate = decoded['settings'];
+      if (version == 1 && candidate is Map<String, dynamic>) {
+        candidate = <String, dynamic>{
+          ...candidate,
+          'hf_capture_retention_days':
+              candidate['hf_capture_retention_days'] ?? 30,
+        };
+      }
     } else {
       final migrated = <String, dynamic>{
         for (final entry in decoded.entries)
@@ -1976,6 +2001,8 @@ class SharedPreferencesProvider extends ChangeNotifier {
         _sharedPreferences.getInt('sidebar_expanded_index') ?? 1,
     'emulation_change_monitoring':
         _sharedPreferences.getBool('emulation_change_monitoring') ?? false,
+    'hf_capture_retention_days':
+        _sharedPreferences.getInt('hf_capture_retention_days') ?? 30,
   };
 
   Future<SyncTransactionReceipt> _prepareDataSyncTransactionLocked({
@@ -2802,6 +2829,7 @@ Map<String, Object> _validateDataSyncValues(Map<String, Object> values) {
     'sidebar_auto_expanded': boolean('sidebar_auto_expanded'),
     'sidebar_expanded_index': integer('sidebar_expanded_index', 0, 2),
     'emulation_change_monitoring': boolean('emulation_change_monitoring'),
+    'hf_capture_retention_days': integer('hf_capture_retention_days', 1, 365),
   };
 }
 
@@ -3055,6 +3083,11 @@ Map<String, Object> _validateLegacySettings(Object? value) {
         settings[key] = setting;
       case 'sidebar_expanded_index':
         if (setting is! int || setting < 0 || setting > 2) {
+          throw FormatException('Invalid settings backup value: $key');
+        }
+        settings[key] = setting;
+      case 'hf_capture_retention_days':
+        if (setting is! int || setting < 1 || setting > 365) {
           throw FormatException('Invalid settings backup value: $key');
         }
         settings[key] = setting;

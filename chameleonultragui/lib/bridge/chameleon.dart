@@ -4,6 +4,7 @@ import 'dart:async';
 import 'package:chameleonultragui/helpers/definitions.dart';
 import 'package:chameleonultragui/helpers/emv_trace.dart';
 import 'package:chameleonultragui/helpers/general.dart';
+import 'package:chameleonultragui/helpers/hf_capture.dart';
 import 'package:chameleonultragui/connector/serial_abstract.dart';
 import 'package:chameleonultragui/helpers/mifare_classic/general.dart';
 import 'package:chameleonultragui/helpers/pm3_protocol.dart';
@@ -198,6 +199,8 @@ class ChameleonCommunicator {
   int baudrate = 115200;
   AbstractSerial? _serialInstance;
   final ChameleonFrameDecoder _frameDecoder = ChameleonFrameDecoder();
+  final StreamController<ChameleonMessage> _unsolicitedMessages =
+      StreamController<ChameleonMessage>.broadcast(sync: true);
   List<int> commandQueue = [];
   Future<void> _sendTail = Future<void>.value();
   int? _activeCommandId;
@@ -213,6 +216,8 @@ class ChameleonCommunicator {
   final Logger log;
   final Duration writeTimeout;
   final Duration snapshotSaveTimeout;
+
+  ConnectionType? get connectionType => _serialInstance?.connectionType;
 
   ChameleonCommunicator(
     this.log, {
@@ -261,6 +266,10 @@ class ChameleonCommunicator {
 
   void _dispatchResponse(ChameleonMessage message) {
     if (_disposed) return;
+    if (message.command == ChameleonCommand.hfCaptureEvent.value) {
+      _unsolicitedMessages.add(message);
+      return;
+    }
     if (_uncertainResponseIds.remove(message.command)) {
       log.w('Discarded late response for command ${message.command}');
       return;
@@ -279,6 +288,9 @@ class ChameleonCommunicator {
       _capabilityMode == ChameleonCapabilityMode.advertised
       ? _capabilities
       : null;
+
+  Stream<ChameleonMessage> get unsolicitedMessages =>
+      _unsolicitedMessages.stream;
 
   bool get usesBleTransport =>
       _serialInstance?.connectionType == ConnectionType.ble;
@@ -517,6 +529,7 @@ class ChameleonCommunicator {
     _uncertainResponseIds.clear();
     commandQueue.clear();
     _frameDecoder.reset();
+    unawaited(_unsolicitedMessages.close());
   }
 
   Future<void> _invalidateAndDisconnect(Object cause) async {
@@ -547,8 +560,11 @@ class ChameleonCommunicator {
   }
 
   Future<String> getDeviceChipID() async {
-    var resp = await sendCmd(ChameleonCommand.getDeviceChipID);
-    return bytesToHex(resp!.data);
+    final response = await _sendChecked(ChameleonCommand.getDeviceChipID);
+    if (response.data.length != 8) {
+      throw const FormatException('Invalid device chip ID response');
+    }
+    return bytesToHex(response.data);
   }
 
   Future<String> getDeviceBLEAddress() async {
@@ -967,15 +983,29 @@ class ChameleonCommunicator {
     Uint8List mask,
     List<Uint8List> keys,
   ) async {
-    if (mask.length != 10 || keys.isEmpty || keys.length > 83) return null;
+    if (mask.length != 10 ||
+        keys.isEmpty ||
+        keys.length > 83 ||
+        keys.any((key) => key.length != 6)) {
+      return null;
+    }
+    var targetCount = 0;
+    for (final byte in mask) {
+      for (var bit = 0; bit < 8; bit++) {
+        if ((byte & (1 << bit)) == 0) targetCount++;
+      }
+    }
+    if (targetCount == 0) return const {};
+    final attempts = targetCount * (keys.length + 2);
     try {
       final resp = await sendCmd(
         ChameleonCommand.mf1CheckKeysOfSectors,
         data: Uint8List.fromList([...mask, for (final k in keys) ...k]),
-        // ~ auth time per key across the unmasked sectors, capped.
-        timeout: Duration(seconds: (5 + keys.length).clamp(10, 90)),
+        timeout: Duration(seconds: (6 + (attempts / 10).ceil()).clamp(10, 30)),
       );
-      if (resp == null || resp.data.length != 490) return null;
+      if (resp == null || resp.status != 0 || resp.data.length != 490) {
+        return null;
+      }
       final d = resp.data;
       final found = <int, Uint8List>{};
       for (var s = 0; s < 40; s++) {
@@ -993,6 +1023,8 @@ class ChameleonCommunicator {
         }
       }
       return found;
+    } on ChameleonResponseTimeoutException {
+      rethrow;
     } catch (_) {
       return null;
     }
@@ -2026,6 +2058,141 @@ class ChameleonCommunicator {
     }
 
     throw ('HF sniff failed with status 0x${resp.status.toRadixString(16)}');
+  }
+
+  Future<HfCaptureMetadata> hfCaptureStart(
+    HfCaptureMode mode, {
+    required int startToken,
+  }) async {
+    if (startToken <= 0 || startToken > 0xFFFFFFFF) {
+      throw RangeError.range(startToken, 1, 0xFFFFFFFF, 'startToken');
+    }
+    final response = await _sendChecked(
+      ChameleonCommand.hfCaptureStart,
+      data: Uint8List.fromList([
+        hfCaptureProtocolVersion,
+        mode.value,
+        ...u32ToBytes(startToken),
+      ]),
+    );
+    if (response.data.length != hfCaptureMetadataSize) {
+      throw const FormatException('Invalid HF capture START response');
+    }
+    final metadata = HfCaptureMetadata.decode(response.data);
+    if (!metadata.isRunning ||
+        metadata.mode != mode ||
+        metadata.startToken != startToken) {
+      throw const FormatException('HF capture START metadata mismatch');
+    }
+    return metadata;
+  }
+
+  Future<HfCaptureMetadata> hfCaptureStatus(
+    int sessionId, {
+    required int startToken,
+  }) async {
+    _validateHfCaptureSessionId(sessionId, allowDiscovery: true);
+    if (startToken <= 0 || startToken > 0xFFFFFFFF) {
+      throw RangeError.range(startToken, 1, 0xFFFFFFFF, 'startToken');
+    }
+    final response = await _sendChecked(
+      ChameleonCommand.hfCaptureStatus,
+      data: Uint8List.fromList([
+        hfCaptureProtocolVersion,
+        ...u32ToBytes(sessionId),
+        ...u32ToBytes(startToken),
+      ]),
+    );
+    if (response.data.length != hfCaptureMetadataSize) {
+      throw const FormatException('Invalid HF capture STATUS response');
+    }
+    final metadata = HfCaptureMetadata.decode(response.data);
+    if ((sessionId != 0 && metadata.sessionId != sessionId) ||
+        metadata.startToken != startToken) {
+      throw const FormatException('HF capture STATUS session mismatch');
+    }
+    return metadata;
+  }
+
+  Future<HfCapturePage> hfCaptureGet(
+    int sessionId, {
+    int? acknowledgeSequence,
+    int? acknowledgeDeliveryToken,
+    int requestedBytes = 4096,
+  }) async {
+    _validateHfCaptureSessionId(sessionId);
+    if ((acknowledgeSequence == null) != (acknowledgeDeliveryToken == null)) {
+      throw ArgumentError(
+        'acknowledgeSequence and acknowledgeDeliveryToken must be supplied together',
+      );
+    }
+    if (acknowledgeSequence != null &&
+        (acknowledgeSequence < 0 || acknowledgeSequence > 0xFFFFFFFF)) {
+      throw RangeError.range(
+        acknowledgeSequence,
+        0,
+        0xFFFFFFFF,
+        'acknowledgeSequence',
+      );
+    }
+    if (acknowledgeDeliveryToken != null &&
+        (acknowledgeDeliveryToken <= 0 ||
+            acknowledgeDeliveryToken > 0x7FFFFFFFFFFFFFFF)) {
+      throw RangeError.range(
+        acknowledgeDeliveryToken,
+        1,
+        0x7FFFFFFFFFFFFFFF,
+        'acknowledgeDeliveryToken',
+      );
+    }
+    requestedBytes = requestedBytes.clamp(hfCaptureMinimumPageSize, 4096);
+    final response = await _sendChecked(
+      ChameleonCommand.hfCaptureGet,
+      data: Uint8List.fromList([
+        hfCaptureProtocolVersion,
+        ...u32ToBytes(sessionId),
+        acknowledgeSequence == null ? 0 : 1,
+        ...u32ToBytes(acknowledgeSequence ?? 0),
+        ...u64ToBytes(acknowledgeDeliveryToken ?? 0),
+        requestedBytes >> 8,
+        requestedBytes & 0xFF,
+      ]),
+    );
+    final page = HfCapturePage.decode(response.data);
+    if (page.metadata.sessionId != sessionId) {
+      throw const FormatException('HF capture GET session mismatch');
+    }
+    return page;
+  }
+
+  Future<HfCaptureMetadata> hfCaptureStop(int sessionId) async {
+    _validateHfCaptureSessionId(sessionId);
+    final response = await _sendChecked(
+      ChameleonCommand.hfCaptureStop,
+      data: Uint8List.fromList([
+        hfCaptureProtocolVersion,
+        ...u32ToBytes(sessionId),
+      ]),
+    );
+    if (response.data.length != hfCaptureMetadataSize) {
+      throw const FormatException('Invalid HF capture STOP response');
+    }
+    final metadata = HfCaptureMetadata.decode(response.data);
+    if (metadata.sessionId != sessionId ||
+        metadata.state != HfCaptureState.stopped) {
+      throw const FormatException('HF capture STOP metadata mismatch');
+    }
+    return metadata;
+  }
+
+  void _validateHfCaptureSessionId(
+    int sessionId, {
+    bool allowDiscovery = false,
+  }) {
+    final minimum = allowDiscovery ? 0 : 1;
+    if (sessionId < minimum || sessionId > 0xFFFFFFFF) {
+      throw RangeError.range(sessionId, minimum, 0xFFFFFFFF, 'sessionId');
+    }
   }
 
   Future<void> writeIdteckToT55XX(
