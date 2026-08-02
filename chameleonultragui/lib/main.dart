@@ -9,6 +9,7 @@ import 'package:chameleonultragui/connector/serial_macos.dart';
 import 'package:chameleonultragui/gui/component/device_found_banner.dart';
 import 'package:chameleonultragui/gui/component/module_version_footer.dart';
 import 'package:chameleonultragui/gui/component/module_version_navigation.dart';
+import 'package:chameleonultragui/gui/undercover/undercover_launcher.dart';
 import 'package:chameleonultragui/gui/page/tools.dart';
 import 'package:chameleonultragui/helpers/font.dart';
 import 'package:chameleonultragui/helpers/emulation_change.dart';
@@ -86,6 +87,8 @@ class ChameleonGUIState extends ChangeNotifier {
 
   bool devMode = false;
   double? progress; // DFU
+  bool undercoverMode = false;
+  bool undercoverDeviceArmed = false;
 
   // Flashing easter egg
   bool easterEgg = false;
@@ -147,6 +150,7 @@ class ChameleonGUIState extends ChangeNotifier {
   void onConnectorStateChanged() {
     if (_disposed) return;
     if (connector == null || !connector!.connected) {
+      undercoverDeviceArmed = false;
       _slotOperationGeneration++;
       stopEmulationChangeMonitor();
       communicator?.dispose('Connector disconnected');
@@ -187,6 +191,7 @@ class ChameleonGUIState extends ChangeNotifier {
     communicator?.dispose('Disconnected by the application');
     communicator = null;
     await connector?.performDisconnect();
+    undercoverDeviceArmed = false;
     if (manual && suppressedPort != null) {
       _suppressedAutoReconnectPort = suppressedPort;
     }
@@ -200,6 +205,7 @@ class ChameleonGUIState extends ChangeNotifier {
     stopEmulationChangeMonitor();
     communicator?.dispose('Connector mode changed');
     communicator = null;
+    undercoverDeviceArmed = false;
     final previous = connector;
     connector = null;
     previous?.connectionStateCallback = null;
@@ -241,14 +247,86 @@ class ChameleonGUIState extends ChangeNotifier {
       await activeConnector.performDisconnect();
       return;
     }
+    if (undercoverMode && !undercoverDeviceArmed) {
+      next.dispose('Undercover mode does not reconnect automatically');
+      await activeConnector.performDisconnect();
+      progress = null;
+      if (!_disposed && identical(connector, activeConnector)) {
+        notifyListeners();
+      }
+      return;
+    }
     communicator?.dispose('Replaced by a new connection');
     communicator = next;
     startEmulationChangeMonitor();
   }
 
+  bool get canEnterUndercover {
+    final activeConnector = connector;
+    return !_disposed &&
+        activeConnector != null &&
+        activeConnector.connected &&
+        !activeConnector.isDFU &&
+        activeConnector.connectionType == ConnectionType.ble &&
+        communicator?.supportsCommandSync(
+              ChameleonCommand.setRuntimeUndercoverMode,
+            ) ==
+            true;
+  }
+
+  Future<void> enterUndercover() async {
+    if (!canEnterUndercover) {
+      throw StateError('Undercover mode is unavailable on this connection');
+    }
+    final activeConnector = connector!;
+    final activeCommunicator = communicator!;
+    await activeCommunicator.setRuntimeUndercoverMode(true);
+    if (_disposed ||
+        !identical(connector, activeConnector) ||
+        !identical(communicator, activeCommunicator) ||
+        !activeConnector.connected) {
+      throw StateError('Connection changed while entering Undercover mode');
+    }
+    stopEmulationChangeMonitor();
+    undercoverDeviceArmed = true;
+    undercoverMode = true;
+    notifyListeners();
+  }
+
+  Future<void> exitUndercover() async {
+    final activeConnector = connector;
+    final activeCommunicator = communicator;
+    Object? exitError;
+    try {
+      if (undercoverDeviceArmed &&
+          activeConnector != null &&
+          activeConnector.connected &&
+          activeCommunicator != null) {
+        try {
+          await activeCommunicator.setRuntimeUndercoverMode(false);
+        } catch (_) {
+          try {
+            if (activeConnector.connected) {
+              await disconnect(manual: true);
+            }
+          } catch (error) {
+            exitError = error;
+          }
+        }
+      }
+    } finally {
+      undercoverDeviceArmed = false;
+      undercoverMode = false;
+      startEmulationChangeMonitor();
+      if (!_disposed) notifyListeners();
+    }
+    if (exitError != null) throw exitError;
+  }
+
   bool _shouldMonitorEmulationChanges() {
     final activeConnector = connector;
     return !_disposed &&
+        !undercoverMode &&
         sharedPreferencesProvider.getEmulationChangeMonitoring() &&
         _emulationMonitorPauseCount == 0 &&
         activeConnector != null &&
@@ -922,7 +1000,9 @@ class _MainPageState extends State<MainPage> {
   // confirmation exactly once, on whichever path connected (banner, connect
   // page, manual connect, or auto-connect).
   bool _wasConnected = false;
+  bool _wasUndercover = false;
   int _lastShownEmulationChangeSequence = 0;
+  final GlobalKey<NavigatorState> _navigatorKey = GlobalKey<NavigatorState>();
   final GlobalKey<ScaffoldMessengerState> _scaffoldMessengerKey =
       GlobalKey<ScaffoldMessengerState>();
 
@@ -977,6 +1057,55 @@ class _MainPageState extends State<MainPage> {
         ),
       );
     });
+  }
+
+  Future<void> _requestUndercoverExit(ChameleonGUIState appState) async {
+    final dialogContext = _navigatorKey.currentContext;
+    if (dialogContext == null) return;
+    final localizations = AppLocalizations.of(dialogContext)!;
+    final confirmed =
+        await showDialog<bool>(
+          context: dialogContext,
+          builder: (context) => AlertDialog(
+            title: Text(localizations.undercover_exit_title),
+            content: Text(localizations.undercover_exit_message),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: Text(localizations.cancel),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(context, true),
+                child: Text(localizations.undercover_exit),
+              ),
+            ],
+          ),
+        ) ??
+        false;
+    if (!confirmed) return;
+
+    try {
+      await appState.exitUndercover();
+      if (!mounted) return;
+      _moduleNavigationObserver.setRootModule(ModuleId.device);
+      setState(() => selectedIndex = 0);
+    } catch (error) {
+      final errorContext = _navigatorKey.currentContext;
+      if (errorContext == null || !errorContext.mounted) return;
+      await showDialog<void>(
+        context: errorContext,
+        builder: (context) => AlertDialog(
+          title: Text(localizations.error),
+          content: Text(error.toString()),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: Text(localizations.close),
+            ),
+          ],
+        ),
+      );
+    }
   }
 
   @override
@@ -1044,7 +1173,8 @@ class _MainPageState extends State<MainPage> {
     appState.connector!.connectionStateCallback =
         appState.onConnectorStateChanged;
 
-    if (appState.sharedPreferencesProvider.getSideBarAutoExpansion()) {
+    if (!appState.undercoverMode &&
+        appState.sharedPreferencesProvider.getSideBarAutoExpansion()) {
       double width = MediaQuery.of(context).size.width;
       if (width >= 600) {
         appState.sharedPreferencesProvider.setSideBarExpanded(true);
@@ -1056,7 +1186,8 @@ class _MainPageState extends State<MainPage> {
     appState.devMode = appState.sharedPreferencesProvider.isDebugMode();
 
     // Drive the shared device scanner: run while disconnected, stop otherwise.
-    if (appState.connector!.connected ||
+    if (appState.undercoverMode ||
+        appState.connector!.connected ||
         appState.connector!.pendingConnection ||
         appState.connector!.isDFU) {
       appState.stopDeviceScan();
@@ -1137,12 +1268,26 @@ class _MainPageState extends State<MainPage> {
     // is a bootloader link, not a usable device connection).
     final nowConnected =
         appState.connector!.connected && !appState.connector!.isDFU;
-    if (nowConnected && !_wasConnected) {
+    if (nowConnected && !_wasConnected && !appState.undercoverMode) {
       _confirmConnected(chameleonDeviceName(appState.connector!.device));
     }
     _wasConnected = nowConnected;
 
-    if (appState.emulationChangeSequence > _lastShownEmulationChangeSequence &&
+    if (appState.undercoverMode != _wasUndercover) {
+      _wasUndercover = appState.undercoverMode;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        _moduleNavigationObserver.setRootModule(
+          appState.undercoverMode ? ModuleId.undercover : ModuleId.device,
+        );
+        if (appState.undercoverMode) {
+          _scaffoldMessengerKey.currentState?.hideCurrentSnackBar();
+        }
+      });
+    }
+
+    if (!appState.undercoverMode &&
+        appState.emulationChangeSequence > _lastShownEmulationChangeSequence &&
         appState.latestEmulationChange != null) {
       _lastShownEmulationChangeSequence = appState.emulationChangeSequence;
       _notifyEmulationChange(appState.latestEmulationChange!);
@@ -1152,7 +1297,8 @@ class _MainPageState extends State<MainPage> {
     // in settings) when a non-DFU device is available that the user hasn't
     // dismissed.
     Chameleon? bannerDevice;
-    if (appState.sharedPreferencesProvider.getDeviceFoundBanner() &&
+    if (!appState.undercoverMode &&
+        appState.sharedPreferencesProvider.getDeviceFoundBanner() &&
         !appState.connector!.connected &&
         !appState.connector!.pendingConnection &&
         !appState.connector!.isDFU) {
@@ -1165,7 +1311,10 @@ class _MainPageState extends State<MainPage> {
     }
 
     return MaterialApp(
-      title: 'Chameleon Ultra GUI', // App Name
+      navigatorKey: _navigatorKey,
+      onGenerateTitle: (context) => appState.undercoverMode
+          ? AppLocalizations.of(context)!.home
+          : 'Chameleon Ultra GUI',
       scaffoldMessengerKey: _scaffoldMessengerKey,
       locale: widget.sharedPreferencesProvider.getLocale(),
       localizationsDelegates: AppLocalizations.localizationsDelegates,
@@ -1210,22 +1359,30 @@ class _MainPageState extends State<MainPage> {
       builder: (context, child) {
         return ModuleVersionScope(
           notifier: _activeModule,
-          child: Column(
-            children: [
-              Expanded(child: child ?? const SizedBox.shrink()),
-              ValueListenableBuilder<ModuleId>(
-                valueListenable: _activeModule,
-                builder: (context, moduleId, _) {
-                  return ModuleVersionFooter(moduleId: moduleId);
-                },
-              ),
-            ],
-          ),
+          child: appState.undercoverMode
+              ? child ?? const SizedBox.shrink()
+              : Column(
+                  children: [
+                    Expanded(child: child ?? const SizedBox.shrink()),
+                    ValueListenableBuilder<ModuleId>(
+                      valueListenable: _activeModule,
+                      builder: (context, moduleId, _) {
+                        return ModuleVersionFooter(moduleId: moduleId);
+                      },
+                    ),
+                  ],
+                ),
         );
       },
       home: LayoutBuilder(
         // Build Page
         builder: (context, constraints) {
+          if (appState.undercoverMode) {
+            return UndercoverLauncher(
+              connected: nowConnected && appState.undercoverDeviceArmed,
+              onExitRequested: () => _requestUndercoverExit(appState),
+            );
+          }
           return SafeArea(
             left: false,
             right: false,

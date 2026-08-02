@@ -64,6 +64,36 @@ void main() {
     );
   });
 
+  test('encodes runtime undercover state as a strict boolean byte', () async {
+    final serial = _FakeSerial()..connectionType = ConnectionType.ble;
+    final communicator = _communicator(serial);
+
+    await communicator.setRuntimeUndercoverMode(true);
+    await communicator.setRuntimeUndercoverMode(false);
+
+    final payloads = serial.commandPayloads
+        .where(
+          (entry) =>
+              entry.$1 == ChameleonCommand.setRuntimeUndercoverMode.value,
+        )
+        .map((entry) => entry.$2)
+        .toList();
+    expect(payloads, [
+      [1],
+      [0],
+    ]);
+  });
+
+  test('rejects runtime undercover control outside BLE', () async {
+    final serial = _FakeSerial()..connectionType = ConnectionType.usb;
+
+    await expectLater(
+      _communicator(serial).setRuntimeUndercoverMode(true),
+      throwsStateError,
+    );
+    expect(serial.commands, isEmpty);
+  });
+
   for (final legacyStatus in [0x67, 0x69]) {
     test(
       'allows optimistic commands for legacy status 0x${legacyStatus.toRadixString(16)}',

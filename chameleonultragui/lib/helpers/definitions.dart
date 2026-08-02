@@ -57,6 +57,7 @@ enum ChameleonCommand {
   activeSlotSnapshot(1050),
   getKeyboardHidEnable(1051),
   setKeyboardHidEnable(1052),
+  setRuntimeUndercoverMode(1053),
 
   // button config
   getButtonPressConfig(1026),

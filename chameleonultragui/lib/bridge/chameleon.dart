@@ -2318,6 +2318,19 @@ class ChameleonCommunicator {
     );
   }
 
+  Future<void> setRuntimeUndercoverMode(bool enabled) async {
+    if (!usesBleTransport) {
+      throw StateError('Undercover mode requires a BLE control connection');
+    }
+    final response = await _sendChecked(
+      ChameleonCommand.setRuntimeUndercoverMode,
+      data: Uint8List.fromList([enabled ? 1 : 0]),
+    );
+    if (response.data.isNotEmpty) {
+      throw const FormatException('Unexpected undercover-mode response data');
+    }
+  }
+
   Future<AnimationSetting> getAnimationMode() async {
     final resp = await _sendChecked(ChameleonCommand.getAnimationMode);
     if (resp.data.length != 1) {

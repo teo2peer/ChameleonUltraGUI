@@ -22,6 +22,13 @@ void main() {
     expect(moduleReleaseFor(ModuleId.autopwnPlus).version, '1.0.0');
   });
 
+  test('Undercover keeps an independent release', () {
+    expect(moduleReleaseFor(ModuleId.undercover).version, '1.0.0');
+    expect(moduleReleaseFor(ModuleId.undercover).updatedAt, '2026-08-02');
+    expect(moduleReleaseFor(ModuleId.appShell).version, '1.1.0');
+    expect(moduleReleaseFor(ModuleId.device).version, '1.1.0');
+  });
+
   testWidgets('footer renders the selected module release', (tester) async {
     await tester.pumpWidget(
       const MaterialApp(

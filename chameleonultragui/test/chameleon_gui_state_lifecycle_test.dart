@@ -84,6 +84,38 @@ void main() {
     await secondExpectation;
     expect(secondRan, isFalse);
   });
+
+  test('BLE loss disarms LEDs but keeps the undercover launcher active',
+      () async {
+    final fixture = await _fixture();
+    fixture.state.undercoverMode = true;
+    fixture.state.undercoverDeviceArmed = true;
+    fixture.serial.connected = false;
+
+    fixture.state.onConnectorStateChanged();
+
+    expect(fixture.state.undercoverMode, isTrue);
+    expect(fixture.state.undercoverDeviceArmed, isFalse);
+  });
+
+  test('failed LED restore disconnects before leaving undercover', () async {
+    final fixture = await _fixture();
+    fixture.serial.connected = true;
+    fixture.serial.connectionType = ConnectionType.ble;
+    fixture.state.log = Logger(level: Level.off);
+    fixture.state.communicator = ChameleonCommunicator(
+      fixture.state.log!,
+      port: fixture.serial,
+    );
+    fixture.state.undercoverMode = true;
+    fixture.state.undercoverDeviceArmed = true;
+
+    await fixture.state.exitUndercover();
+
+    expect(fixture.serial.disconnectCount, 1);
+    expect(fixture.state.undercoverMode, isFalse);
+    expect(fixture.state.undercoverDeviceArmed, isFalse);
+  });
 }
 
 Future<_LifecycleFixture> _fixture() async {
