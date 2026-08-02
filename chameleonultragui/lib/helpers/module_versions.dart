@@ -266,8 +266,8 @@ const moduleVersions = <ModuleId, ModuleRelease>{
   ),
   ModuleId.mifareClassicNonceHistory: ModuleRelease(
     name: 'MIFARE Classic Recovery History',
-    version: '1.1.0',
-    updatedAt: _initialReleaseDate,
+    version: '1.2.0',
+    updatedAt: '2026-08-02',
   ),
   ModuleId.dictionaryCheck: ModuleRelease(
     name: 'Dictionary Check',

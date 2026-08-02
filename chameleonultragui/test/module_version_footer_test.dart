@@ -23,7 +23,7 @@ void main() {
     expect(moduleReleaseFor(ModuleId.autopwnV2).version, '1.2.0');
     expect(
       moduleReleaseFor(ModuleId.mifareClassicNonceHistory).version,
-      '1.1.0',
+      '1.2.0',
     );
     expect(moduleReleaseFor(ModuleId.settings).version, '1.1.0');
   });

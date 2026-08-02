@@ -786,6 +786,7 @@ class SharedPreferencesProvider extends ChangeNotifier {
   }
 
   late SharedPreferences _sharedPreferences;
+  bool _preferencesLoaded = false;
   Future<void> _dataSyncQueue = Future<void>.value();
   int _queuedDataSyncActions = 0;
   int _syncMutationEpoch = 0;
@@ -810,6 +811,7 @@ class SharedPreferencesProvider extends ChangeNotifier {
   }
 
   Future<void> load() async {
+    _preferencesLoaded = false;
     final sharedPreferences = await SharedPreferences.getInstance();
     if (_queuedDataSyncActions == 0) {
       // Do not retain a completed Future from a previous process/test zone.
@@ -834,6 +836,7 @@ class SharedPreferencesProvider extends ChangeNotifier {
       await _dataSyncCheckpointLocked();
       _publishCommittedDataSyncValues(_currentDataSyncValues());
     });
+    _preferencesLoaded = true;
   }
 
   Future<T> withDataSyncCheckpoint<T>(
@@ -1172,10 +1175,11 @@ class SharedPreferencesProvider extends ChangeNotifier {
   }
 
   bool getMifareClassicNonceHistoryEnabled() =>
-      _sharedPreferences.getBool(
-        _mifareClassicNonceHistoryEnabledPreferenceKey,
-      ) ??
-      false;
+      _preferencesLoaded &&
+      (_sharedPreferences.getBool(
+            _mifareClassicNonceHistoryEnabledPreferenceKey,
+          ) ??
+          false);
 
   Future<void> setMifareClassicNonceHistoryEnabled(bool enabled) async {
     final stored = await _sharedPreferences.setBool(
@@ -1237,6 +1241,7 @@ class SharedPreferencesProvider extends ChangeNotifier {
 
   List<MifareClassicNonceHistorySummary>
   getMifareClassicNonceHistorySummaries() {
+    if (!_preferencesLoaded) return const [];
     final history = _readMifareClassicNonceHistory();
     final summaries = [
       for (final entry in history.entries)
@@ -1260,6 +1265,7 @@ class SharedPreferencesProvider extends ChangeNotifier {
   }
 
   Future<void> clearMifareClassicNonceHistoryForCard(String cardUid) async {
+    if (!_preferencesLoaded) return;
     final uid = _normaliseMifareClassicNonceHistoryUid(cardUid);
     if (uid == null) return;
     final history = _readMifareClassicNonceHistory();
@@ -1268,6 +1274,7 @@ class SharedPreferencesProvider extends ChangeNotifier {
   }
 
   Map<String, _MifareClassicNonceHistoryCard> _readMifareClassicNonceHistory() {
+    if (!_preferencesLoaded) return {};
     final encoded = _sharedPreferences.getString(
       _mifareClassicNonceHistoryPreferenceKey,
     );
