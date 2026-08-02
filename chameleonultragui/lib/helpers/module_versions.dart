@@ -1,6 +1,11 @@
 enum ModuleId {
   appShell,
   undercover,
+  undercoverSlots,
+  undercoverRecovery,
+  undercoverCapture,
+  undercoverEmulation,
+  undercoverSniff,
   device,
   library,
   slotManager,
@@ -81,7 +86,32 @@ const moduleVersions = <ModuleId, ModuleRelease>{
   ),
   ModuleId.undercover: ModuleRelease(
     name: 'Undercover',
-    version: '2.1.0',
+    version: '3.0.0',
+    updatedAt: '2026-08-02',
+  ),
+  ModuleId.undercoverSlots: ModuleRelease(
+    name: 'Undercover Slots',
+    version: '1.0.0',
+    updatedAt: '2026-08-02',
+  ),
+  ModuleId.undercoverRecovery: ModuleRelease(
+    name: 'Undercover Recovery',
+    version: '1.0.0',
+    updatedAt: '2026-08-02',
+  ),
+  ModuleId.undercoverCapture: ModuleRelease(
+    name: 'Undercover Capture',
+    version: '1.0.0',
+    updatedAt: '2026-08-02',
+  ),
+  ModuleId.undercoverEmulation: ModuleRelease(
+    name: 'Undercover Emulation',
+    version: '1.0.0',
+    updatedAt: '2026-08-02',
+  ),
+  ModuleId.undercoverSniff: ModuleRelease(
+    name: 'Undercover HF Sniff',
+    version: '1.0.0',
     updatedAt: '2026-08-02',
   ),
   ModuleId.device: ModuleRelease(
@@ -186,7 +216,7 @@ const moduleVersions = <ModuleId, ModuleRelease>{
   ),
   ModuleId.hfContinuousCapture: ModuleRelease(
     name: 'Continuous HF Capture',
-    version: '1.2.1',
+    version: '1.4.0',
     updatedAt: '2026-08-02',
   ),
   ModuleId.mifareClassicGen4: ModuleRelease(

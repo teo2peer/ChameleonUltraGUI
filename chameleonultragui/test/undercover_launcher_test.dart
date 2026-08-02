@@ -1,14 +1,18 @@
 import 'package:chameleonultragui/generated/i18n/app_localizations.dart';
 import 'package:chameleonultragui/gui/undercover/undercover_catalog.dart';
 import 'package:chameleonultragui/gui/undercover/undercover_launcher.dart';
+import 'package:chameleonultragui/main.dart';
+import 'package:chameleonultragui/sharedprefsprovider.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:provider/provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  testWidgets('catalog exposes every Undercover menu and unique app id', (
+  testWidgets('catalog exposes only five persistent disguised dashboards', (
     tester,
   ) async {
     late List<UndercoverMenuScreen> screens;
@@ -39,29 +43,17 @@ void main() {
 
     expect(
       screens.map((screen) => screen.id),
-      orderedEquals([
-        'device',
-        'library',
-        'recovery',
-        'capture',
-        'tools',
-        'diagnostics',
-      ]),
+      orderedEquals(['home', 'markets', 'recorder', 'studio', 'signals']),
     );
-    final apps = screens.expand((screen) => screen.apps).toList();
-    expect(apps.length, greaterThanOrEqualTo(35));
-    expect(apps.map((app) => app.id).toSet().length, apps.length);
-    expect(apps.every((app) => app.title.isNotEmpty), isTrue);
-    expect(apps.every((app) => app.menuPath.isNotEmpty), isTrue);
+    expect(screens.every((screen) => screen.apps.isEmpty), isTrue);
+    expect(screens.every((screen) => screen.dashboardBuilder != null), isTrue);
   });
 
-  testWidgets('catalog gates device and ethical actions before opening', (
+  testWidgets('catalog cannot invoke a legacy root or page opener', (
     tester,
   ) async {
     late List<UndercoverMenuScreen> screens;
-    String? opened;
-    bool? openedRequiresConnection;
-    bool? openedRequiresEthicalAck;
+    var legacyOpenCount = 0;
     await tester.pumpWidget(
       MaterialApp(
         localizationsDelegates: AppLocalizations.localizationsDelegates,
@@ -70,7 +62,9 @@ void main() {
           builder: (context) {
             screens = buildUndercoverCatalog(
               context,
-              openRoot: (_, _, {required bool requiresConnection}) {},
+              openRoot: (_, _, {required bool requiresConnection}) {
+                legacyOpenCount++;
+              },
               openPage:
                   (
                     _,
@@ -80,9 +74,7 @@ void main() {
                     required bool requiresConnection,
                     required bool requiresEthicalAck,
                   }) {
-                    opened = label;
-                    openedRequiresConnection = requiresConnection;
-                    openedRequiresEthicalAck = requiresEthicalAck;
+                    legacyOpenCount++;
                   },
             );
             return const SizedBox();
@@ -91,21 +83,93 @@ void main() {
       ),
     );
 
-    screens
-        .expand((screen) => screen.apps)
-        .singleWhere((app) => app.id == 'autopwn')
-        .onOpen();
-    expect(opened, 'Autopwn');
-    expect(openedRequiresConnection, isTrue);
-    expect(openedRequiresEthicalAck, isTrue);
+    expect(screens, hasLength(5));
+    expect(screens.expand((screen) => screen.apps), isEmpty);
+    expect(legacyOpenCount, 0);
+  });
 
-    screens
-        .expand((screen) => screen.apps)
-        .singleWhere((app) => app.id == 'data-sync')
-        .onOpen();
-    expect(opened, 'Data Sync');
-    expect(openedRequiresConnection, isFalse);
-    expect(openedRequiresEthicalAck, isFalse);
+  testWidgets('dashboard screens bypass search and app action boards', (
+    tester,
+  ) async {
+    final screens = [
+      UndercoverMenuScreen(
+        id: 'home',
+        title: 'Home',
+        subtitle: 'Positions',
+        icon: Icons.home,
+        accent: Colors.blue,
+        dashboardBuilder: (_) =>
+            const Center(child: Text('Persistent dashboard')),
+      ),
+    ];
+    await _pumpLauncher(tester, screens: screens);
+
+    expect(find.text('Persistent dashboard'), findsOneWidget);
+    expect(find.byKey(const Key('undercover-app-search')), findsNothing);
+    expect(find.byKey(const Key('undercover-action-board')), findsNothing);
+  });
+
+  testWidgets('all real dashboards render offline on a compact device', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({});
+    final preferences = SharedPreferencesProvider();
+    await preferences.load();
+    final appState = ChameleonGUIState(preferences);
+    addTearDown(appState.dispose);
+    await tester.binding.setSurfaceSize(const Size(320, 568));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    await tester.pumpWidget(
+      ChangeNotifierProvider<ChameleonGUIState>.value(
+        value: appState,
+        child: MaterialApp(
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: Builder(
+            builder: (context) => MediaQuery(
+              data: MediaQuery.of(
+                context,
+              ).copyWith(textScaler: const TextScaler.linear(1.6)),
+              child: UndercoverLauncher(
+                connected: false,
+                screens: buildUndercoverCatalog(
+                  context,
+                  openRoot: (_, _, {required bool requiresConnection}) {},
+                  openPage:
+                      (
+                        _,
+                        _,
+                        _,
+                        _, {
+                        required bool requiresConnection,
+                        required bool requiresEthicalAck,
+                      }) {},
+                ),
+                onExitRequested: () {},
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    const ids = ['home', 'markets', 'recorder', 'studio', 'signals'];
+    for (var page = 0; page < ids.length; page++) {
+      expect(
+        find.byKey(Key('undercover-dashboard-${ids[page]}')),
+        findsOneWidget,
+      );
+      expect(tester.takeException(), isNull, reason: ids[page]);
+      if (page == ids.length - 1) break;
+      await tester.fling(
+        find.byKey(const Key('undercover-page-view')),
+        const Offset(-320, 0),
+        1000,
+      );
+      await tester.pumpAndSettle();
+    }
   });
 
   testWidgets('tap opens an action board before the real app', (tester) async {
@@ -269,9 +333,7 @@ void main() {
     }
   });
 
-  testWidgets('full catalog fits compact SpringBoard across every page', (
-    tester,
-  ) async {
+  testWidgets('five dashboard pages fit compact SpringBoard', (tester) async {
     await tester.binding.setSurfaceSize(const Size(320, 568));
     addTearDown(() => tester.binding.setSurfaceSize(null));
     await tester.pumpWidget(
@@ -285,18 +347,24 @@ void main() {
             ).copyWith(textScaler: const TextScaler.linear(1.6)),
             child: UndercoverLauncher(
               connected: true,
-              screens: buildUndercoverCatalog(
-                context,
-                openRoot: (_, _, {required bool requiresConnection}) {},
-                openPage:
-                    (
-                      _,
-                      _,
-                      _,
-                      _, {
-                      required bool requiresConnection,
-                      required bool requiresEthicalAck,
-                    }) {},
+              screens: List.generate(
+                5,
+                (index) => UndercoverMenuScreen(
+                  id: 'dashboard-$index',
+                  title: 'Dashboard $index',
+                  subtitle: 'Persistent widgets',
+                  icon: Icons.widgets,
+                  accent: Colors.blue,
+                  dashboardBuilder: (_) => ListView(
+                    children: List.generate(
+                      24,
+                      (cell) => SizedBox(
+                        height: 30,
+                        child: Text('Cell $index-$cell'),
+                      ),
+                    ),
+                  ),
+                ),
               ),
               onExitRequested: () {},
             ),
@@ -306,7 +374,7 @@ void main() {
     );
     await tester.pump();
 
-    for (var page = 1; page < 6; page++) {
+    for (var page = 1; page < 5; page++) {
       await tester.fling(
         find.byKey(const Key('undercover-page-view')),
         const Offset(-320, 0),

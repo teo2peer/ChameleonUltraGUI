@@ -123,6 +123,7 @@ flutter:
     - assets/logo.png
     - assets/black-ultra-standing-front-flashing.webp
     - assets/black-lite-standing-front-flashing.webp
+    - assets/iosBackground.png
     - assets/licenses/BSD-3-Clause.md
     - assets/licenses/GPL3.md
     - assets/licenses/LGPL3.md

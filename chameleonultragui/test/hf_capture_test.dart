@@ -45,6 +45,7 @@ void main() {
     expect(decoded.records, hasLength(1));
     expect(decoded.records.single.sequence, 7);
     expect(decoded.records.single.data, [0x60, 0x04, 0x12, 0x34]);
+    expect(hfCaptureRawHex(decoded.records.single), '60041234');
     expect(decoded.records.single.toSniffFrame()!.isReaderToCard, isTrue);
     expect(decoded.pageBytes, page);
   });

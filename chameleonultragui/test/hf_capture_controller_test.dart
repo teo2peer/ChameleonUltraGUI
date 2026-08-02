@@ -39,6 +39,7 @@ void main() {
 
     await communicator.initializeCapabilities();
     await controller.attach(communicator);
+    final firstBatch = controller.persistedRecordBatches.first;
     await controller.start(HfCaptureMode.emulation);
     await serial.persistedAcknowledgement.future.timeout(
       const Duration(seconds: 10),
@@ -51,6 +52,10 @@ void main() {
       hfCapturePageHeaderSize + serial.record.length,
     );
     expect(controller.recentRecords.single.sequence, 0);
+    final batch = await firstBatch.timeout(const Duration(seconds: 10));
+    expect(batch.records.single.sequence, 0);
+    expect(batch.replayed, isFalse);
+    expect(batch.sessionIdentity, '7:42:${serial.startToken}');
 
     final captureDirectory = controller.captureDirectory!;
     await controller.stop();

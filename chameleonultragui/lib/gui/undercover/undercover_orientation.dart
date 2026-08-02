@@ -60,12 +60,17 @@ class _UndercoverOrientationScopeState
     extends State<UndercoverOrientationScope> {
   static Future<void> _operations = Future<void>.value();
   static int _activeScopes = 0;
+  static Zone? _operationZone;
 
   late final UndercoverOrientationController _controller;
 
   @override
   void initState() {
     super.initState();
+    if (_activeScopes == 0 && !identical(_operationZone, Zone.current)) {
+      _operations = Future<void>.value();
+      _operationZone = Zone.current;
+    }
     _controller = widget.controller ?? SystemUndercoverOrientationController();
     _activeScopes++;
     _schedule(_controller.lockPortrait);

@@ -20,6 +20,7 @@ import 'package:chameleonultragui/helpers/definitions.dart';
 import 'package:chameleonultragui/helpers/general.dart';
 import 'package:chameleonultragui/helpers/hf_capture_controller.dart';
 import 'package:chameleonultragui/helpers/mifare_classic/general.dart';
+import 'package:chameleonultragui/helpers/mifare_classic/hf_capture_recovery.dart';
 import 'package:chameleonultragui/helpers/module_versions.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -80,9 +81,16 @@ class ChameleonGUI extends StatelessWidget {
 class ChameleonGUIState extends ChangeNotifier {
   final SharedPreferencesProvider sharedPreferencesProvider;
   late final HfCaptureController hfCaptureController;
+  late final HfCaptureMifareRecoveryController
+  hfCaptureMifareRecoveryController;
 
   ChameleonGUIState(this.sharedPreferencesProvider) {
     hfCaptureController = HfCaptureController(sharedPreferencesProvider);
+    hfCaptureMifareRecoveryController = HfCaptureMifareRecoveryController(
+      sharedPreferencesProvider,
+      hfCaptureController,
+      onKeysSaved: changesMade,
+    );
   }
 
   SharedPreferencesProvider? _sharedPreferencesProvider;
@@ -409,7 +417,7 @@ class ChameleonGUIState extends ChangeNotifier {
         }
       }
 
-      if (restoreError != null) {
+      if (restoreError != null && activeConnector.connected) {
         Object? disconnectError;
         try {
           await disconnect(manual: true);
@@ -775,6 +783,7 @@ class ChameleonGUIState extends ChangeNotifier {
       activeCommunicator.dispose('Application state disposed');
     }
     communicator = null;
+    hfCaptureMifareRecoveryController.dispose();
     hfCaptureController.dispose();
     final activeConnector = connector;
     connector = null;

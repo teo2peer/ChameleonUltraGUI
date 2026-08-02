@@ -370,6 +370,11 @@ int _u64(Uint8List data, int offset) {
 
 int hfCaptureSequenceDistance(int from, int to) => (to - from) & 0xFFFFFFFF;
 
+String hfCaptureRawHex(HfCaptureRecord record) => record.data
+    .map((byte) => byte.toRadixString(16).padLeft(2, '0'))
+    .join()
+    .toUpperCase();
+
 int hfCaptureCrc32(Uint8List data) {
   var crc = 0xFFFFFFFF;
   for (final byte in data) {

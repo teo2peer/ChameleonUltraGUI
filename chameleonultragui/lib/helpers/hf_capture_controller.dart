@@ -13,6 +13,32 @@ import 'package:path_provider/path_provider.dart';
 
 typedef HfCaptureDirectoryProvider = Future<Directory> Function();
 
+class HfCaptureRecordBatch {
+  const HfCaptureRecordBatch({
+    required this.sessionId,
+    required this.bootId,
+    required this.startToken,
+    required this.mode,
+    required this.pageIndex,
+    required this.deliveryToken,
+    required this.records,
+    required this.replayed,
+  });
+
+  final int sessionId;
+  final int bootId;
+  final int startToken;
+  final HfCaptureMode mode;
+  final int pageIndex;
+  final int deliveryToken;
+  final List<HfCaptureRecord> records;
+  final bool replayed;
+
+  String get sessionIdentity => '$bootId:$sessionId:$startToken';
+
+  String get batchIdentity => '$sessionIdentity:$pageIndex:$deliveryToken';
+}
+
 class _IncompleteCapture {
   const _IncompleteCapture({
     required this.session,
@@ -52,6 +78,8 @@ class HfCaptureController extends ChangeNotifier {
 
   final SharedPreferencesProvider _preferences;
   final HfCaptureDirectoryProvider _directoryProvider;
+  final StreamController<HfCaptureRecordBatch> _persistedRecordBatches =
+      StreamController<HfCaptureRecordBatch>.broadcast();
 
   ChameleonCommunicator? _communicator;
   StreamSubscription<ChameleonMessage>? _eventSubscription;
@@ -96,6 +124,8 @@ class HfCaptureController extends ChangeNotifier {
   HfCaptureMetadata? get metadata => _metadata;
   CardData? get lastReaderCard => _lastReaderCard;
   List<HfCaptureRecord> get recentRecords => List.unmodifiable(_recentRecords);
+  Stream<HfCaptureRecordBatch> get persistedRecordBatches =>
+      _persistedRecordBatches.stream;
 
   Future<void> attach(ChameleonCommunicator communicator) async {
     if (_disposed) return;
@@ -901,6 +931,7 @@ class HfCaptureController extends ChangeNotifier {
     int? lastDeliveryToken;
     var missingRecords = 0;
     var persistedBytes = 0;
+    final replayedBatches = <HfCaptureRecordBatch>[];
     for (
       var expectedIndex = 0;
       expectedIndex < entries.length;
@@ -944,6 +975,23 @@ class HfCaptureController extends ChangeNotifier {
       }
       persistedBytes += bytes.length;
       lastDeliveryToken = page.deliveryToken;
+      replayedBatches.add(
+        HfCaptureRecordBatch(
+          sessionId: sessionId,
+          bootId: bootId,
+          startToken: startToken,
+          mode: mode,
+          pageIndex: entry.index,
+          deliveryToken: page.deliveryToken,
+          records: page.records,
+          replayed: true,
+        ),
+      );
+    }
+    if (!_disposed) {
+      for (final batch in replayedBatches) {
+        _persistedRecordBatches.add(batch);
+      }
     }
     return (
       previousSequence,
@@ -1039,7 +1087,8 @@ class HfCaptureController extends ChangeNotifier {
         }
         final nextGapEvidence = _validateNextPage(page);
         _metadata = page.metadata;
-        await _persistPage(session, page, _nextPageIndex);
+        final pageIndex = _nextPageIndex;
+        await _persistPage(session, page, pageIndex);
         if (!_connectionMatches(communicator, generation)) return;
         _lastPersistedSequence = page.lastSequence;
         _lastPersistedDeliveryToken = page.deliveryToken;
@@ -1053,6 +1102,18 @@ class HfCaptureController extends ChangeNotifier {
             _recentRecords.length - _recentRecordLimit,
           );
         }
+        _persistedRecordBatches.add(
+          HfCaptureRecordBatch(
+            sessionId: sessionId,
+            bootId: bootId,
+            startToken: startToken,
+            mode: mode,
+            pageIndex: pageIndex,
+            deliveryToken: page.deliveryToken,
+            records: page.records,
+            replayed: false,
+          ),
+        );
         _notify();
       }
     } catch (error) {
@@ -1448,6 +1509,7 @@ class HfCaptureController extends ChangeNotifier {
     unawaited(_eventSubscription?.cancel());
     _eventSubscription = null;
     _communicator = null;
+    unawaited(_persistedRecordBatches.close());
     super.dispose();
   }
 }

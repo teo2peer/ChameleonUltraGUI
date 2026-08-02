@@ -11,8 +11,9 @@ class UndercoverMenuScreen {
     required this.subtitle,
     required this.icon,
     required this.accent,
-    required this.apps,
-  });
+    this.apps = const [],
+    this.dashboardBuilder,
+  }) : assert(apps.length > 0 || dashboardBuilder != null);
 
   final String id;
   final String title;
@@ -20,6 +21,7 @@ class UndercoverMenuScreen {
   final IconData icon;
   final Color accent;
   final List<UndercoverAppEntry> apps;
+  final WidgetBuilder? dashboardBuilder;
 }
 
 class UndercoverAppEntry {
@@ -227,44 +229,47 @@ class _UndercoverLauncherState extends State<UndercoverLauncher> {
             child: Material(
               key: const Key('undercover-launcher'),
               color: const Color(0xFF171A35),
-              child: Stack(
-                fit: StackFit.expand,
-                children: [
-                  const _SpringBoardWallpaper(),
-                  SafeArea(
-                    child: Column(
-                      children: [
-                        _IOSStatusBar(
-                          connected: widget.connected,
-                          now: DateTime.now(),
-                          onExitRequested: widget.onExitRequested,
-                        ),
-                        Expanded(
-                          child: reduceMotion
-                              ? content
-                              : AnimatedSwitcher(
-                                  duration: const Duration(milliseconds: 280),
-                                  switchInCurve: Curves.easeOutCubic,
-                                  switchOutCurve: Curves.easeInCubic,
-                                  transitionBuilder: (child, animation) {
-                                    return FadeTransition(
-                                      opacity: animation,
-                                      child: ScaleTransition(
-                                        scale: Tween<double>(
-                                          begin: 0.97,
-                                          end: 1,
-                                        ).animate(animation),
-                                        child: child,
-                                      ),
-                                    );
-                                  },
-                                  child: content,
-                                ),
-                        ),
-                      ],
+              child: Scaffold(
+                backgroundColor: Colors.transparent,
+                body: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    const _SpringBoardWallpaper(),
+                    SafeArea(
+                      child: Column(
+                        children: [
+                          _IOSStatusBar(
+                            connected: widget.connected,
+                            now: DateTime.now(),
+                            onExitRequested: widget.onExitRequested,
+                          ),
+                          Expanded(
+                            child: reduceMotion
+                                ? content
+                                : AnimatedSwitcher(
+                                    duration: const Duration(milliseconds: 280),
+                                    switchInCurve: Curves.easeOutCubic,
+                                    switchOutCurve: Curves.easeInCubic,
+                                    transitionBuilder: (child, animation) {
+                                      return FadeTransition(
+                                        opacity: animation,
+                                        child: ScaleTransition(
+                                          scale: Tween<double>(
+                                            begin: 0.97,
+                                            end: 1,
+                                          ).animate(animation),
+                                          child: child,
+                                        ),
+                                      );
+                                    },
+                                    child: content,
+                                  ),
+                          ),
+                        ],
+                      ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
             ),
           ),
@@ -309,33 +314,45 @@ class _SpringBoard extends StatelessWidget {
     }
     final index = selectedIndex.clamp(0, screens.length - 1);
     final screen = screens[index];
+    final usesDashboard = screen.dashboardBuilder != null;
 
     return Column(
       children: [
         _BoardHeading(screen: screen),
-        Padding(
-          padding: const EdgeInsets.fromLTRB(18, 8, 18, 10),
-          child: _IOSSearchField(
-            key: const Key('undercover-app-search'),
-            controller: searchController,
-            hintText: 'Search ${screen.title}',
-            query: query,
-            onChanged: onQueryChanged,
+        if (!usesDashboard)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(18, 8, 18, 10),
+            child: _IOSSearchField(
+              key: const Key('undercover-app-search'),
+              controller: searchController,
+              hintText: 'Search ${screen.title}',
+              query: query,
+              onChanged: onQueryChanged,
+            ),
           ),
-        ),
         Expanded(
           child: PageView.builder(
             key: const Key('undercover-page-view'),
             controller: pageController,
             onPageChanged: onPageChanged,
             itemCount: screens.length,
-            itemBuilder: (context, pageIndex) => _AppGrid(
-              key: Key('undercover-screen-${screens[pageIndex].id}'),
-              screen: screens[pageIndex],
-              connected: connected,
-              query: query,
-              onAppSelected: onAppSelected,
-            ),
+            itemBuilder: (context, pageIndex) {
+              final page = screens[pageIndex];
+              final dashboardBuilder = page.dashboardBuilder;
+              if (dashboardBuilder != null) {
+                return KeyedSubtree(
+                  key: Key('undercover-dashboard-${page.id}'),
+                  child: dashboardBuilder(context),
+                );
+              }
+              return _AppGrid(
+                key: Key('undercover-screen-${page.id}'),
+                screen: page,
+                connected: connected,
+                query: query,
+                onAppSelected: onAppSelected,
+              );
+            },
           ),
         ),
         _PageIndicator(
@@ -1352,34 +1369,44 @@ class _SpringBoardWallpaper extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const DecoratedBox(
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [Color(0xFF101D3D), Color(0xFF4C3D79), Color(0xFFB45F7D)],
-          stops: [0, 0.55, 1],
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        const DecoratedBox(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [Color(0xFF101D3D), Color(0xFF4C3D79), Color(0xFFB45F7D)],
+              stops: [0, 0.55, 1],
+            ),
+          ),
         ),
-      ),
-      child: Stack(
-        children: [
-          Positioned(
-            top: -150,
-            right: -110,
-            child: _WallpaperGlow(size: 340, color: Color(0x6675D7FF)),
+        Image.asset(
+          'assets/iosBackground.png',
+          fit: BoxFit.cover,
+          errorBuilder: (_, _, _) => const SizedBox.shrink(),
+        ),
+        const DecoratedBox(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: [Color(0x33000000), Color(0x22000000), Color(0x66000000)],
+            ),
           ),
-          Positioned(
-            top: 230,
-            left: -150,
-            child: _WallpaperGlow(size: 360, color: Color(0x557C5CFC)),
-          ),
-          Positioned(
-            bottom: -130,
-            right: -90,
-            child: _WallpaperGlow(size: 350, color: Color(0x66FF8A9E)),
-          ),
-        ],
-      ),
+        ),
+        const Positioned(
+          top: -150,
+          right: -110,
+          child: _WallpaperGlow(size: 340, color: Color(0x4475D7FF)),
+        ),
+        const Positioned(
+          bottom: -130,
+          right: -90,
+          child: _WallpaperGlow(size: 350, color: Color(0x44FF8A9E)),
+        ),
+      ],
     );
   }
 }
