@@ -27,13 +27,13 @@ void main() {
       observedRecords: 1,
       usedBytes: record.length,
     );
-    final page = Uint8List.fromList([
+    final page = _withPageCrc([
       ...metadata,
       ..._u32(7),
       ..._u32(8),
       ..._u16(1),
       ..._u16(record.length),
-      ..._u32(_crc32(record)),
+      ..._u32(0),
       ..._u64(7),
       ...record,
     ]);
@@ -79,7 +79,7 @@ void main() {
       observedRecords: 1,
       usedBytes: 23,
     );
-    final page = Uint8List.fromList([
+    final page = _withPageCrc([
       ...metadata,
       ..._u32(0),
       ..._u32(0),
@@ -124,6 +124,22 @@ void main() {
 
     expect(() => HfCapturePage.decode(page), throwsFormatException);
   });
+
+  test('accepts a gap larger than half the sequence space', () {
+    final records = Uint8List.fromList([..._record(0), ..._record(0x80000001)]);
+    final page = _page(
+      records: records,
+      firstSequence: 0,
+      nextSequence: 0x80000002,
+      recordCount: 2,
+      droppedRecords: 0x80000000,
+    );
+
+    expect(
+      HfCapturePage.decode(page).records.map((record) => record.sequence),
+      [0, 0x80000001],
+    );
+  });
 }
 
 List<int> _record(int sequence) => [
@@ -145,7 +161,7 @@ Uint8List _page({
   required int nextSequence,
   required int recordCount,
   required int droppedRecords,
-}) => Uint8List.fromList([
+}) => _withPageCrc([
   ..._metadata(
     firstSequence: firstSequence,
     nextSequence: nextSequence,
@@ -158,7 +174,7 @@ Uint8List _page({
   ..._u32(nextSequence),
   ..._u16(recordCount),
   ..._u16(records.length),
-  ..._u32(hfCaptureCrc32(records)),
+  ..._u32(0),
   ..._u64(7),
   ...records,
 ]);
@@ -201,13 +217,8 @@ List<int> _u64(int value) => [
   for (var shift = 56; shift >= 0; shift -= 8) (value >> shift) & 0xFF,
 ];
 
-int _crc32(Uint8List data) {
-  var crc = 0xFFFFFFFF;
-  for (final byte in data) {
-    crc ^= byte;
-    for (var bit = 0; bit < 8; bit++) {
-      crc = (crc >> 1) ^ ((crc & 1) == 0 ? 0 : 0xEDB88320);
-    }
-  }
-  return (~crc) & 0xFFFFFFFF;
+Uint8List _withPageCrc(List<int> values) {
+  final page = Uint8List.fromList(values);
+  page.setRange(60, 64, _u32(hfCaptureCrc32(page)));
+  return page;
 }

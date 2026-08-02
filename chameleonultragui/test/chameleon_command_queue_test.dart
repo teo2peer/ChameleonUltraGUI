@@ -1648,30 +1648,7 @@ void main() {
           if (id == ChameleonCommand.getDeviceCapabilities.value) {
             await serial.emitCapabilities();
           } else if (id == ChameleonCommand.hfCaptureGet.value) {
-            await serial.emit(
-              id,
-              data: [
-                ..._hfCaptureMetadata(sessionId),
-                ..._u32Bytes(0),
-                ..._u32Bytes(0),
-                0,
-                0,
-                0,
-                0,
-                0,
-                0,
-                0,
-                0,
-                0,
-                0,
-                0,
-                0,
-                0,
-                0,
-                0,
-                0,
-              ],
-            );
+            await serial.emit(id, data: _hfCaptureEmptyPage(sessionId));
           } else if (id == ChameleonCommand.hfCaptureStop.value) {
             await serial.emit(
               id,
@@ -1745,6 +1722,88 @@ void main() {
       ]);
     },
   );
+
+  test('HF capture STATUS clears an uncertain START barrier', () async {
+    var starts = 0;
+    final serial = _FakeSerial(
+      onCommand: (serial, id) async {
+        if (id == ChameleonCommand.getDeviceCapabilities.value) {
+          await serial.emitCapabilities();
+        } else if (id == ChameleonCommand.hfCaptureStart.value) {
+          starts++;
+          if (starts > 1) {
+            await serial.emit(
+              id,
+              data: _hfCaptureMetadata(0x10203040, mode: 1),
+            );
+          }
+        } else if (id == ChameleonCommand.hfCaptureStatus.value) {
+          await serial.emit(id, data: _hfCaptureMetadata(0x10203040, mode: 1));
+        }
+      },
+    );
+    final communicator = _communicator(serial);
+
+    await expectLater(
+      communicator.hfCaptureStart(
+        HfCaptureMode.passive,
+        startToken: 0x12345678,
+        timeout: const Duration(milliseconds: 10),
+      ),
+      throwsA(isA<ChameleonResponseTimeoutException>()),
+    );
+    await communicator.hfCaptureStatus(
+      0,
+      startToken: 0x12345678,
+      timeout: const Duration(milliseconds: 100),
+    );
+    final recovered = await communicator.hfCaptureStart(
+      HfCaptureMode.passive,
+      startToken: 0x12345678,
+      timeout: const Duration(milliseconds: 100),
+    );
+
+    expect(recovered.sessionId, 0x10203040);
+    expect(starts, 2);
+  });
+
+  test('HF capture STOP clears an uncertain GET barrier', () async {
+    var gets = 0;
+    final serial = _FakeSerial(
+      onCommand: (serial, id) async {
+        if (id == ChameleonCommand.getDeviceCapabilities.value) {
+          await serial.emitCapabilities();
+        } else if (id == ChameleonCommand.hfCaptureGet.value) {
+          gets++;
+          if (gets > 1) {
+            await serial.emit(id, data: _hfCaptureEmptyPage(0x10203040));
+          }
+        } else if (id == ChameleonCommand.hfCaptureStop.value) {
+          await serial.emit(id, data: _hfCaptureMetadata(0x10203040, state: 2));
+        }
+      },
+    );
+    final communicator = _communicator(serial);
+
+    await expectLater(
+      communicator.hfCaptureGet(
+        0x10203040,
+        timeout: const Duration(milliseconds: 10),
+      ),
+      throwsA(isA<ChameleonResponseTimeoutException>()),
+    );
+    await communicator.hfCaptureStop(
+      0x10203040,
+      timeout: const Duration(milliseconds: 100),
+    );
+    final page = await communicator.hfCaptureGet(
+      0x10203040,
+      timeout: const Duration(milliseconds: 100),
+    );
+
+    expect(page.records, isEmpty);
+    expect(gets, 2);
+  });
 }
 
 List<int> _hfCaptureMetadata(
@@ -1771,6 +1830,32 @@ List<int> _hfCaptureMetadata(
   ..._u32Bytes(7),
   ..._u32Bytes(startToken),
 ];
+
+Uint8List _hfCaptureEmptyPage(int sessionId) {
+  final page = Uint8List.fromList([
+    ..._hfCaptureMetadata(sessionId),
+    ..._u32Bytes(0),
+    ..._u32Bytes(0),
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+  ]);
+  page.setRange(60, 64, _u32Bytes(hfCaptureCrc32(page)));
+  return page;
+}
 
 List<int> _u32Bytes(int value) => [
   (value >> 24) & 0xFF,

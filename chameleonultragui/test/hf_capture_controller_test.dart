@@ -563,7 +563,7 @@ class _CaptureSerial extends AbstractSerial {
     return true;
   }
 
-  Uint8List _pageWithRecord() => Uint8List.fromList([
+  Uint8List _pageWithRecord() => _withPageCrc([
     ..._metadata(
       state: stopped ? 2 : 1,
       firstSequence: recordSequence,
@@ -577,12 +577,12 @@ class _CaptureSerial extends AbstractSerial {
     ..._u32((recordSequence + 1) & 0xFFFFFFFF),
     ..._u16(1),
     ..._u16(record.length),
-    ..._u32(_crc32(record)),
+    ..._u32(0),
     ..._u64(11),
     ...record,
   ]);
 
-  Uint8List _emptyPage() => Uint8List.fromList([
+  Uint8List _emptyPage() => _withPageCrc([
     ..._metadata(
       state: stopped ? 2 : 1,
       firstSequence: (recordSequence + 1) & 0xFFFFFFFF,
@@ -670,15 +670,10 @@ List<int> _u64(int value) => [
   for (var shift = 56; shift >= 0; shift -= 8) (value >> shift) & 0xFF,
 ];
 
-int _crc32(Uint8List data) {
-  var crc = 0xFFFFFFFF;
-  for (final byte in data) {
-    crc ^= byte;
-    for (var bit = 0; bit < 8; bit++) {
-      crc = (crc >> 1) ^ ((crc & 1) == 0 ? 0 : 0xEDB88320);
-    }
-  }
-  return (~crc) & 0xFFFFFFFF;
+Uint8List _withPageCrc(List<int> values) {
+  final page = Uint8List.fromList(values);
+  page.setRange(60, 64, _u32(hfCaptureCrc32(page)));
+  return page;
 }
 
 int _readU32(Uint8List data, int offset) =>

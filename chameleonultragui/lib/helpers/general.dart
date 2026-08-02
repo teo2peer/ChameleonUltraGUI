@@ -676,7 +676,14 @@ Future<(HFCardInfo, MifareClassicInfo, MifareUltralightInfo)> readHFInfo(
     }
 
     hfInfo.uid = bytesToHexSpace(card.uid);
-    mfcInfo.recovery?.cardUid = bytesToHex(card.uid);
+    final recovery = mfcInfo.recovery;
+    recovery?.cardUid = bytesToHex(card.uid);
+    recovery?.cardIdentity = CardData(
+      uid: Uint8List.fromList(card.uid),
+      sak: card.sak,
+      atqa: Uint8List.fromList(card.atqa),
+      ats: Uint8List.fromList(card.ats),
+    );
     hfInfo.sak = card.sak.toRadixString(16).padLeft(2, '0').toUpperCase();
     hfInfo.atqa = bytesToHexSpace(card.atqa);
     hfInfo.ats = (card.ats.isNotEmpty)

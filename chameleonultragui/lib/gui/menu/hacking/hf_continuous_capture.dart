@@ -2,6 +2,7 @@ import 'package:chameleonultragui/helpers/general.dart';
 import 'package:chameleonultragui/helpers/hf_capture.dart';
 import 'package:chameleonultragui/helpers/hf_capture_controller.dart';
 import 'package:chameleonultragui/main.dart';
+import 'package:chameleonultragui/generated/i18n/app_localizations.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -73,8 +74,9 @@ class _HfContinuousCapturePageState extends State<HfContinuousCapturePage> {
   Widget build(BuildContext context) {
     final appState = context.read<ChameleonGUIState>();
     final controller = appState.hfCaptureController;
+    final localizations = AppLocalizations.of(context)!;
     return Scaffold(
-      appBar: AppBar(title: const Text('Continuous HF capture')),
+      appBar: AppBar(title: Text(localizations.hf_capture_title)),
       body: ListenableBuilder(
         listenable: controller,
         builder: (context, _) => ListView(
@@ -89,12 +91,10 @@ class _HfContinuousCapturePageState extends State<HfContinuousCapturePage> {
               const SizedBox(height: 12),
               Card(
                 color: Theme.of(context).colorScheme.errorContainer,
-                child: const ListTile(
-                  leading: Icon(Icons.warning_amber),
-                  title: Text('Device buffer overflow detected'),
-                  subtitle: Text(
-                    'The dropped-record counter is authoritative. Persisted pages remain CRC-validated and ordered.',
-                  ),
+                child: ListTile(
+                  leading: const Icon(Icons.warning_amber),
+                  title: Text(localizations.hf_capture_overflow_title),
+                  subtitle: Text(localizations.hf_capture_overflow_description),
                 ),
               ),
             ],
@@ -104,10 +104,10 @@ class _HfContinuousCapturePageState extends State<HfContinuousCapturePage> {
                 color: Theme.of(context).colorScheme.errorContainer,
                 child: ListTile(
                   leading: const Icon(Icons.error_outline),
-                  title: const Text('Capture warning'),
+                  title: Text(localizations.hf_capture_warning),
                   subtitle: SelectableText(controller.error!),
                   trailing: IconButton(
-                    tooltip: 'Dismiss',
+                    tooltip: localizations.hf_capture_dismiss,
                     onPressed: controller.clearError,
                     icon: const Icon(Icons.close),
                   ),
@@ -125,23 +125,24 @@ class _HfContinuousCapturePageState extends State<HfContinuousCapturePage> {
   }
 
   Widget _buildHero(BuildContext context, HfCaptureController controller) {
+    final localizations = AppLocalizations.of(context)!;
     final colorScheme = Theme.of(context).colorScheme;
     final active = controller.isRunning;
     final draining = !active && controller.needsDrain;
     final finalizing = !active && !draining && controller.needsFinalize;
     final statusLabel = !controller.isConnected
-        ? 'DISCONNECTED'
+        ? localizations.hf_capture_status_disconnected
         : active
-        ? 'CAPTURING'
+        ? localizations.hf_capture_status_capturing
         : draining
-        ? 'DRAINING'
+        ? localizations.hf_capture_status_draining
         : finalizing
-        ? 'FINALIZING'
+        ? localizations.hf_capture_status_finalizing
         : controller.isSupported == false
-        ? 'UNSUPPORTED'
+        ? localizations.hf_capture_status_unsupported
         : !controller.canStart
-        ? 'BLOCKED'
-        : 'READY';
+        ? localizations.hf_capture_status_blocked
+        : localizations.hf_capture_status_ready;
     return DecoratedBox(
       decoration: BoxDecoration(
         gradient: LinearGradient(
@@ -183,15 +184,13 @@ class _HfContinuousCapturePageState extends State<HfContinuousCapturePage> {
                 ),
                 const SizedBox(height: 10),
                 Text(
-                  'Loss-aware ISO14443-A evidence stream',
+                  localizations.hf_capture_stream_title,
                   style: Theme.of(context).textTheme.headlineSmall?.copyWith(
                     fontWeight: FontWeight.w700,
                   ),
                 ),
                 const SizedBox(height: 6),
-                const Text(
-                  'Frames are written to app storage before acknowledgement. USB and BLE use the same sequence and CRC checks.',
-                ),
+                Text(localizations.hf_capture_stream_description),
               ],
             );
             final actions = Wrap(
@@ -212,7 +211,7 @@ class _HfContinuousCapturePageState extends State<HfContinuousCapturePage> {
                           child: CircularProgressIndicator(strokeWidth: 2),
                         )
                       : const Icon(Icons.play_arrow),
-                  label: const Text('Start capture'),
+                  label: Text(localizations.hf_capture_start),
                 ),
                 OutlinedButton.icon(
                   onPressed:
@@ -220,7 +219,7 @@ class _HfContinuousCapturePageState extends State<HfContinuousCapturePage> {
                       ? null
                       : () => _stop(controller),
                   icon: const Icon(Icons.stop),
-                  label: const Text('Stop and drain'),
+                  label: Text(localizations.hf_capture_stop),
                 ),
                 if (!active &&
                     (controller.needsDrain || controller.needsFinalize))
@@ -231,7 +230,7 @@ class _HfContinuousCapturePageState extends State<HfContinuousCapturePage> {
                         ? null
                         : () => _retryDrain(controller),
                     icon: const Icon(Icons.refresh),
-                    label: const Text('Retry drain'),
+                    label: Text(localizations.hf_capture_retry),
                   ),
                 if (active && controller.metadata?.mode == HfCaptureMode.reader)
                   OutlinedButton.icon(
@@ -239,7 +238,7 @@ class _HfContinuousCapturePageState extends State<HfContinuousCapturePage> {
                         ? null
                         : () => _probe(controller),
                     icon: const Icon(Icons.contactless),
-                    label: const Text('Probe card'),
+                    label: Text(localizations.hf_capture_probe),
                   ),
               ],
             );
@@ -263,16 +262,16 @@ class _HfContinuousCapturePageState extends State<HfContinuousCapturePage> {
   }
 
   Widget _buildModeSelector(HfCaptureController controller) {
+    final localizations = AppLocalizations.of(context)!;
     final selectedMode = controller.canStart
         ? _mode
         : controller.metadata?.mode ?? _mode;
     final descriptions = switch (selectedMode) {
       HfCaptureMode.emulation =>
-        'Capture reader commands and emulated-card responses. Best for complete authentication transcripts.',
+        localizations.hf_capture_mode_emulation_description,
       HfCaptureMode.passive =>
-        'Listen without transmitting. On one Ultra this guarantees reader-to-card traffic only.',
-      HfCaptureMode.reader =>
-        'Trace Ultra reader exchanges with an external card. Use Probe card here or run another reader operation while capture remains active.',
+        localizations.hf_capture_mode_passive_description,
+      HfCaptureMode.reader => localizations.hf_capture_mode_reader_description,
     };
     return Card(
       child: Padding(
@@ -281,28 +280,28 @@ class _HfContinuousCapturePageState extends State<HfContinuousCapturePage> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              'Acquisition mode',
+              localizations.hf_capture_mode_title,
               style: Theme.of(context).textTheme.titleMedium,
             ),
             const SizedBox(height: 12),
             SingleChildScrollView(
               scrollDirection: Axis.horizontal,
               child: SegmentedButton<HfCaptureMode>(
-                segments: const [
+                segments: [
                   ButtonSegment(
                     value: HfCaptureMode.emulation,
-                    icon: Icon(Icons.nfc),
-                    label: Text('Emulation'),
+                    icon: const Icon(Icons.nfc),
+                    label: Text(localizations.hf_capture_mode_emulation),
                   ),
                   ButtonSegment(
                     value: HfCaptureMode.passive,
-                    icon: Icon(Icons.hearing),
-                    label: Text('Passive'),
+                    icon: const Icon(Icons.hearing),
+                    label: Text(localizations.hf_capture_mode_passive),
                   ),
                   ButtonSegment(
                     value: HfCaptureMode.reader,
-                    icon: Icon(Icons.sensors),
-                    label: Text('Reader'),
+                    icon: const Icon(Icons.sensors),
+                    label: Text(localizations.hf_capture_mode_reader),
                   ),
                 ],
                 selected: {selectedMode},
@@ -320,6 +319,7 @@ class _HfContinuousCapturePageState extends State<HfContinuousCapturePage> {
   }
 
   Widget _buildMetrics(BuildContext context, HfCaptureController controller) {
+    final localizations = AppLocalizations.of(context)!;
     final metadata = controller.metadata;
     final usage = metadata == null || metadata.capacityBytes == 0
         ? 0.0
@@ -330,32 +330,32 @@ class _HfContinuousCapturePageState extends State<HfContinuousCapturePage> {
       children: [
         _metric(
           context,
-          'Observed',
+          localizations.hf_capture_observed,
           '${metadata?.observedRecords ?? 0}',
           Icons.visibility,
         ),
         _metric(
           context,
-          'Buffered',
+          localizations.hf_capture_buffered,
           '${metadata?.storedRecords ?? 0}',
           Icons.memory,
         ),
         _metric(
           context,
-          'Dropped',
+          localizations.hf_capture_dropped,
           '${metadata?.droppedRecords ?? 0}',
           Icons.report,
         ),
         _metric(
           context,
-          'Persisted',
+          localizations.hf_capture_persisted,
           _formatBytes(controller.persistedBytes),
           Icons.save,
         ),
         if (controller.lastReaderCard != null)
           _metric(
             context,
-            'Last card',
+            localizations.hf_capture_last_card,
             bytesToHex(controller.lastReaderCard!.uid).toUpperCase(),
             Icons.contactless,
           ),
@@ -367,12 +367,15 @@ class _HfContinuousCapturePageState extends State<HfContinuousCapturePage> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text('Device buffer'),
+                  Text(localizations.hf_capture_device_buffer),
                   const SizedBox(height: 10),
                   LinearProgressIndicator(value: usage.clamp(0, 1)),
                   const SizedBox(height: 8),
                   Text(
-                    '${metadata?.usedBytes ?? 0} / ${metadata?.capacityBytes ?? 0} bytes',
+                    localizations.hf_capture_buffer_bytes(
+                      metadata?.usedBytes ?? 0,
+                      metadata?.capacityBytes ?? 0,
+                    ),
                     style: Theme.of(context).textTheme.bodySmall,
                   ),
                 ],
@@ -424,6 +427,10 @@ class _HfContinuousCapturePageState extends State<HfContinuousCapturePage> {
     HfCaptureController controller,
   ) {
     final preferences = appState.sharedPreferencesProvider;
+    final localizations = AppLocalizations.of(context)!;
+    final retention = preferences.getHfCaptureRetentionDays();
+    final retentionOptions = {7, 14, 30, 90, 180, 365, retention}.toList()
+      ..sort();
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -435,7 +442,7 @@ class _HfContinuousCapturePageState extends State<HfContinuousCapturePage> {
                 const Icon(Icons.folder_open),
                 const SizedBox(width: 8),
                 Text(
-                  'Durable session storage',
+                  localizations.hf_capture_storage_title,
                   style: Theme.of(context).textTheme.titleMedium,
                 ),
               ],
@@ -443,25 +450,25 @@ class _HfContinuousCapturePageState extends State<HfContinuousCapturePage> {
             const SizedBox(height: 10),
             SelectableText(
               controller.captureDirectory ??
-                  'A directory is created when capture starts.',
+                  localizations.hf_capture_storage_pending,
               style: const TextStyle(fontFamily: 'RobotoMono'),
             ),
             const SizedBox(height: 12),
             Row(
               children: [
-                const Expanded(
-                  child: Text(
-                    'Retention applies to completed local capture directories. Active capture data and recovered keys are never exported with settings.',
-                  ),
+                Expanded(
+                  child: Text(localizations.hf_capture_retention_description),
                 ),
                 const SizedBox(width: 16),
                 DropdownButton<int>(
-                  value: preferences.getHfCaptureRetentionDays(),
-                  items: const [7, 14, 30, 90, 180, 365]
+                  value: retention,
+                  items: retentionOptions
                       .map(
                         (days) => DropdownMenuItem(
                           value: days,
-                          child: Text('$days days'),
+                          child: Text(
+                            localizations.hf_capture_retention_days(days),
+                          ),
                         ),
                       )
                       .toList(),
@@ -482,6 +489,7 @@ class _HfContinuousCapturePageState extends State<HfContinuousCapturePage> {
     BuildContext context,
     HfCaptureController controller,
   ) {
+    final localizations = AppLocalizations.of(context)!;
     final records = controller.recentRecords.reversed.take(100).toList();
     return Card(
       child: Padding(
@@ -490,18 +498,16 @@ class _HfContinuousCapturePageState extends State<HfContinuousCapturePage> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              'Recent evidence',
+              localizations.hf_capture_recent_title,
               style: Theme.of(context).textTheme.titleMedium,
             ),
             const SizedBox(height: 4),
-            const Text(
-              'Latest 100 records are shown; every validated page remains on disk.',
-            ),
+            Text(localizations.hf_capture_recent_description),
             const SizedBox(height: 12),
             if (records.isEmpty)
-              const Padding(
-                padding: EdgeInsets.symmetric(vertical: 24),
-                child: Center(child: Text('No frames captured yet')),
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 24),
+                child: Center(child: Text(localizations.hf_capture_no_frames)),
               )
             else
               for (final record in records) ...[
@@ -515,16 +521,19 @@ class _HfContinuousCapturePageState extends State<HfContinuousCapturePage> {
   }
 
   Widget _recordTile(BuildContext context, HfCaptureRecord record) {
+    final localizations = AppLocalizations.of(context)!;
     final direction = switch (record.direction) {
-      HfCaptureDirection.readerToCard => 'reader -> card',
-      HfCaptureDirection.cardToReader => 'card -> reader',
-      HfCaptureDirection.event => 'RF field event',
+      HfCaptureDirection.readerToCard =>
+        localizations.hf_capture_reader_to_card,
+      HfCaptureDirection.cardToReader =>
+        localizations.hf_capture_card_to_reader,
+      HfCaptureDirection.event => localizations.hf_capture_field_event,
     };
     final elapsedMs = (record.timestampTicks * 1000) ~/ 32768;
     final payload = record.type == HfCaptureRecordType.field
         ? (record.data.isNotEmpty && record.data.first == 1
-              ? 'field on'
-              : 'field off')
+              ? localizations.hf_capture_field_on
+              : localizations.hf_capture_field_off)
         : bytesToHexSpace(record.data).toUpperCase();
     return ListTile(
       dense: true,
@@ -545,7 +554,7 @@ class _HfContinuousCapturePageState extends State<HfContinuousCapturePage> {
       trailing: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 110),
         child: Text(
-          '${_formatElapsed(elapsedMs)}${record.hasRfError ? '\nRF error' : ''}',
+          '${_formatElapsed(elapsedMs)}${record.hasRfError ? '\n${localizations.hf_capture_rf_error}' : ''}',
           textAlign: TextAlign.end,
           style: TextStyle(
             color: record.hasRfError

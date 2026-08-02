@@ -87,7 +87,7 @@ void main() {
     }
   });
 
-  test('bounded batches discard verified keys when the card changes', () async {
+  test('bounded batches reject a different card with the same UID', () async {
     final communicator = _ChangingBulkKeyCard();
     final appState = ChameleonGUIState(SharedPreferencesProvider())
       ..log = Logger(level: Level.off)
@@ -606,6 +606,14 @@ class _BulkKeyCard extends ChameleonCommunicator {
 
   @override
   Future<bool> mf1Auth(int block, int keyType, Uint8List key) async => true;
+
+  @override
+  Future<CardData?> scan14443aTag() async => CardData(
+    uid: hexToBytes('01020304'),
+    sak: 0x08,
+    atqa: hexToBytes('0004'),
+    ats: Uint8List(0),
+  );
 }
 
 class _ChangingBulkKeyCard extends _BulkKeyCard {
@@ -615,8 +623,8 @@ class _ChangingBulkKeyCard extends _BulkKeyCard {
   Future<CardData?> scan14443aTag() async {
     identityChecks++;
     return CardData(
-      uid: hexToBytes(identityChecks == 1 ? '01020304' : 'AABBCCDD'),
-      sak: 0x08,
+      uid: hexToBytes('01020304'),
+      sak: identityChecks == 1 ? 0x08 : 0x18,
       atqa: hexToBytes('0004'),
       ats: Uint8List(0),
     );

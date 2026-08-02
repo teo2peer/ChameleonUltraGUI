@@ -206,6 +206,7 @@ class MifareClassicRecovery {
   double? keyCheckProgress;
   MifareClassicRecoveryActivity? activityProgress;
   String? cardUid;
+  CardData? cardIdentity;
   void Function() update;
   MifareClassicType mifareClassicType;
   bool isMifareClassicEV1;
@@ -226,6 +227,7 @@ class MifareClassicRecovery {
     this.mifareClassicType = MifareClassicType.none,
     this.isMifareClassicEV1 = false,
     this.cardUid,
+    this.cardIdentity,
     List<ChameleonKeyCheckmark>? checkMarks,
     List<Uint8List>? validKeys,
     List<Uint8List>? cardData,
@@ -355,11 +357,30 @@ class MifareClassicRecovery {
   }
 
   Future<void> _verifyCardIdentity() async {
-    final expectedUid = cardUid;
-    if (expectedUid == null) return;
     final card = await appState.communicator!.scan14443aTag();
     _throwIfCancelled();
-    if (card == null || bytesToHex(card.uid) != expectedUid) {
+    if (card == null) {
+      throw StateError('The card changed during MIFARE Classic recovery');
+    }
+    final expected = cardIdentity;
+    if (expected == null) {
+      final expectedUid = cardUid;
+      if (expectedUid != null && bytesToHex(card.uid) != expectedUid) {
+        throw StateError('The card changed during MIFARE Classic recovery');
+      }
+      cardUid ??= bytesToHex(card.uid);
+      cardIdentity = CardData(
+        uid: Uint8List.fromList(card.uid),
+        sak: card.sak,
+        atqa: Uint8List.fromList(card.atqa),
+        ats: Uint8List.fromList(card.ats),
+      );
+      return;
+    }
+    if (bytesToHex(card.uid) != bytesToHex(expected.uid) ||
+        card.sak != expected.sak ||
+        bytesToHex(card.atqa) != bytesToHex(expected.atqa) ||
+        bytesToHex(card.ats) != bytesToHex(expected.ats)) {
       throw StateError('The card changed during MIFARE Classic recovery');
     }
   }
@@ -373,8 +394,8 @@ class MifareClassicRecovery {
     if (targets.isEmpty || keys.isEmpty) return 0;
     if (communicator.supportsCommandSync(
           ChameleonCommand.mf1CheckKeysOfSectors,
-        ) ==
-        false) {
+        ) !=
+        true) {
       return null;
     }
 
@@ -386,6 +407,7 @@ class MifareClassicRecovery {
     var completedAttempts = 0;
     var foundCount = 0;
     _updateActivityProgress(activityLabel, completed: 0, total: totalAttempts);
+    await _verifyCardIdentity();
 
     for (final keyChunk in keys.partition(keyChunkSize)) {
       _throwIfCancelled();
