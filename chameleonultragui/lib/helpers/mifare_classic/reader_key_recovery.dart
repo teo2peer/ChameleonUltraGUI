@@ -198,6 +198,31 @@ List<ReaderKeyTargetRecords> groupReaderKeyRecords(
   return output;
 }
 
+String readerKeyTranscriptIdentity(DetectionResult detection) =>
+    '${detection.uid}:${detection.block}:${detection.type}:'
+    '${detection.isNested ? 1 : 0}:${detection.nt}:${detection.nr}:${detection.ar}';
+
+String readerKeyEvidenceFingerprint(Iterable<DetectionResult> detections) {
+  final identities =
+      detections.map(readerKeyTranscriptIdentity).toSet().toList()..sort();
+  return identities.join('|');
+}
+
+bool hasRecoverableReaderKeyEvidence(Iterable<DetectionResult> detections) {
+  final groups = groupReaderKeyRecords(detections);
+  if (groups.any((group) => group.records.length >= 2)) return true;
+
+  final recordsByUid = <int, int>{};
+  for (final group in groups) {
+    recordsByUid.update(
+      group.target.uid,
+      (count) => count + group.records.length,
+      ifAbsent: () => group.records.length,
+    );
+  }
+  return recordsByUid.values.any((count) => count >= 2);
+}
+
 Future<List<ReaderKeyRecoveryResult>> recoverReaderKeys({
   required Iterable<DetectionResult> detections,
   required ReaderMfkey32Solver solver,

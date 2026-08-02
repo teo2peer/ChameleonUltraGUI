@@ -34,6 +34,7 @@ ReaderKeyGuidance readerKeyGuidanceFor({
   required int detectionCount,
   required int resultCount,
   required int appliedTargetCount,
+  bool automatic = false,
 }) {
   if (!connected) {
     return const ReaderKeyGuidance(
@@ -89,6 +90,15 @@ ReaderKeyGuidance readerKeyGuidanceFor({
     );
   }
   if (appliedTargetCount > 0 && detectionCount > 0) {
+    if (automatic) {
+      return ReaderKeyGuidance(
+        step: ReaderKeyGuidanceStep.repeat,
+        tone: ReaderKeyGuidanceTone.success,
+        title: 'Reintentando automáticamente',
+        description:
+            '$appliedTargetCount clave(s) aplicada(s). Mantén el Chameleon en el lector; la emulación se reinicia sola para avanzar al siguiente sector.',
+      );
+    }
     return ReaderKeyGuidance(
       step: ReaderKeyGuidanceStep.repeat,
       tone: ReaderKeyGuidanceTone.success,
@@ -107,6 +117,15 @@ ReaderKeyGuidance readerKeyGuidanceFor({
     );
   }
   if (detectionCount > 0) {
+    if (automatic) {
+      return const ReaderKeyGuidance(
+        step: ReaderKeyGuidanceStep.processing,
+        tone: ReaderKeyGuidanceTone.warning,
+        title: 'Capturando automáticamente',
+        description:
+            'Mantén el Chameleon en el lector. La recuperación comienza en cuanto haya una pareja de autenticaciones útil.',
+      );
+    }
     return const ReaderKeyGuidance(
       step: ReaderKeyGuidanceStep.remove,
       tone: ReaderKeyGuidanceTone.warning,
@@ -118,8 +137,26 @@ ReaderKeyGuidance readerKeyGuidanceFor({
   return const ReaderKeyGuidance(
     step: ReaderKeyGuidanceStep.approach,
     tone: ReaderKeyGuidanceTone.warning,
-    title: 'Acerca al lector',
+    title: 'Acerca y mantén en el lector',
     description:
-        'Mantén el Chameleon cerca hasta que el lector intente autenticar; después aléjalo.',
+        'El Chameleon capturará, recuperará y reintentará automáticamente. Solo retíralo si el lector no vuelve a seleccionar.',
   );
 }
+
+bool readerKeyCaptureShouldAutoStop({
+  required bool automatic,
+  required bool armed,
+  required bool busy,
+  required bool recovering,
+  required int recoveredKeyCount,
+  required DateTime? lastEvidenceAt,
+  required DateTime now,
+  Duration idleTimeout = const Duration(seconds: 12),
+}) =>
+    automatic &&
+    armed &&
+    !busy &&
+    !recovering &&
+    recoveredKeyCount > 0 &&
+    lastEvidenceAt != null &&
+    now.difference(lastEvidenceAt) >= idleTimeout;

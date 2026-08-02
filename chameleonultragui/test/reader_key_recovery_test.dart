@@ -87,6 +87,28 @@ void main() {
   });
 
   group('reader-key recovery', () {
+    test('detects viable incremental evidence and stable fingerprints', () {
+      final first = record(block: 4, nt: 1, nr: 2, ar: 3);
+      final second = record(block: 5, nt: 2, nr: 4, ar: 6);
+
+      expect(hasRecoverableReaderKeyEvidence([first]), isFalse);
+      expect(hasRecoverableReaderKeyEvidence([first, second]), isTrue);
+      expect(
+        readerKeyEvidenceFingerprint([first, second]),
+        readerKeyEvidenceFingerprint([second, first, first]),
+      );
+    });
+
+    test('accepts cross-sector evidence sharing one UID', () {
+      expect(
+        hasRecoverableReaderKeyEvidence([
+          record(block: 4, nt: 1, nr: 2, ar: 3),
+          record(block: 8, nt: 2, nr: 4, ar: 6),
+        ]),
+        isTrue,
+      );
+    });
+
     test('rejects failure sentinel and continues to a later pair', () async {
       var calls = 0;
       final results = await recoverReaderKeys(

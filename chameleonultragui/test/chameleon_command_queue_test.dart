@@ -1333,6 +1333,34 @@ void main() {
     ]);
   });
 
+  test('downloads MF1 reader-key records incrementally', () async {
+    final serial = _FakeSerial(
+      onCommand: (serial, id) async {
+        if (id == ChameleonCommand.getDeviceCapabilities.value) {
+          await serial.emitCapabilities();
+        } else if (id == ChameleonCommand.mf1GetDetectionResult.value) {
+          await serial.emit(
+            id,
+            data: [..._detectionRecord(9, 0, 0x11223344, 7, 8, 9)],
+          );
+        }
+      },
+    );
+
+    final records = await _communicator(
+      serial,
+    ).getMf1DetectionRecords(6, startIndex: 5);
+
+    expect(records, hasLength(1));
+    expect(records.single.block, 9);
+    expect(serial.commandData[ChameleonCommand.mf1GetDetectionResult.value], [
+      0,
+      0,
+      0,
+      5,
+    ]);
+  });
+
   test('rejects malformed MF1 reader-key detection pages', () async {
     final serial = _FakeSerial(
       onCommand: (serial, id) async {

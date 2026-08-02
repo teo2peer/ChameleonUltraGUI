@@ -31,12 +31,18 @@ class _ReaderKeyCaptureSession {
   final ChameleonCommunicator communicator;
   final int workSlot;
   final bool autoApply;
+  final bool automatic;
+  final Mf1PrngType? restorePrngType;
+  final CardData? restoreRandomIdentity;
 
   const _ReaderKeyCaptureSession({
     required this.generation,
     required this.communicator,
     required this.workSlot,
     required this.autoApply,
+    required this.automatic,
+    this.restorePrngType,
+    this.restoreRandomIdentity,
   });
 }
 
@@ -70,6 +76,7 @@ class ReaderKeysPageState extends State<ReaderKeysPage>
 
   // Fixed UID mode
   final TextEditingController _uidCtl = TextEditingController();
+  CardData? _scannedCardIdentity;
 
   // Random mode
   String _currentRandomUid = '';
@@ -78,6 +85,7 @@ class ReaderKeysPageState extends State<ReaderKeysPage>
   bool armed = false;
   bool busy = false;
   bool recovering = false;
+  bool _automaticCapture = true;
   int detectionCount = 0;
   final List<Uint8List> keys = [];
   final Map<ReaderKeyTarget, ReaderKeyRecoveryResult> recoveryResults = {};
@@ -89,7 +97,13 @@ class ReaderKeysPageState extends State<ReaderKeysPage>
   int progress = -1;
   Timer? _pollTimer;
   bool _pollInProgress = false;
-  int _lastAutoRecoveryCount = 0;
+  final List<DetectionResult> _detectionLedger = [];
+  final Set<String> _detectionLedgerIds = {};
+  int _deviceDetectionCursor = 0;
+  int _sessionDetectionCount = 0;
+  String _lastRecoveryFingerprint = '';
+  DateTime? _lastEvidenceAt;
+  bool _automaticStopPending = false;
   int _captureGeneration = 0;
   _ReaderKeyCaptureSession? _captureSession;
   Future<void>? _activeRecovery;
@@ -123,7 +137,7 @@ class ReaderKeysPageState extends State<ReaderKeysPage>
     armed = false;
     busy = false;
     detectionCount = 0;
-    _lastAutoRecoveryCount = 0;
+    _resetDetectionLedger();
     _slots = [];
     _workSlots = [];
     _workSlot = null;
@@ -158,7 +172,7 @@ class ReaderKeysPageState extends State<ReaderKeysPage>
           for (final cleanup in <Future<void> Function()>[
             () => communicator.setMf1ReaderKeysAnim(false),
             () => communicator.setMf1DetectionStatus(false),
-            () => communicator.setMf1RandomUidMode(false),
+            () => _restoreCaptureConfiguration(captureSession),
           ]) {
             try {
               await cleanup();
@@ -216,6 +230,7 @@ class ReaderKeysPageState extends State<ReaderKeysPage>
                 communicator: communicator,
                 workSlot: _workSlot ?? 0,
                 autoApply: false,
+                automatic: false,
               )
             : null;
       });
@@ -236,16 +251,34 @@ class ReaderKeysPageState extends State<ReaderKeysPage>
           uid = bytesToHex(ac.uid).toUpperCase();
         } catch (_) {}
       }
+      final added = await _syncDetectionLedger(communicator, count);
       if (!mounted || !identical(_app.communicator, communicator)) return;
+      final fingerprint = readerKeyEvidenceFingerprint(_detectionLedger);
       final shouldRecover =
-          armed && count >= 2 && count > _lastAutoRecoveryCount;
+          armed &&
+          added > 0 &&
+          hasRecoverableReaderKeyEvidence(_detectionLedger) &&
+          fingerprint != _lastRecoveryFingerprint;
       setState(() {
-        detectionCount = count;
+        detectionCount = _sessionDetectionCount;
         _currentRandomUid = uid;
       });
       if (shouldRecover && !recovering) {
-        _lastAutoRecoveryCount = count;
         unawaited(_recoverKeys());
+      } else if (count >= 1000 && armed && !busy) {
+        unawaited(_stop());
+      } else if (!_automaticStopPending &&
+          readerKeyCaptureShouldAutoStop(
+            automatic: _automaticCapture,
+            armed: armed,
+            busy: busy,
+            recovering: recovering,
+            recoveredKeyCount: keys.length,
+            lastEvidenceAt: _lastEvidenceAt,
+            now: DateTime.now(),
+          )) {
+        _automaticStopPending = true;
+        unawaited(_stop());
       }
     } catch (_) {
     } finally {
@@ -290,6 +323,47 @@ class ReaderKeysPageState extends State<ReaderKeysPage>
     ).showSnackBar(SnackBar(content: Text(message)));
   }
 
+  Future<void> _scanSourceCard() async {
+    if (busy || armed || recovering) return;
+    final communicator = _app.communicator;
+    if (!_connected || communicator == null) return;
+    setState(() => busy = true);
+    try {
+      await communicator.setReaderDeviceMode(true);
+      final card = await communicator.scan14443aTag();
+      if (card == null) throw StateError('No ISO14443-A card detected');
+      if (!await communicator.detectMf1Support()) {
+        throw StateError('The detected card is not MIFARE Classic');
+      }
+      final identity = CardData(
+        uid: Uint8List.fromList(card.uid),
+        atqa: Uint8List.fromList(card.atqa),
+        sak: card.sak,
+        ats: Uint8List.fromList(card.ats),
+      );
+      if (!mounted || !identical(_app.communicator, communicator)) return;
+      setState(() {
+        _scannedCardIdentity = identity;
+        _uidCtl.text = bytesToHex(identity.uid).toUpperCase();
+        _workSlotType = identity.sak == 0x18
+            ? TagType.mifare4K
+            : TagType.mifare1K;
+        _resetWorkPreparation();
+        _tab.animateTo(1);
+      });
+      _showMessage(
+        'Card identity captured. Replace it with the Chameleon once; automatic retries need no repeated removal.',
+      );
+    } catch (error) {
+      _showMessage(error.toString());
+    } finally {
+      try {
+        await communicator.setReaderDeviceMode(false);
+      } catch (_) {}
+      if (mounted) setState(() => busy = false);
+    }
+  }
+
   String _randomUidHex([int bytes = 4]) {
     final rng = Random();
     final b = List<int>.generate(bytes, (_) => rng.nextInt(256));
@@ -305,6 +379,60 @@ class ReaderKeysPageState extends State<ReaderKeysPage>
     _preparedWorkUsesSyntheticManufacturerBlock = false;
     _captureSession = null;
     _appliedTargets.clear();
+  }
+
+  void _resetDetectionLedger() {
+    _detectionLedger.clear();
+    _detectionLedgerIds.clear();
+    _deviceDetectionCursor = 0;
+    _sessionDetectionCount = 0;
+    _lastRecoveryFingerprint = '';
+    _lastEvidenceAt = null;
+    _automaticStopPending = false;
+  }
+
+  Future<int> _syncDetectionLedger(
+    ChameleonCommunicator communicator,
+    int deviceCount,
+  ) async {
+    if (deviceCount < _deviceDetectionCursor) _deviceDetectionCursor = 0;
+    final startIndex = _deviceDetectionCursor;
+    if (deviceCount == startIndex) return 0;
+
+    final records = await communicator.getMf1DetectionRecords(
+      deviceCount,
+      startIndex: startIndex,
+    );
+    final expected = deviceCount - startIndex;
+    if (records.length != expected) {
+      throw FormatException(
+        'Incomplete MF1 detection range: ${records.length}/$expected',
+      );
+    }
+    _deviceDetectionCursor = deviceCount;
+    _sessionDetectionCount += records.length;
+    var added = 0;
+    for (final record in records) {
+      if (_detectionLedgerIds.add(readerKeyTranscriptIdentity(record))) {
+        _detectionLedger.add(record);
+        added++;
+      }
+    }
+    if (added > 0) _lastEvidenceAt = DateTime.now();
+    return added;
+  }
+
+  Future<void> _restoreCaptureConfiguration(
+    _ReaderKeyCaptureSession session,
+  ) async {
+    final communicator = session.communicator;
+    if (session.restoreRandomIdentity != null) {
+      await communicator.setMf1RandomUidMode(false);
+      await communicator.setMf1AntiCollision(session.restoreRandomIdentity!);
+    }
+    if (session.restorePrngType != null) {
+      await communicator.setMf1PrngType(session.restorePrngType!);
+    }
   }
 
   String _readerDictionaryName(DateTime value) {
@@ -562,6 +690,8 @@ class ReaderKeysPageState extends State<ReaderKeysPage>
     setState(() => busy = true);
     var detectionEnabled = false;
     var animationEnabled = false;
+    Mf1PrngType? restorePrngType;
+    CardData? restoreRandomIdentity;
     try {
       await _app.runSlotOperation(() async {
         if (_preparedWorkSignature != signature) {
@@ -607,6 +737,18 @@ class ReaderKeysPageState extends State<ReaderKeysPage>
           throw StateError(localizations.no_mifare_classic_slot_hint);
         }
 
+        if (communicator.supportsCommandSync(ChameleonCommand.mf1GetPrngType) !=
+            false) {
+          final prngType = await communicator.getMf1PrngType();
+          if (prngType == Mf1PrngType.static) {
+            restorePrngType = prngType;
+            await communicator.setMf1PrngType(Mf1PrngType.weak);
+          }
+        }
+        if (mode == 2) {
+          restoreRandomIdentity = await communicator.mf1GetAntiCollData();
+        }
+
         // UID handling per mode.
         if (mode == 2) {
           await communicator.setMf1RandomUidMode(true);
@@ -615,12 +757,16 @@ class ReaderKeysPageState extends State<ReaderKeysPage>
           if (mode == 1) {
             final uid = hexToBytes(fixedUid);
             final current = await communicator.mf1GetAntiCollData();
+            final scanned = _scannedCardIdentity;
+            final useScanned =
+                scanned != null &&
+                bytesToHex(scanned.uid).toUpperCase() == fixedUid;
             await communicator.setMf1AntiCollision(
               CardData(
                 uid: uid,
-                atqa: current.atqa,
-                sak: current.sak,
-                ats: current.ats,
+                atqa: useScanned ? scanned.atqa : current.atqa,
+                sak: useScanned ? scanned.sak : current.sak,
+                ats: useScanned ? scanned.ats : current.ats,
               ),
             );
             if (_preparedWorkUsesSyntheticManufacturerBlock &&
@@ -658,10 +804,13 @@ class ReaderKeysPageState extends State<ReaderKeysPage>
             communicator: communicator,
             workSlot: workSlot,
             autoApply: mode != 2,
+            automatic: _automaticCapture && mode != 2,
+            restorePrngType: restorePrngType,
+            restoreRandomIdentity: restoreRandomIdentity,
           );
           armed = true;
           detectionCount = 0;
-          _lastAutoRecoveryCount = 0;
+          _resetDetectionLedger();
           _sessionDictionaryId = null;
           _sessionDictionaryName = _readerDictionaryName(DateTime.now());
           _sessionKeyHexes.clear();
@@ -682,6 +831,16 @@ class ReaderKeysPageState extends State<ReaderKeysPage>
       try {
         await communicator.setMf1RandomUidMode(false);
       } catch (_) {}
+      if (restoreRandomIdentity != null) {
+        try {
+          await communicator.setMf1AntiCollision(restoreRandomIdentity!);
+        } catch (_) {}
+      }
+      if (restorePrngType != null) {
+        try {
+          await communicator.setMf1PrngType(restorePrngType!);
+        } catch (_) {}
+      }
       if (mounted &&
           sessionGeneration == _captureGeneration &&
           identical(_observedCommunicator, communicator)) {
@@ -708,7 +867,7 @@ class ReaderKeysPageState extends State<ReaderKeysPage>
       for (final cleanup in <Future<void> Function()>[
         () => communicator.setMf1ReaderKeysAnim(false),
         () => communicator.setMf1DetectionStatus(false),
-        () => communicator.setMf1RandomUidMode(false),
+        () => _restoreCaptureConfiguration(recoverySession),
       ]) {
         try {
           await cleanup();
@@ -734,6 +893,7 @@ class ReaderKeysPageState extends State<ReaderKeysPage>
         setState(() {
           armed = false;
           busy = false;
+          _captureSession = null;
         });
       }
     }
@@ -843,6 +1003,14 @@ class ReaderKeysPageState extends State<ReaderKeysPage>
         }
         await communicator.saveSlotData();
         _app.changesMade();
+        if (session.automatic) {
+          // Reloading the active slot briefly removes and re-presents the tag,
+          // prompting compatible readers to select it again without a physical tap.
+          await communicator.activateSlot(workSlot);
+          await communicator.setMf1DetectionStatus(true);
+          await communicator.setMf1ReaderKeysAnim(true);
+          _deviceDetectionCursor = 0;
+        }
       }
     });
     if (mounted) setState(() {});
@@ -859,6 +1027,7 @@ class ReaderKeysPageState extends State<ReaderKeysPage>
           communicator: communicator,
           workSlot: _workSlot ?? 0,
           autoApply: false,
+          automatic: false,
         );
     final active = _activeRecovery;
     final activeSession = _activeRecoverySession;
@@ -898,8 +1067,10 @@ class ReaderKeysPageState extends State<ReaderKeysPage>
     });
     try {
       final count = await communicator.getMf1DetectionCount();
-      final detections = await communicator.getMf1DetectionRecords(count);
+      await _syncDetectionLedger(communicator, count);
+      final detections = List<DetectionResult>.from(_detectionLedger);
       if (!isCurrentSession()) return;
+      _lastRecoveryFingerprint = readerKeyEvidenceFingerprint(detections);
       final results = await recoverReaderKeys(
         detections: detections,
         solver: (request) async {
@@ -1155,6 +1326,20 @@ class ReaderKeysPageState extends State<ReaderKeysPage>
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
+        SizedBox(
+          width: double.infinity,
+          child: FilledButton.icon(
+            onPressed: (armed || recovering || busy) ? null : _scanSourceCard,
+            icon: const Icon(Icons.contactless),
+            label: const Text('Scan card and configure automatically'),
+          ),
+        ),
+        const SizedBox(height: 6),
+        const Text(
+          'Read the card once, then place the Chameleon on the reader. Recovery, key loading and reader retries run automatically.',
+          style: TextStyle(fontSize: 12),
+        ),
+        const SizedBox(height: 12),
         SegmentedButton<_CardSource>(
           segments: [
             ButtonSegment(
@@ -1252,7 +1437,10 @@ class ReaderKeysPageState extends State<ReaderKeysPage>
               child: TextField(
                 controller: _uidCtl,
                 enabled: !armed && !recovering,
-                onChanged: (_) => _resetWorkPreparation(),
+                onChanged: (_) {
+                  _scannedCardIdentity = null;
+                  _resetWorkPreparation();
+                },
                 decoration: InputDecoration(
                   labelText: localizations.uid,
                   hintText: "DEADBEEF",
@@ -1387,6 +1575,17 @@ class ReaderKeysPageState extends State<ReaderKeysPage>
     var localizations = AppLocalizations.of(context)!;
     return Column(
       children: [
+        SwitchListTile.adaptive(
+          value: _automaticCapture,
+          onChanged: (armed || recovering || busy)
+              ? null
+              : (value) => setState(() => _automaticCapture = value),
+          title: const Text('Automatic recovery and reader retry'),
+          subtitle: const Text(
+            'Downloads only new transcripts, applies recovered keys, re-presents the emulated card and stops after convergence.',
+          ),
+          secondary: const Icon(Icons.auto_mode),
+        ),
         _buildCaptureGuidance(),
         const SizedBox(height: 16),
         Center(
@@ -1489,6 +1688,7 @@ class ReaderKeysPageState extends State<ReaderKeysPage>
       detectionCount: detectionCount,
       resultCount: recoveryResults.length,
       appliedTargetCount: _appliedTargets.length,
+      automatic: _automaticCapture && _tab.index != 2,
     );
     final colorScheme = Theme.of(context).colorScheme;
     final (background, foreground) = switch (guidance.tone) {

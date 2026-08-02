@@ -1177,8 +1177,15 @@ class ChameleonCommunicator {
   }
 
   Future<bool> getMf1RandomUidMode() async {
-    var resp = await sendCmd(ChameleonCommand.mf1GetRandomUidMode);
-    return resp!.data[0] == 1;
+    const command = ChameleonCommand.mf1GetRandomUidMode;
+    final resp = (await sendCmd(command))!;
+    if (resp.status != chameleonStatusSuccess) {
+      throw ChameleonCommandException(command, resp.status);
+    }
+    if (resp.data.length != 1 || resp.data[0] > 1) {
+      throw const FormatException('Invalid MF1 random UID response');
+    }
+    return resp.data[0] == 1;
   }
 
   Future<void> setMf1ReaderKeysAnim(bool enabled) async {
@@ -1193,15 +1200,25 @@ class ChameleonCommunicator {
     }
   }
 
-  Future<List<DetectionResult>> getMf1DetectionRecords(int count) async {
+  Future<List<DetectionResult>> getMf1DetectionRecords(
+    int count, {
+    int startIndex = 0,
+  }) async {
     if (count < 0 || count > 1000) {
       throw RangeError.range(count, 0, 1000, 'count');
     }
+    if (startIndex < 0 || startIndex > count) {
+      throw RangeError.range(startIndex, 0, count, 'startIndex');
+    }
     final records = <DetectionResult>[];
-    while (records.length < count) {
+    while (startIndex + records.length < count) {
       final command = ChameleonCommand.mf1GetDetectionResult;
       final request = Uint8List(4)
-        ..buffer.asByteData().setUint32(0, records.length, Endian.big);
+        ..buffer.asByteData().setUint32(
+          0,
+          startIndex + records.length,
+          Endian.big,
+        );
       final response = (await sendCmd(command, data: request))!;
       if (response.status != chameleonStatusSuccess) {
         throw ChameleonCommandException(command, response.status);
@@ -1213,7 +1230,7 @@ class ChameleonCommunicator {
 
       for (
         var offset = 0;
-        offset + 18 <= data.length && records.length < count;
+        offset + 18 <= data.length && startIndex + records.length < count;
         offset += 18
       ) {
         records.add(
