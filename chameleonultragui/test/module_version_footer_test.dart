@@ -26,12 +26,12 @@ void main() {
   test('capture, batching, and sync owners expose updated releases', () {
     expect(moduleReleaseFor(ModuleId.dataSync).version, '1.2.0');
     expect(moduleReleaseFor(ModuleId.captureAndSniffing).version, '1.1.0');
-    expect(moduleReleaseFor(ModuleId.mifareClassicAttacks).version, '1.1.0');
-    expect(moduleReleaseFor(ModuleId.dictionaryCheck).version, '1.1.0');
+    expect(moduleReleaseFor(ModuleId.mifareClassicAttacks).version, '1.1.1');
+    expect(moduleReleaseFor(ModuleId.dictionaryCheck).version, '1.1.1');
   });
 
   test('continuous capture exposes its durability revision', () {
-    expect(moduleReleaseFor(ModuleId.hfContinuousCapture).version, '1.2.0');
+    expect(moduleReleaseFor(ModuleId.hfContinuousCapture).version, '1.2.1');
   });
 
   testWidgets('footer renders the selected module release', (tester) async {

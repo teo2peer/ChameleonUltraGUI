@@ -111,9 +111,17 @@ class HfCaptureController extends ChangeNotifier {
       if (!_connectionMatches(communicator, generation)) return;
       _pollTimer?.cancel();
       _pollTimer = null;
-      _supported = communicator.supportsCommandSync(
+      final commandSupport = [
         ChameleonCommand.hfCaptureStart,
-      );
+        ChameleonCommand.hfCaptureStatus,
+        ChameleonCommand.hfCaptureGet,
+        ChameleonCommand.hfCaptureStop,
+      ].map(communicator.supportsCommandSync).toList();
+      _supported = commandSupport.contains(false)
+          ? false
+          : commandSupport.every((supported) => supported == true)
+          ? true
+          : null;
       _resetSessionState();
       _deviceId = null;
       _eventSubscription = communicator.unsolicitedMessages.listen(
@@ -269,7 +277,11 @@ class HfCaptureController extends ChangeNotifier {
       } else if (started != null &&
           _connectionMatches(communicator, generation)) {
         try {
-          _metadata = await communicator.hfCaptureStop(started.sessionId);
+          _metadata = await _stopCapture(
+            communicator,
+            started.sessionId,
+            started.startToken,
+          );
           await _drain(maxPages: 4096);
         } catch (failure) {
           cleanupError = failure;
@@ -299,6 +311,28 @@ class HfCaptureController extends ChangeNotifier {
       error is! ChameleonCommandException &&
       error is! ChameleonUnsupportedCommandException;
 
+  bool _isUncertainCaptureCommandError(Object error) =>
+      error is ChameleonResponseTimeoutException ||
+      error is ChameleonCommandResponseUncertainException;
+
+  Future<HfCaptureMetadata> _stopCapture(
+    ChameleonCommunicator communicator,
+    int sessionId,
+    int startToken,
+  ) async {
+    try {
+      return await communicator.hfCaptureStop(sessionId);
+    } catch (error) {
+      if (!_isUncertainCaptureCommandError(error)) rethrow;
+      final status = await communicator.hfCaptureStatus(
+        sessionId,
+        startToken: startToken,
+      );
+      if (status.state == HfCaptureState.stopped) return status;
+      return communicator.hfCaptureStop(sessionId);
+    }
+  }
+
   Future<void> stop() async {
     final communicator = _requireCommunicator();
     final generation = _connectionGeneration;
@@ -311,7 +345,11 @@ class HfCaptureController extends ChangeNotifier {
     _notify();
     try {
       await _waitForDrain();
-      final stopped = await communicator.hfCaptureStop(sessionId);
+      final stopped = await _stopCapture(
+        communicator,
+        sessionId,
+        _metadata!.startToken,
+      );
       if (!_connectionMatches(communicator, generation)) {
         throw StateError('HF capture connection changed during STOP');
       }
@@ -894,7 +932,7 @@ class HfCaptureController extends ChangeNotifier {
             previousSequence,
             record.sequence,
           );
-          if (distance == 0 || distance > 0x7FFFFFFF) {
+          if (distance == 0) {
             throw const FormatException('Invalid persisted page order');
           }
           missingRecords = _addGapEvidence(missingRecords, distance - 1);
@@ -966,6 +1004,7 @@ class HfCaptureController extends ChangeNotifier {
     _drainCompleter = completer;
     ChameleonCommunicator? communicator;
     int? sessionId;
+    int? startToken;
     final generation = _connectionGeneration;
     try {
       communicator = _requireCommunicator();
@@ -974,7 +1013,7 @@ class HfCaptureController extends ChangeNotifier {
       if (session == null || currentMetadata == null) return;
       sessionId = currentMetadata.sessionId;
       final bootId = currentMetadata.bootId;
-      final startToken = currentMetadata.startToken;
+      startToken = currentMetadata.startToken;
       final mode = currentMetadata.mode;
       for (var pageNumber = 0; pageNumber < maxPages; pageNumber++) {
         if (!_connectionMatches(communicator, generation)) return;
@@ -1019,10 +1058,15 @@ class HfCaptureController extends ChangeNotifier {
     } catch (error) {
       if (communicator != null &&
           sessionId != null &&
+          startToken != null &&
           isRunning &&
           _connectionMatches(communicator, generation)) {
         try {
-          final stopped = await communicator.hfCaptureStop(sessionId);
+          final stopped = await _stopCapture(
+            communicator,
+            sessionId,
+            startToken,
+          );
           if (_connectionMatches(communicator, generation)) {
             _metadata = stopped;
           }
@@ -1057,7 +1101,7 @@ class HfCaptureController extends ChangeNotifier {
         gaps = _addGapEvidence(gaps, record.sequence);
       } else {
         final distance = hfCaptureSequenceDistance(previous, record.sequence);
-        if (distance == 0 || distance > 0x7FFFFFFF) {
+        if (distance == 0) {
           throw const FormatException('Invalid HF capture page transition');
         }
         gaps = _addGapEvidence(gaps, distance - 1);

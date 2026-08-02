@@ -222,8 +222,8 @@ class EthicalHackingPageState extends State<EthicalHackingPage> {
 
     final capture = <HackingAttack>[
       HackingAttack(
-        'Continuous HF capture',
-        'Loss-aware USB/BLE streaming with CRC pages, durable storage, and reconnect resume',
+        localizations.hf_capture_title,
+        localizations.hf_capture_description,
         Icons.stream,
         (c) => _push(
           c,

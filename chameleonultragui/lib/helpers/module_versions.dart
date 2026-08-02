@@ -180,7 +180,7 @@ const moduleVersions = <ModuleId, ModuleRelease>{
   ),
   ModuleId.hfContinuousCapture: ModuleRelease(
     name: 'Continuous HF Capture',
-    version: '1.2.0',
+    version: '1.2.1',
     updatedAt: '2026-08-02',
   ),
   ModuleId.mifareClassicGen4: ModuleRelease(
@@ -190,7 +190,7 @@ const moduleVersions = <ModuleId, ModuleRelease>{
   ),
   ModuleId.mifareClassicAttacks: ModuleRelease(
     name: 'MIFARE Classic Attacks',
-    version: '1.1.0',
+    version: '1.1.1',
     updatedAt: '2026-08-02',
   ),
   ModuleId.captureAndSniffing: ModuleRelease(
@@ -235,7 +235,7 @@ const moduleVersions = <ModuleId, ModuleRelease>{
   ),
   ModuleId.dictionaryCheck: ModuleRelease(
     name: 'Dictionary Check',
-    version: '1.1.0',
+    version: '1.1.1',
     updatedAt: '2026-08-02',
   ),
   ModuleId.darkside: ModuleRelease(

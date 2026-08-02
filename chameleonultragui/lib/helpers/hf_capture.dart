@@ -237,10 +237,12 @@ class HfCapturePage {
     if (data.length != hfCapturePageHeaderSize + dataLength) {
       throw const FormatException('Invalid HF capture page length');
     }
+    final expectedCrc = _u32(data, 60);
+    final protectedBytes = Uint8List.fromList(data)..fillRange(60, 64, 0);
     final recordBytes = Uint8List.fromList(
       data.sublist(hfCapturePageHeaderSize),
     );
-    if (hfCaptureCrc32(recordBytes) != _u32(data, 60)) {
+    if (hfCaptureCrc32(protectedBytes) != expectedCrc) {
       throw const FormatException('HF capture page CRC32 mismatch');
     }
     final records = decodeHfCaptureRecords(recordBytes);
@@ -265,7 +267,7 @@ class HfCapturePage {
           records[index - 1].sequence,
           records[index].sequence,
         );
-        if (distance == 0 || distance > 0x7FFFFFFF) {
+        if (distance == 0) {
           throw const FormatException('Invalid HF capture record order');
         }
         missingRecords += distance - 1;

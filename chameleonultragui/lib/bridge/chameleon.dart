@@ -253,10 +253,17 @@ class ChameleonCommunicator {
         status: frame.status,
         data: frame.data,
       );
-      final responseDescription =
-          response.command == ChameleonCommand.hf14a4ReaderSessionExchange.value
-          ? '<redacted payment APDU response, ${response.data.length} bytes>'
-          : bytesToHex(response.data);
+      final responseDescription = switch (response.command) {
+        final command
+            when command ==
+                ChameleonCommand.hf14a4ReaderSessionExchange.value =>
+          '<redacted payment APDU response, ${response.data.length} bytes>',
+        final command
+            when command == ChameleonCommand.hfCaptureGet.value ||
+                command == ChameleonCommand.hfCaptureEvent.value =>
+          '<redacted HF capture payload, ${response.data.length} bytes>',
+        _ => bytesToHex(response.data),
+      };
       log.d(
         "Received message: command = ${response.command}, status = ${response.status}, data = $responseDescription",
       );
@@ -454,6 +461,16 @@ class ChameleonCommunicator {
       log.t("Sending redacted ISO-DEP session exchange frame");
       log.d(
         "Sending message: command = ${cmd.value}, data = <redacted payment APDU, ${data?.length ?? 0} bytes>",
+      );
+    } else if (const {
+      ChameleonCommand.hfCaptureStart,
+      ChameleonCommand.hfCaptureStatus,
+      ChameleonCommand.hfCaptureGet,
+      ChameleonCommand.hfCaptureStop,
+    }.contains(cmd)) {
+      log.t('Sending redacted HF capture control frame');
+      log.d(
+        'Sending message: command = ${cmd.value}, data = <redacted HF capture control, ${data?.length ?? 0} bytes>',
       );
     } else {
       log.t("Sending: ${bytesToHex(dataFrame)}");
@@ -977,8 +994,8 @@ class ChameleonCommunicator {
   // (MF1_CHECK_KEYS_OF_SECTORS) — far fewer round-trips than per-sector checks.
   // mask: 10 bytes, 2 bits per sector in byte s~/4 at shift 6-(s%4)*2
   //   (bit 0b10 = skip keyA, 0b01 = skip keyB).
-  // Returns sectorKey-index (sector*2 + keyType) -> found key, or null if the
-  // command is unsupported / failed (so the caller can fall back per-sector).
+  // Returns sectorKey-index (sector*2 + keyType) -> found key, or null only
+  // when the command is unavailable so the caller can fall back per-sector.
   Future<Map<int, Uint8List>?> mf1CheckKeysOfSectors(
     Uint8List mask,
     List<Uint8List> keys,
@@ -987,7 +1004,7 @@ class ChameleonCommunicator {
         keys.isEmpty ||
         keys.length > 83 ||
         keys.any((key) => key.length != 6)) {
-      return null;
+      throw ArgumentError('Invalid multi-sector MIFARE key-check request');
     }
     var targetCount = 0;
     for (final byte in mask) {
@@ -1003,8 +1020,23 @@ class ChameleonCommunicator {
         data: Uint8List.fromList([...mask, for (final k in keys) ...k]),
         timeout: Duration(seconds: (6 + (attempts / 10).ceil()).clamp(10, 30)),
       );
-      if (resp == null || resp.status != 0 || resp.data.length != 490) {
-        return null;
+      if (resp == null) {
+        throw const ChameleonCommandException(
+          ChameleonCommand.mf1CheckKeysOfSectors,
+          0xffff,
+        );
+      }
+      if (const {0x67, 0x69}.contains(resp.status)) return null;
+      if (resp.status != 0) {
+        throw ChameleonCommandException(
+          ChameleonCommand.mf1CheckKeysOfSectors,
+          resp.status,
+        );
+      }
+      if (resp.data.length != 490) {
+        throw const FormatException(
+          'Invalid multi-sector MIFARE key-check response',
+        );
       }
       final d = resp.data;
       final found = <int, Uint8List>{};
@@ -1023,9 +1055,7 @@ class ChameleonCommunicator {
         }
       }
       return found;
-    } on ChameleonResponseTimeoutException {
-      rethrow;
-    } catch (_) {
+    } on ChameleonUnsupportedCommandException {
       return null;
     }
   }
@@ -2063,6 +2093,7 @@ class ChameleonCommunicator {
   Future<HfCaptureMetadata> hfCaptureStart(
     HfCaptureMode mode, {
     required int startToken,
+    Duration timeout = const Duration(seconds: 5),
   }) async {
     if (startToken <= 0 || startToken > 0xFFFFFFFF) {
       throw RangeError.range(startToken, 1, 0xFFFFFFFF, 'startToken');
@@ -2074,6 +2105,7 @@ class ChameleonCommunicator {
         mode.value,
         ...u32ToBytes(startToken),
       ]),
+      timeout: timeout,
     );
     if (response.data.length != hfCaptureMetadataSize) {
       throw const FormatException('Invalid HF capture START response');
@@ -2090,19 +2122,32 @@ class ChameleonCommunicator {
   Future<HfCaptureMetadata> hfCaptureStatus(
     int sessionId, {
     required int startToken,
+    Duration timeout = const Duration(seconds: 5),
   }) async {
     _validateHfCaptureSessionId(sessionId, allowDiscovery: true);
     if (startToken <= 0 || startToken > 0xFFFFFFFF) {
       throw RangeError.range(startToken, 1, 0xFFFFFFFF, 'startToken');
     }
-    final response = await _sendChecked(
+    final response = await sendCmd(
       ChameleonCommand.hfCaptureStatus,
       data: Uint8List.fromList([
         hfCaptureProtocolVersion,
         ...u32ToBytes(sessionId),
         ...u32ToBytes(startToken),
       ]),
+      timeout: timeout,
     );
+    _uncertainResponseIds.removeAll({
+      ChameleonCommand.hfCaptureStart.value,
+      ChameleonCommand.hfCaptureGet.value,
+      ChameleonCommand.hfCaptureStop.value,
+    });
+    if (response == null || response.status != chameleonStatusSuccess) {
+      throw ChameleonCommandException(
+        ChameleonCommand.hfCaptureStatus,
+        response?.status ?? 0xffff,
+      );
+    }
     if (response.data.length != hfCaptureMetadataSize) {
       throw const FormatException('Invalid HF capture STATUS response');
     }
@@ -2119,6 +2164,7 @@ class ChameleonCommunicator {
     int? acknowledgeSequence,
     int? acknowledgeDeliveryToken,
     int requestedBytes = 4096,
+    Duration timeout = const Duration(seconds: 5),
   }) async {
     _validateHfCaptureSessionId(sessionId);
     if ((acknowledgeSequence == null) != (acknowledgeDeliveryToken == null)) {
@@ -2157,6 +2203,7 @@ class ChameleonCommunicator {
         requestedBytes >> 8,
         requestedBytes & 0xFF,
       ]),
+      timeout: timeout,
     );
     final page = HfCapturePage.decode(response.data);
     if (page.metadata.sessionId != sessionId) {
@@ -2165,7 +2212,10 @@ class ChameleonCommunicator {
     return page;
   }
 
-  Future<HfCaptureMetadata> hfCaptureStop(int sessionId) async {
+  Future<HfCaptureMetadata> hfCaptureStop(
+    int sessionId, {
+    Duration timeout = const Duration(seconds: 5),
+  }) async {
     _validateHfCaptureSessionId(sessionId);
     final response = await _sendChecked(
       ChameleonCommand.hfCaptureStop,
@@ -2173,7 +2223,9 @@ class ChameleonCommunicator {
         hfCaptureProtocolVersion,
         ...u32ToBytes(sessionId),
       ]),
+      timeout: timeout,
     );
+    _uncertainResponseIds.remove(ChameleonCommand.hfCaptureGet.value);
     if (response.data.length != hfCaptureMetadataSize) {
       throw const FormatException('Invalid HF capture STOP response');
     }
