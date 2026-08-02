@@ -68,48 +68,46 @@ class ChameleonSettingsState extends State<ChameleonSettings> {
                 content: SingleChildScrollView(
                     child: Column(
                   children: [
-                    if (appState.canEnterUndercover) ...[
-                      Card(
-                        child: Padding(
-                          padding: const EdgeInsets.all(12),
-                          child: Column(
-                            children: [
-                              ListTile(
-                                contentPadding: EdgeInsets.zero,
-                                leading: const Icon(Icons.visibility_off),
-                                title: Text(localizations.undercover_mode),
-                                subtitle:
-                                    Text(localizations.undercover_description),
+                    Card(
+                      child: Padding(
+                        padding: const EdgeInsets.all(12),
+                        child: Column(
+                          children: [
+                            ListTile(
+                              contentPadding: EdgeInsets.zero,
+                              leading: const Icon(Icons.visibility_off),
+                              title: Text(localizations.undercover_mode),
+                              subtitle:
+                                  Text(localizations.undercover_description),
+                            ),
+                            SizedBox(
+                              width: double.infinity,
+                              child: FilledButton.icon(
+                                key: const Key(
+                                    'device-settings-undercover-button'),
+                                onPressed: () async {
+                                  Navigator.pop(buildContext);
+                                  try {
+                                    await appState.enterUndercover();
+                                  } catch (error) {
+                                    scaffoldMessenger.hideCurrentSnackBar();
+                                    scaffoldMessenger.showSnackBar(
+                                      SnackBar(
+                                        content: Text(
+                                            '${localizations.undercover_unavailable} $error'),
+                                      ),
+                                    );
+                                  }
+                                },
+                                icon: const Icon(Icons.home_outlined),
+                                label: Text(localizations.undercover_enter),
                               ),
-                              SizedBox(
-                                width: double.infinity,
-                                child: FilledButton.icon(
-                                  key: const Key(
-                                      'device-settings-undercover-button'),
-                                  onPressed: () async {
-                                    Navigator.pop(buildContext);
-                                    try {
-                                      await appState.enterUndercover();
-                                    } catch (error) {
-                                      scaffoldMessenger.hideCurrentSnackBar();
-                                      scaffoldMessenger.showSnackBar(
-                                        SnackBar(
-                                          content: Text(
-                                              '${localizations.undercover_unavailable} $error'),
-                                        ),
-                                      );
-                                    }
-                                  },
-                                  icon: const Icon(Icons.home_outlined),
-                                  label: Text(localizations.undercover_enter),
-                                ),
-                              ),
-                            ],
-                          ),
+                            ),
+                          ],
                         ),
                       ),
-                      const SizedBox(height: 10),
-                    ],
+                    ),
+                    const SizedBox(height: 10),
                     Text("${localizations.firmware_management}:"),
                     const SizedBox(height: 10),
                     FittedBox(

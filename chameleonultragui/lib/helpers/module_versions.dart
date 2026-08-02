@@ -80,7 +80,7 @@ const moduleVersions = <ModuleId, ModuleRelease>{
   ),
   ModuleId.undercover: ModuleRelease(
     name: 'Undercover',
-    version: '1.0.0',
+    version: '1.0.1',
     updatedAt: '2026-08-02',
   ),
   ModuleId.device: ModuleRelease(
