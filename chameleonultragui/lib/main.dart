@@ -9,7 +9,10 @@ import 'package:chameleonultragui/connector/serial_macos.dart';
 import 'package:chameleonultragui/gui/component/device_found_banner.dart';
 import 'package:chameleonultragui/gui/component/module_version_footer.dart';
 import 'package:chameleonultragui/gui/component/module_version_navigation.dart';
+import 'package:chameleonultragui/gui/undercover/undercover_catalog.dart';
 import 'package:chameleonultragui/gui/undercover/undercover_launcher.dart';
+import 'package:chameleonultragui/gui/undercover/undercover_orientation.dart';
+import 'package:chameleonultragui/gui/undercover/undercover_shell.dart';
 import 'package:chameleonultragui/gui/page/tools.dart';
 import 'package:chameleonultragui/helpers/font.dart';
 import 'package:chameleonultragui/helpers/emulation_change.dart';
@@ -302,10 +305,7 @@ class ChameleonGUIState extends ChangeNotifier {
         activeConnector.connected &&
         !activeConnector.isDFU &&
         activeConnector.connectionType == ConnectionType.ble &&
-        communicator?.supportsCommandSync(
-              ChameleonCommand.setRuntimeUndercoverMode,
-            ) ==
-            true;
+        communicator != null;
   }
 
   Future<void> enterUndercover() async {
@@ -314,47 +314,131 @@ class ChameleonGUIState extends ChangeNotifier {
     }
     final activeConnector = connector!;
     final activeCommunicator = communicator!;
-    await activeCommunicator.setRuntimeUndercoverMode(true);
+    final armDevice =
+        activeCommunicator.supportsCommandSync(
+          ChameleonCommand.setRuntimeUndercoverMode,
+        ) ==
+        true;
+    if (armDevice) {
+      try {
+        await activeCommunicator.setRuntimeUndercoverMode(true);
+      } catch (_) {
+        await _disconnectAfterUncertainUndercoverEntry(
+          activeConnector,
+          activeCommunicator,
+        );
+        rethrow;
+      }
+    }
     if (_disposed ||
         !identical(connector, activeConnector) ||
         !identical(communicator, activeCommunicator) ||
         !activeConnector.connected) {
+      if (armDevice) {
+        await _disconnectAfterUncertainUndercoverEntry(
+          activeConnector,
+          activeCommunicator,
+        );
+      }
       throw StateError('Connection changed while entering Undercover mode');
     }
     stopEmulationChangeMonitor();
-    undercoverDeviceArmed = true;
+    undercoverDeviceArmed = armDevice;
     undercoverMode = true;
     notifyListeners();
+  }
+
+  Future<void> _disconnectAfterUncertainUndercoverEntry(
+    AbstractSerial activeConnector,
+    ChameleonCommunicator activeCommunicator,
+  ) async {
+    Object? disconnectError;
+    if (identical(connector, activeConnector) &&
+        identical(communicator, activeCommunicator)) {
+      try {
+        await disconnect(manual: true);
+      } catch (error) {
+        disconnectError = error;
+        try {
+          if (activeConnector.connected) {
+            await activeConnector.performDisconnect();
+          }
+        } catch (retryError) {
+          disconnectError = retryError;
+        }
+      }
+    } else {
+      activeCommunicator.dispose('Uncertain Undercover activation state');
+      try {
+        if (activeConnector.connected) {
+          await activeConnector.performDisconnect();
+        }
+      } catch (error) {
+        disconnectError = error;
+      }
+    }
+
+    if (activeConnector.connected) {
+      if (!_disposed && identical(connector, activeConnector)) {
+        stopEmulationChangeMonitor();
+        undercoverDeviceArmed = true;
+        undercoverMode = true;
+        notifyListeners();
+      }
+      throw StateError(
+        'Undercover activation failed and BLE disconnect could not be '
+        'confirmed${disconnectError == null ? '' : ': $disconnectError'}',
+      );
+    }
   }
 
   Future<void> exitUndercover() async {
     final activeConnector = connector;
     final activeCommunicator = communicator;
-    Object? exitError;
-    try {
-      if (undercoverDeviceArmed &&
-          activeConnector != null &&
-          activeConnector.connected &&
-          activeCommunicator != null) {
+    if (undercoverDeviceArmed &&
+        activeConnector != null &&
+        activeConnector.connected) {
+      Object? restoreError;
+      if (activeCommunicator == null) {
+        restoreError = StateError('BLE communicator is unavailable');
+      } else {
         try {
           await activeCommunicator.setRuntimeUndercoverMode(false);
-        } catch (_) {
-          try {
-            if (activeConnector.connected) {
-              await disconnect(manual: true);
-            }
-          } catch (error) {
-            exitError = error;
-          }
+        } catch (error) {
+          restoreError = error;
         }
       }
-    } finally {
-      undercoverDeviceArmed = false;
-      undercoverMode = false;
-      startEmulationChangeMonitor();
-      if (!_disposed) notifyListeners();
+
+      if (restoreError != null) {
+        Object? disconnectError;
+        try {
+          await disconnect(manual: true);
+        } catch (error) {
+          disconnectError = error;
+          if (activeConnector.connected) {
+            try {
+              await activeConnector.performDisconnect();
+            } catch (retryError) {
+              disconnectError = retryError;
+            }
+          }
+        }
+
+        if (activeConnector.connected) {
+          if (!_disposed) notifyListeners();
+          throw StateError(
+            'Unable to restore Undercover LEDs or disconnect BLE. '
+            'Restore error: $restoreError. '
+            'Disconnect error: ${disconnectError ?? 'transport remained connected'}',
+          );
+        }
+      }
     }
-    if (exitError != null) throw exitError;
+
+    undercoverDeviceArmed = false;
+    undercoverMode = false;
+    startEmulationChangeMonitor();
+    if (!_disposed) notifyListeners();
   }
 
   bool _shouldMonitorEmulationChanges() {
@@ -1040,6 +1124,8 @@ class _MainPageState extends State<MainPage> {
   // page, manual connect, or auto-connect).
   bool _wasConnected = false;
   bool _wasUndercover = false;
+  bool _showUndercoverLauncher = true;
+  String _undercoverRootLabel = 'Workspace';
   int _lastShownEmulationChangeSequence = 0;
   final GlobalKey<NavigatorState> _navigatorKey = GlobalKey<NavigatorState>();
   final GlobalKey<ScaffoldMessengerState> _scaffoldMessengerKey =
@@ -1127,7 +1213,11 @@ class _MainPageState extends State<MainPage> {
       await appState.exitUndercover();
       if (!mounted) return;
       _moduleNavigationObserver.setRootModule(ModuleId.device);
-      setState(() => selectedIndex = 0);
+      setState(() {
+        selectedIndex = 0;
+        _showUndercoverLauncher = true;
+        _undercoverRootLabel = 'Workspace';
+      });
     } catch (error) {
       final errorContext = _navigatorKey.currentContext;
       if (errorContext == null || !errorContext.mounted) return;
@@ -1147,6 +1237,133 @@ class _MainPageState extends State<MainPage> {
     }
   }
 
+  bool _hasUndercoverConnection(ChameleonGUIState appState) {
+    final activeConnector = appState.connector;
+    return activeConnector != null &&
+        activeConnector.connected &&
+        !activeConnector.isDFU &&
+        appState.communicator != null;
+  }
+
+  void _openUndercoverRoot(
+    int index,
+    String label, {
+    required bool requiresConnection,
+  }) {
+    final appState = context.read<ChameleonGUIState>();
+    if (!appState.undercoverMode ||
+        (requiresConnection && !_hasUndercoverConnection(appState))) {
+      return;
+    }
+    _moduleNavigationObserver.setRootModule(_moduleForIndex(index));
+    setState(() {
+      selectedIndex = index;
+      _showUndercoverLauncher = false;
+      _undercoverRootLabel = label;
+    });
+  }
+
+  void _openUndercoverPage(
+    BuildContext context,
+    String label,
+    ModuleId moduleId,
+    Widget page, {
+    required bool requiresConnection,
+    required bool requiresEthicalAck,
+  }) {
+    unawaited(
+      _openUndercoverPageAfterChecks(
+        context,
+        label,
+        moduleId,
+        page,
+        requiresConnection: requiresConnection,
+        requiresEthicalAck: requiresEthicalAck,
+      ),
+    );
+  }
+
+  Future<void> _openUndercoverPageAfterChecks(
+    BuildContext context,
+    String label,
+    ModuleId moduleId,
+    Widget page, {
+    required bool requiresConnection,
+    required bool requiresEthicalAck,
+  }) async {
+    if (!mounted || !context.mounted) return;
+    final appState = context.read<ChameleonGUIState>();
+    if (!appState.undercoverMode ||
+        (requiresConnection && !_hasUndercoverConnection(appState))) {
+      return;
+    }
+
+    if (requiresEthicalAck &&
+        !appState.sharedPreferencesProvider.getEthicalHackingAck()) {
+      final localizations = AppLocalizations.of(context)!;
+      final accepted =
+          await showDialog<bool>(
+            context: context,
+            builder: (dialogContext) => AlertDialog(
+              title: Text(localizations.ethical_hacking_disclaimer_title),
+              content: Text(localizations.ethical_hacking_disclaimer),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(dialogContext, false),
+                  child: Text(localizations.cancel),
+                ),
+                FilledButton(
+                  onPressed: () => Navigator.pop(dialogContext, true),
+                  child: Text(localizations.accept),
+                ),
+              ],
+            ),
+          ) ??
+          false;
+      if (!accepted || !mounted || !context.mounted) return;
+      appState.sharedPreferencesProvider.setEthicalHackingAck(true);
+    }
+
+    if (!appState.undercoverMode ||
+        (requiresConnection && !_hasUndercoverConnection(appState))) {
+      return;
+    }
+
+    final navigator = Navigator.of(context);
+    setState(() {
+      _showUndercoverLauncher = false;
+      _undercoverRootLabel = label;
+    });
+    await navigator.push<void>(
+      ModulePageRoute<void>(moduleId: moduleId, builder: (_) => page),
+    );
+    if (!mounted || navigator.canPop() || !appState.undercoverMode) return;
+    _moduleNavigationObserver.setRootModule(ModuleId.undercover);
+    setState(() {
+      _showUndercoverLauncher = true;
+      _undercoverRootLabel = 'Workspace';
+    });
+  }
+
+  void _returnToUndercoverLauncher() {
+    _moduleNavigationObserver.removeRoutesAboveRoot();
+    if (!mounted) return;
+    _moduleNavigationObserver.setRootModule(ModuleId.undercover);
+    setState(() {
+      _showUndercoverLauncher = true;
+      _undercoverRootLabel = 'Workspace';
+    });
+  }
+
+  Future<void> _undercoverBack() async {
+    final navigator = _navigatorKey.currentState;
+    if (navigator?.canPop() == true) {
+      await navigator!.maybePop();
+      return;
+    }
+    _returnToUndercoverLauncher();
+  }
+
   @override
   void initState() {
     super.initState();
@@ -1157,6 +1374,7 @@ class _MainPageState extends State<MainPage> {
 
   @override
   void dispose() {
+    _moduleNavigationObserver.dispose();
     _activeModule.dispose();
     super.dispose();
   }
@@ -1314,6 +1532,10 @@ class _MainPageState extends State<MainPage> {
 
     if (appState.undercoverMode != _wasUndercover) {
       _wasUndercover = appState.undercoverMode;
+      if (appState.undercoverMode) {
+        _showUndercoverLauncher = true;
+        _undercoverRootLabel = 'Workspace';
+      }
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
         _moduleNavigationObserver.setRootModule(
@@ -1399,7 +1621,20 @@ class _MainPageState extends State<MainPage> {
         return ModuleVersionScope(
           notifier: _activeModule,
           child: appState.undercoverMode
-              ? child ?? const SizedBox.shrink()
+              ? UndercoverOrientationScope(
+                  child: _showUndercoverLauncher
+                      ? child ?? const SizedBox.shrink()
+                      : UndercoverShell(
+                          activeModule: _activeModule,
+                          overlayActive:
+                              _moduleNavigationObserver.overlayActive,
+                          rootLabel: _undercoverRootLabel,
+                          connected: nowConnected,
+                          onBack: () => unawaited(_undercoverBack()),
+                          onLauncher: _returnToUndercoverLauncher,
+                          child: child ?? const SizedBox.shrink(),
+                        ),
+                )
               : Column(
                   children: [
                     Expanded(child: child ?? const SizedBox.shrink()),
@@ -1416,151 +1651,176 @@ class _MainPageState extends State<MainPage> {
       home: LayoutBuilder(
         // Build Page
         builder: (context, constraints) {
-          if (appState.undercoverMode) {
+          if (appState.undercoverMode && _showUndercoverLauncher) {
             return UndercoverLauncher(
-              connected: nowConnected && appState.undercoverDeviceArmed,
+              connected: nowConnected,
+              screens: buildUndercoverCatalog(
+                context,
+                openRoot: _openUndercoverRoot,
+                openPage: _openUndercoverPage,
+              ),
               onExitRequested: () => _requestUndercoverExit(appState),
             );
           }
-          return SafeArea(
-            left: false,
-            right: false,
-            top: false,
-            bottom: false,
-            child: Scaffold(
-              body: Column(
-                children: [
-                  Expanded(
-                    child: Row(
-                      children: [
-                        (!appState.connector!.isDFU ||
-                                !appState.connector!.connected)
-                            ? SafeArea(
-                                child: NavigationRail(
-                                  key: appState.navigationRailKey,
-                                  // Sidebar
-                                  extended: appState.sharedPreferencesProvider
-                                      .getSideBarExpanded(),
-                                  destinations: [
-                                    // Sidebar Items
-                                    NavigationRailDestination(
-                                      icon: const Icon(Icons.home),
-                                      label: Text(
-                                        AppLocalizations.of(context)!.home,
-                                      ), // Home
-                                    ),
-                                    NavigationRailDestination(
-                                      disabled: !appState.connector!.connected,
-                                      icon: const Icon(Icons.widgets),
-                                      label: Text(
-                                        AppLocalizations.of(
-                                          context,
-                                        )!.slot_manager,
-                                      ),
-                                    ),
-                                    NavigationRailDestination(
-                                      icon: const Icon(
-                                        Icons.auto_awesome_motion,
-                                      ),
-                                      label: Text(
-                                        AppLocalizations.of(
-                                          context,
-                                        )!.saved_cards,
-                                      ),
-                                    ),
-                                    NavigationRailDestination(
-                                      disabled: !appState.connector!.connected,
-                                      icon: const Icon(Icons.sensors),
-                                      label: Text(
-                                        AppLocalizations.of(context)!.read_card,
-                                      ),
-                                    ),
-                                    NavigationRailDestination(
-                                      disabled: !appState.connector!.connected,
-                                      icon: const Icon(Icons.system_update_alt),
-                                      label: Text(
-                                        AppLocalizations.of(
-                                          context,
-                                        )!.write_card,
-                                      ),
-                                    ),
-                                    NavigationRailDestination(
-                                      icon: const Icon(Icons.handyman),
-                                      label: Text(
-                                        AppLocalizations.of(context)!.tools,
-                                      ),
-                                    ),
-                                    NavigationRailDestination(
-                                      icon: const Icon(Icons.settings),
-                                      label: Text(
-                                        AppLocalizations.of(context)!.settings,
-                                      ),
-                                    ),
-                                    NavigationRailDestination(
-                                      disabled: !appState.connector!.connected,
-                                      icon: const Icon(Icons.vpn_key),
-                                      label: Text(
-                                        AppLocalizations.of(
-                                          context,
-                                        )!.reader_keys_capture,
-                                      ),
-                                    ),
-                                    NavigationRailDestination(
-                                      icon: const Icon(Icons.security),
-                                      label: Text(
-                                        AppLocalizations.of(
-                                          context,
-                                        )!.ethical_hacking,
-                                      ),
-                                    ),
-                                    if (appState.devMode)
+          return PopScope(
+            canPop: !appState.undercoverMode,
+            onPopInvokedWithResult: (didPop, _) {
+              if (!didPop && appState.undercoverMode) {
+                _returnToUndercoverLauncher();
+              }
+            },
+            child: SafeArea(
+              left: false,
+              right: false,
+              top: false,
+              bottom: false,
+              child: Scaffold(
+                body: Column(
+                  children: [
+                    Expanded(
+                      child: Row(
+                        children: [
+                          (!appState.undercoverMode &&
+                                  (!appState.connector!.isDFU ||
+                                      !appState.connector!.connected))
+                              ? SafeArea(
+                                  child: NavigationRail(
+                                    key: appState.navigationRailKey,
+                                    // Sidebar
+                                    extended: appState.sharedPreferencesProvider
+                                        .getSideBarExpanded(),
+                                    destinations: [
+                                      // Sidebar Items
                                       NavigationRailDestination(
-                                        icon: const Icon(Icons.bug_report),
+                                        icon: const Icon(Icons.home),
                                         label: Text(
-                                          '🐞 ${AppLocalizations.of(context)!.debug} 🐞',
+                                          AppLocalizations.of(context)!.home,
+                                        ), // Home
+                                      ),
+                                      NavigationRailDestination(
+                                        disabled:
+                                            !appState.connector!.connected,
+                                        icon: const Icon(Icons.widgets),
+                                        label: Text(
+                                          AppLocalizations.of(
+                                            context,
+                                          )!.slot_manager,
                                         ),
                                       ),
-                                  ],
-                                  selectedIndex: selectedIndex,
-                                  onDestinationSelected: (value) {
-                                    _moduleNavigationObserver.setRootModule(
-                                      _moduleForIndex(value),
-                                    );
-                                    setState(() {
-                                      selectedIndex = value;
-                                    });
-                                  },
-                                ),
-                              )
-                            : const SizedBox(),
-                        Expanded(
-                          child: Container(
-                            color: Theme.of(
-                              context,
-                            ).colorScheme.primaryContainer,
-                            child: page,
+                                      NavigationRailDestination(
+                                        icon: const Icon(
+                                          Icons.auto_awesome_motion,
+                                        ),
+                                        label: Text(
+                                          AppLocalizations.of(
+                                            context,
+                                          )!.saved_cards,
+                                        ),
+                                      ),
+                                      NavigationRailDestination(
+                                        disabled:
+                                            !appState.connector!.connected,
+                                        icon: const Icon(Icons.sensors),
+                                        label: Text(
+                                          AppLocalizations.of(
+                                            context,
+                                          )!.read_card,
+                                        ),
+                                      ),
+                                      NavigationRailDestination(
+                                        disabled:
+                                            !appState.connector!.connected,
+                                        icon: const Icon(
+                                          Icons.system_update_alt,
+                                        ),
+                                        label: Text(
+                                          AppLocalizations.of(
+                                            context,
+                                          )!.write_card,
+                                        ),
+                                      ),
+                                      NavigationRailDestination(
+                                        icon: const Icon(Icons.handyman),
+                                        label: Text(
+                                          AppLocalizations.of(context)!.tools,
+                                        ),
+                                      ),
+                                      NavigationRailDestination(
+                                        icon: const Icon(Icons.settings),
+                                        label: Text(
+                                          AppLocalizations.of(
+                                            context,
+                                          )!.settings,
+                                        ),
+                                      ),
+                                      NavigationRailDestination(
+                                        disabled:
+                                            !appState.connector!.connected,
+                                        icon: const Icon(Icons.vpn_key),
+                                        label: Text(
+                                          AppLocalizations.of(
+                                            context,
+                                          )!.reader_keys_capture,
+                                        ),
+                                      ),
+                                      NavigationRailDestination(
+                                        icon: const Icon(Icons.security),
+                                        label: Text(
+                                          AppLocalizations.of(
+                                            context,
+                                          )!.ethical_hacking,
+                                        ),
+                                      ),
+                                      if (appState.devMode)
+                                        NavigationRailDestination(
+                                          icon: const Icon(Icons.bug_report),
+                                          label: Text(
+                                            '🐞 ${AppLocalizations.of(context)!.debug} 🐞',
+                                          ),
+                                        ),
+                                    ],
+                                    selectedIndex: selectedIndex,
+                                    onDestinationSelected: (value) {
+                                      _moduleNavigationObserver.setRootModule(
+                                        _moduleForIndex(value),
+                                      );
+                                      setState(() {
+                                        selectedIndex = value;
+                                      });
+                                    },
+                                  ),
+                                )
+                              : const SizedBox(),
+                          Expanded(
+                            child: Container(
+                              color: Theme.of(
+                                context,
+                              ).colorScheme.primaryContainer,
+                              child: page,
+                            ),
                           ),
-                        ),
-                      ],
+                        ],
+                      ),
                     ),
-                  ),
-                  // Full-width banner spanning both the sidebar and the page.
-                  if (bannerDevice != null)
-                    DeviceFoundBanner(
-                      device: bannerDevice,
-                      // Connect in place — don't navigate to the Connect
-                      // screen. The banner hides itself once the connection
-                      // becomes pending/connected.
-                      onConnect: () => appState.connectToDevice(bannerDevice!),
-                      onDismiss: () {
-                        setState(() {
-                          _dismissedPort = bannerDevice!.port;
-                        });
-                      },
-                    ),
-                ],
+                    // Full-width banner spanning both the sidebar and the page.
+                    if (bannerDevice != null)
+                      DeviceFoundBanner(
+                        device: bannerDevice,
+                        // Connect in place — don't navigate to the Connect
+                        // screen. The banner hides itself once the connection
+                        // becomes pending/connected.
+                        onConnect: () =>
+                            appState.connectToDevice(bannerDevice!),
+                        onDismiss: () {
+                          setState(() {
+                            _dismissedPort = bannerDevice!.port;
+                          });
+                        },
+                      ),
+                  ],
+                ),
+                bottomNavigationBar: const BottomProgressBar(),
               ),
-              bottomNavigationBar: const BottomProgressBar(),
             ),
           );
         },

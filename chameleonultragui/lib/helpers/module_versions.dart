@@ -76,12 +76,12 @@ const _initialReleaseDate = '2026-07-30';
 const moduleVersions = <ModuleId, ModuleRelease>{
   ModuleId.appShell: ModuleRelease(
     name: 'App Shell',
-    version: '1.1.0',
+    version: '1.4.0',
     updatedAt: '2026-08-02',
   ),
   ModuleId.undercover: ModuleRelease(
     name: 'Undercover',
-    version: '1.0.1',
+    version: '2.1.0',
     updatedAt: '2026-08-02',
   ),
   ModuleId.device: ModuleRelease(
@@ -221,22 +221,22 @@ const moduleVersions = <ModuleId, ModuleRelease>{
   ),
   ModuleId.autopwn: ModuleRelease(
     name: 'Autopwn',
-    version: '1.2.0',
+    version: '1.3.0',
     updatedAt: '2026-08-02',
   ),
   ModuleId.autopwnPlus: ModuleRelease(
     name: 'Autopwn Plus',
-    version: '1.1.0',
+    version: '1.2.0',
     updatedAt: '2026-08-02',
   ),
   ModuleId.autopwnV2: ModuleRelease(
     name: 'Autopwn v2',
-    version: '1.1.0',
+    version: '1.2.0',
     updatedAt: '2026-08-02',
   ),
   ModuleId.mifareClassicNonceHistory: ModuleRelease(
-    name: 'MIFARE Classic Nonce History',
-    version: '1.0.0',
+    name: 'MIFARE Classic Recovery History',
+    version: '1.1.0',
     updatedAt: _initialReleaseDate,
   ),
   ModuleId.dictionaryCheck: ModuleRelease(

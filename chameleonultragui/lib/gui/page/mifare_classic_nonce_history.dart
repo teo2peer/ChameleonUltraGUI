@@ -23,9 +23,10 @@ class _MifareClassicNonceHistoryPageState
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Delete nonce history?'),
+        title: const Text('Delete recovery history?'),
         content: Text(
-          'Delete ${summary.sampleCount} stored nonce samples for UID '
+          'Delete ${summary.nonceSampleCount} stored nonce samples and '
+          '${summary.failedKeyCount} failed keys for UID '
           '${summary.cardUid} (${formatMifareClassicNonceHistoryBytes(summary.byteSize)})?',
         ),
         actions: [
@@ -67,12 +68,12 @@ class _MifareClassicNonceHistoryPageState
       (sum, entry) => sum + entry.byteSize,
     );
     return Scaffold(
-      appBar: AppBar(title: const Text('MIFARE Classic nonce history')),
+      appBar: AppBar(title: const Text('MIFARE Classic recovery history')),
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
           Text(
-            'Stored locally as SHA-256 capture fingerprints. No keys or nonce values are kept in plaintext.',
+            'Stored locally as SHA-256 fingerprints. No nonce values or keys are kept in plaintext.',
             style: Theme.of(context).textTheme.bodyMedium,
           ),
           const SizedBox(height: 12),
@@ -85,7 +86,7 @@ class _MifareClassicNonceHistoryPageState
             const Card(
               child: Padding(
                 padding: EdgeInsets.all(16),
-                child: Text('No MIFARE Classic nonce history is stored.'),
+                child: Text('No MIFARE Classic recovery history is stored.'),
               ),
             ),
           for (final entry in entries)
@@ -94,7 +95,7 @@ class _MifareClassicNonceHistoryPageState
                 leading: const Icon(Icons.contactless),
                 title: Text('UID ${entry.cardUid}'),
                 subtitle: Text(
-                  '${entry.sampleCount} samples | ${formatMifareClassicNonceHistoryBytes(entry.byteSize)}',
+                  '${entry.nonceSampleCount} nonce samples | ${entry.failedKeyCount} failed keys | ${formatMifareClassicNonceHistoryBytes(entry.byteSize)}',
                 ),
                 trailing: IconButton(
                   tooltip: 'Delete history for this card',

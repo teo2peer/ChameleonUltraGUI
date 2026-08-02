@@ -32,9 +32,12 @@ void main() {
       ),
     );
 
-    expect(find.text('Remember MIFARE Classic nonce samples'), findsOneWidget);
-    expect(find.text('Manage stored nonce history'), findsOneWidget);
-    final toggle = find.text('Remember MIFARE Classic nonce samples');
+    expect(
+      find.text('Remember MIFARE Classic nonces and failed keys'),
+      findsOneWidget,
+    );
+    expect(find.text('Manage stored recovery history'), findsOneWidget);
+    final toggle = find.text('Remember MIFARE Classic nonces and failed keys');
     await tester.ensureVisible(toggle);
     await tester.pumpAndSettle();
     await tester.tap(toggle);
@@ -63,13 +66,13 @@ void main() {
     );
 
     expect(find.text('UID 04112233'), findsOneWidget);
-    expect(find.textContaining('1 samples'), findsOneWidget);
+    expect(find.textContaining('1 nonce samples'), findsOneWidget);
     await tester.tap(find.byIcon(Icons.delete_outline));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Delete'));
     await tester.pumpAndSettle();
     expect(
-      find.text('No MIFARE Classic nonce history is stored.'),
+      find.text('No MIFARE Classic recovery history is stored.'),
       findsOneWidget,
     );
   });

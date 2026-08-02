@@ -284,10 +284,10 @@ class SettingsMainPageState extends State<SettingsMainPage> {
                     children: [
                       SwitchListTile.adaptive(
                         title: const Text(
-                          'Remember MIFARE Classic nonce samples',
+                          'Remember MIFARE Classic nonces and failed keys',
                         ),
                         subtitle: const Text(
-                          'Skip only identical Nested and Static Nested captures for the same UID. Key authentication is always repeated.',
+                          'Skip identical Nested and Static Nested captures, plus keys confirmed invalid for every sector of the same UID.',
                         ),
                         value: appState.sharedPreferencesProvider
                             .getMifareClassicNonceHistoryEnabled(),
@@ -301,7 +301,7 @@ class SettingsMainPageState extends State<SettingsMainPage> {
                       const Divider(height: 1),
                       ListTile(
                         leading: const Icon(Icons.manage_search),
-                        title: const Text('Manage stored nonce history'),
+                        title: const Text('Manage stored recovery history'),
                         subtitle: Builder(
                           builder: (context) {
                             final entries = appState.sharedPreferencesProvider
@@ -310,8 +310,12 @@ class SettingsMainPageState extends State<SettingsMainPage> {
                               0,
                               (sum, entry) => sum + entry.byteSize,
                             );
+                            final failedKeys = entries.fold<int>(
+                              0,
+                              (sum, entry) => sum + entry.failedKeyCount,
+                            );
                             return Text(
-                              '${entries.length} cards | ${formatMifareClassicNonceHistoryBytes(bytes)}',
+                              '${entries.length} cards | $failedKeys failed keys | ${formatMifareClassicNonceHistoryBytes(bytes)}',
                             );
                           },
                         ),

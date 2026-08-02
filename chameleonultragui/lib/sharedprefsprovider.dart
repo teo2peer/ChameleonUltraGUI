@@ -24,6 +24,7 @@ const Set<String> _legacyBooleanSettingKeys = {
   'device_found_banner',
   'sidebar_auto_expanded',
   'emulation_change_monitoring',
+  'mifare_classic_nonce_history_enabled_v1',
 };
 const Set<String> _legacyScalarSettingKeys = {
   ..._legacyBooleanSettingKeys,
@@ -47,6 +48,7 @@ const String _mifareClassicNonceHistoryEnabledPreferenceKey =
     'mifare_classic_nonce_history_enabled_v1';
 const String _mifareClassicNonceHistoryPreferenceKey =
     'mifare_classic_nonce_history_v1';
+const int _mifareClassicNonceHistoryFormatVersion = 2;
 const int _dataSyncTransactionVersion = 2;
 const List<String> dataSyncStoredPreferenceKeys = [
   'cards',
@@ -68,13 +70,30 @@ const List<String> dataSyncStoredPreferenceKeys = [
 class MifareClassicNonceHistorySummary {
   const MifareClassicNonceHistorySummary({
     required this.cardUid,
-    required this.sampleCount,
+    required this.nonceSampleCount,
+    required this.failedKeyCount,
     required this.byteSize,
   });
 
   final String cardUid;
-  final int sampleCount;
+  final int nonceSampleCount;
+  final int failedKeyCount;
   final int byteSize;
+
+  int get sampleCount => nonceSampleCount;
+}
+
+class _MifareClassicNonceHistoryCard {
+  _MifareClassicNonceHistoryCard({
+    Set<String>? nonceSamples,
+    Set<String>? failedKeys,
+  }) : nonceSamples = nonceSamples ?? <String>{},
+       failedKeys = failedKeys ?? <String>{};
+
+  final Set<String> nonceSamples;
+  final Set<String> failedKeys;
+
+  bool get isEmpty => nonceSamples.isEmpty && failedKeys.isEmpty;
 }
 
 class SyncCheckpoint {
@@ -1173,7 +1192,7 @@ class SharedPreferencesProvider extends ChangeNotifier {
     if (!getMifareClassicNonceHistoryEnabled()) return false;
     final uid = _normaliseMifareClassicNonceHistoryUid(cardUid);
     if (uid == null || sample.isEmpty) return false;
-    return _readMifareClassicNonceHistory()[uid]?.contains(
+    return _readMifareClassicNonceHistory()[uid]?.nonceSamples.contains(
           _mifareClassicNonceSampleDigest(sample),
         ) ??
         false;
@@ -1187,8 +1206,32 @@ class SharedPreferencesProvider extends ChangeNotifier {
     final uid = _normaliseMifareClassicNonceHistoryUid(cardUid);
     if (uid == null || sample.isEmpty) return;
     final history = _readMifareClassicNonceHistory();
-    final entries = history.putIfAbsent(uid, () => <String>{});
-    if (!entries.add(_mifareClassicNonceSampleDigest(sample))) return;
+    final card = history.putIfAbsent(uid, _MifareClassicNonceHistoryCard.new);
+    if (!card.nonceSamples.add(_mifareClassicNonceSampleDigest(sample))) return;
+    await _writeMifareClassicNonceHistory(history);
+  }
+
+  bool hasMifareClassicFailedKey(String cardUid, String key) {
+    if (!getMifareClassicNonceHistoryEnabled()) return false;
+    final uid = _normaliseMifareClassicNonceHistoryUid(cardUid);
+    final normalisedKey = _normaliseMifareClassicKey(key);
+    if (uid == null || normalisedKey == null) return false;
+    return _readMifareClassicNonceHistory()[uid]?.failedKeys.contains(
+          _mifareClassicFailedKeyDigest(normalisedKey),
+        ) ??
+        false;
+  }
+
+  Future<void> recordMifareClassicFailedKey(String cardUid, String key) async {
+    if (!getMifareClassicNonceHistoryEnabled()) return;
+    final uid = _normaliseMifareClassicNonceHistoryUid(cardUid);
+    final normalisedKey = _normaliseMifareClassicKey(key);
+    if (uid == null || normalisedKey == null) return;
+    final history = _readMifareClassicNonceHistory();
+    final card = history.putIfAbsent(uid, _MifareClassicNonceHistoryCard.new);
+    if (!card.failedKeys.add(_mifareClassicFailedKeyDigest(normalisedKey))) {
+      return;
+    }
     await _writeMifareClassicNonceHistory(history);
   }
 
@@ -1199,12 +1242,14 @@ class SharedPreferencesProvider extends ChangeNotifier {
       for (final entry in history.entries)
         MifareClassicNonceHistorySummary(
           cardUid: entry.key,
-          sampleCount: entry.value.length,
+          nonceSampleCount: entry.value.nonceSamples.length,
+          failedKeyCount: entry.value.failedKeys.length,
           byteSize: utf8
               .encode(
                 jsonEncode({
                   'uid': entry.key,
-                  'samples': entry.value.toList()..sort(),
+                  'nonceSamples': entry.value.nonceSamples.toList()..sort(),
+                  'failedKeys': entry.value.failedKeys.toList()..sort(),
                 }),
               )
               .length,
@@ -1222,7 +1267,7 @@ class SharedPreferencesProvider extends ChangeNotifier {
     await _writeMifareClassicNonceHistory(history);
   }
 
-  Map<String, Set<String>> _readMifareClassicNonceHistory() {
+  Map<String, _MifareClassicNonceHistoryCard> _readMifareClassicNonceHistory() {
     final encoded = _sharedPreferences.getString(
       _mifareClassicNonceHistoryPreferenceKey,
     );
@@ -1230,22 +1275,35 @@ class SharedPreferencesProvider extends ChangeNotifier {
     try {
       final decoded = jsonDecode(encoded);
       if (decoded is! Map ||
-          decoded['version'] != 1 ||
-          decoded['cards'] is! Map) {
+          decoded['cards'] is! Map ||
+          !const {
+            1,
+            _mifareClassicNonceHistoryFormatVersion,
+          }.contains(decoded['version'])) {
         return {};
       }
-      final history = <String, Set<String>>{};
+      final version = decoded['version'] as int;
+      final history = <String, _MifareClassicNonceHistoryCard>{};
       for (final entry in (decoded['cards'] as Map).entries) {
         final uid = entry.key is String
             ? _normaliseMifareClassicNonceHistoryUid(entry.key as String)
             : null;
-        if (uid == null || entry.value is! List) continue;
-        final samples = <String>{
-          for (final sample in entry.value as List)
-            if (sample is String && RegExp(r'^[a-f0-9]{64}$').hasMatch(sample))
-              sample,
+        if (uid == null) continue;
+        final card = switch (version) {
+          1 when entry.value is List => _MifareClassicNonceHistoryCard(
+            nonceSamples: _mifareClassicHistoryDigests(entry.value),
+          ),
+          _ when entry.value is Map => _MifareClassicNonceHistoryCard(
+            nonceSamples: _mifareClassicHistoryDigests(
+              (entry.value as Map)['nonceSamples'],
+            ),
+            failedKeys: _mifareClassicHistoryDigests(
+              (entry.value as Map)['failedKeys'],
+            ),
+          ),
+          _ => _MifareClassicNonceHistoryCard(),
         };
-        if (samples.isNotEmpty) history[uid] = samples;
+        if (!card.isEmpty) history[uid] = card;
       }
       return history;
     } catch (_) {
@@ -1253,8 +1311,15 @@ class SharedPreferencesProvider extends ChangeNotifier {
     }
   }
 
+  Set<String> _mifareClassicHistoryDigests(Object? value) => {
+    if (value is List)
+      for (final digest in value)
+        if (digest is String && RegExp(r'^[a-f0-9]{64}$').hasMatch(digest))
+          digest,
+  };
+
   Future<void> _writeMifareClassicNonceHistory(
-    Map<String, Set<String>> history,
+    Map<String, _MifareClassicNonceHistoryCard> history,
   ) async {
     if (history.isEmpty) {
       final removed = await _sharedPreferences.remove(
@@ -1268,10 +1333,13 @@ class SharedPreferencesProvider extends ChangeNotifier {
       }
     } else {
       final encoded = jsonEncode({
-        'version': 1,
+        'version': _mifareClassicNonceHistoryFormatVersion,
         'cards': {
           for (final uid in history.keys.toList()..sort())
-            uid: history[uid]!.toList()..sort(),
+            uid: {
+              'nonceSamples': history[uid]!.nonceSamples.toList()..sort(),
+              'failedKeys': history[uid]!.failedKeys.toList()..sort(),
+            },
         },
       });
       final stored = await _sharedPreferences.setString(
@@ -1296,8 +1364,16 @@ class SharedPreferencesProvider extends ChangeNotifier {
         : null;
   }
 
+  String? _normaliseMifareClassicKey(String value) {
+    final key = value.replaceAll(RegExp(r'[^a-fA-F0-9]'), '').toUpperCase();
+    return key.length == 12 ? key : null;
+  }
+
   String _mifareClassicNonceSampleDigest(String sample) =>
       sha256.convert(utf8.encode(sample)).toString();
+
+  String _mifareClassicFailedKeyDigest(String key) =>
+      sha256.convert(utf8.encode(key)).toString();
 
   List<Dictionary> getDictionaries({int keyLength = 0}) {
     return _decodeStoredDictionaries(
@@ -1499,6 +1575,8 @@ class SharedPreferencesProvider extends ChangeNotifier {
       'sidebar_expanded_index': getSideBarExpandedIndex(),
       'emulation_change_monitoring': getEmulationChangeMonitoring(),
       'hf_capture_retention_days': getHfCaptureRetentionDays(),
+      'mifare_classic_nonce_history_enabled_v1':
+          getMifareClassicNonceHistoryEnabled(),
     };
     _validateLegacySettings(settings);
     return jsonEncode({
@@ -1549,10 +1627,15 @@ class SharedPreferencesProvider extends ChangeNotifier {
 
     // Validate and copy every value before mutating any preference.
     final settings = _validateLegacySettings(candidate);
+    final nonceHistoryEnabled =
+        settings.remove('mifare_classic_nonce_history_enabled_v1') as bool?;
     await _setSynchronizedScalars(
       settings,
       notify: settings.containsKey('locale'),
     );
+    if (nonceHistoryEnabled != null) {
+      await setMifareClassicNonceHistoryEnabled(nonceHistoryEnabled);
+    }
   }
 
   bool getConfirmDelete() {

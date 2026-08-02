@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:chameleonultragui/sharedprefsprovider.dart';
+import 'package:crypto/crypto.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -33,6 +34,7 @@ void main() {
       await preferences.setThemeColor(7);
       await preferences.setLocale(const Locale('de', 'AT'));
       await preferences.setHfCaptureRetentionDays(90);
+      await preferences.setMifareClassicNonceHistoryEnabled(true);
 
       final encoded = preferences.dumpSettingsToJson();
       final decoded = jsonDecode(encoded) as Map<String, dynamic>;
@@ -52,16 +54,20 @@ void main() {
         'sidebar_expanded_index',
         'emulation_change_monitoring',
         'hf_capture_retention_days',
+        'mifare_classic_nonce_history_enabled_v1',
       });
       expect(settings['app_theme'], ThemeMode.dark.index);
       expect(settings['app_theme_color'], 7);
       expect(settings['locale'], 'de-AT');
       expect(settings['hf_capture_retention_days'], 90);
+      expect(settings['mifare_classic_nonce_history_enabled_v1'], isTrue);
       expect(encoded, isNot(contains('plaintext-')));
 
       await preferences.setHfCaptureRetentionDays(7);
+      await preferences.setMifareClassicNonceHistoryEnabled(false);
       await preferences.restoreSettingsFromJson(encoded);
       expect(preferences.getHfCaptureRetentionDays(), 90);
+      expect(preferences.getMifareClassicNonceHistoryEnabled(), isTrue);
     },
   );
 
@@ -147,29 +153,75 @@ void main() {
   });
 
   test(
-    'nonce history is opt-in, deduplicated by UID, and removable per card',
+    'recovery history is opt-in, hashes failed keys, and is removable per card',
     () async {
       const uid = '04 11 22 33';
       const sample = 'weak|capture-one';
 
       expect(preferences.getMifareClassicNonceHistoryEnabled(), isFalse);
+      await preferences.recordMifareClassicFailedKey(uid, 'FF FF FF FF FF FF');
       await preferences.setMifareClassicNonceHistoryEnabled(true);
+      expect(
+        preferences.hasMifareClassicFailedKey(uid, 'ffffffffffff'),
+        isFalse,
+      );
       await preferences.recordMifareClassicNonceSample(uid, sample);
       await preferences.recordMifareClassicNonceSample(uid, sample);
       await preferences.recordMifareClassicNonceSample(uid, 'weak|capture-two');
+      await preferences.recordMifareClassicFailedKey(uid, 'FF FF FF FF FF FF');
 
       expect(preferences.hasMifareClassicNonceSample(uid, sample), isTrue);
+      expect(
+        preferences.hasMifareClassicFailedKey(uid, 'ffffffffffff'),
+        isTrue,
+      );
+      expect(
+        preferences.hasMifareClassicFailedKey('04 11 22 34', 'ffffffffffff'),
+        isFalse,
+      );
       final summaries = preferences.getMifareClassicNonceHistorySummaries();
       expect(summaries, hasLength(1));
       expect(summaries.single.cardUid, '04112233');
-      expect(summaries.single.sampleCount, 2);
+      expect(summaries.single.nonceSampleCount, 2);
+      expect(summaries.single.failedKeyCount, 1);
       expect(summaries.single.byteSize, greaterThan(0));
       expect(preferences.dumpSettingsToJson(), isNot(contains('04112233')));
+      expect(preferences.dumpSettingsToJson(), isNot(contains('FFFFFFFFFFFF')));
 
       await preferences.clearMifareClassicNonceHistoryForCard(uid);
       expect(preferences.getMifareClassicNonceHistorySummaries(), isEmpty);
     },
   );
+
+  test('legacy nonce history migrates when failed keys are recorded', () async {
+    const uid = '04 11 22 33';
+    const sample = 'weak|legacy-capture';
+    final raw = await SharedPreferences.getInstance();
+    final digest = sha256.convert(utf8.encode(sample)).toString();
+    await raw.setString(
+      'mifare_classic_nonce_history_v1',
+      jsonEncode({
+        'version': 1,
+        'cards': {
+          uid: [digest],
+        },
+      }),
+    );
+
+    await preferences.setMifareClassicNonceHistoryEnabled(true);
+    expect(preferences.hasMifareClassicNonceSample(uid, sample), isTrue);
+    await preferences.recordMifareClassicFailedKey(uid, 'ffffffffffff');
+
+    final stored =
+        jsonDecode(raw.getString('mifare_classic_nonce_history_v1')!)
+            as Map<String, dynamic>;
+    expect(stored['version'], 2);
+    final card =
+        (stored['cards'] as Map<String, dynamic>)['04112233']
+            as Map<String, dynamic>;
+    expect(card['nonceSamples'], [digest]);
+    expect(card['failedKeys'], hasLength(1));
+  });
 
   test(
     'legacy flat backup migrates only allowlisted scalar settings',

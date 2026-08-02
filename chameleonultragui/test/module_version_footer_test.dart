@@ -18,9 +18,14 @@ void main() {
   });
 
   test('Autopwn variants keep independent versions', () {
-    expect(moduleReleaseFor(ModuleId.autopwn).version, '1.2.0');
-    expect(moduleReleaseFor(ModuleId.autopwnPlus).version, '1.1.0');
-    expect(moduleReleaseFor(ModuleId.autopwnV2).version, '1.1.0');
+    expect(moduleReleaseFor(ModuleId.autopwn).version, '1.3.0');
+    expect(moduleReleaseFor(ModuleId.autopwnPlus).version, '1.2.0');
+    expect(moduleReleaseFor(ModuleId.autopwnV2).version, '1.2.0');
+    expect(
+      moduleReleaseFor(ModuleId.mifareClassicNonceHistory).version,
+      '1.1.0',
+    );
+    expect(moduleReleaseFor(ModuleId.settings).version, '1.1.0');
   });
 
   test('capture, batching, and sync owners expose updated releases', () {
@@ -42,9 +47,9 @@ void main() {
   });
 
   test('Undercover keeps an independent release', () {
-    expect(moduleReleaseFor(ModuleId.undercover).version, '1.0.1');
+    expect(moduleReleaseFor(ModuleId.undercover).version, '2.1.0');
     expect(moduleReleaseFor(ModuleId.undercover).updatedAt, '2026-08-02');
-    expect(moduleReleaseFor(ModuleId.appShell).version, '1.1.0');
+    expect(moduleReleaseFor(ModuleId.appShell).version, '1.4.0');
   });
 
   testWidgets('footer renders the selected module release', (tester) async {
@@ -145,6 +150,54 @@ void main() {
 
     expect(find.text('Overlay'), findsOneWidget);
     expect(activeModule.value, ModuleId.pm3Catalog);
+    expect(observer.overlayActive.value, isTrue);
+
+    Navigator.of(tester.element(find.text('Overlay'))).pop();
+    await tester.pumpAndSettle();
+    expect(observer.overlayActive.value, isFalse);
+  });
+
+  testWidgets('observer removes vetoed routes without a pop loop', (
+    tester,
+  ) async {
+    final activeModule = ValueNotifier(ModuleId.device);
+    addTearDown(activeModule.dispose);
+    final observer = ModuleNavigationObserver(
+      activeModule: activeModule,
+      rootModule: ModuleId.device,
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        navigatorObservers: [observer],
+        home: Scaffold(
+          body: Builder(
+            builder: (context) => TextButton(
+              onPressed: () => Navigator.of(context).push<void>(
+                ModulePageRoute<void>(
+                  moduleId: ModuleId.tools,
+                  builder: (_) => const PopScope(
+                    canPop: false,
+                    child: Scaffold(body: Text('Vetoed route')),
+                  ),
+                ),
+              ),
+              child: const Text('Open vetoed route'),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('Open vetoed route'));
+    await tester.pumpAndSettle();
+    expect(find.text('Vetoed route'), findsOneWidget);
+
+    observer.removeRoutesAboveRoot();
+    await tester.pumpAndSettle();
+
+    expect(find.text('Open vetoed route'), findsOneWidget);
+    expect(activeModule.value, ModuleId.device);
   });
 
   testWidgets('versioned dialogs select and restore their own module', (

@@ -79,6 +79,21 @@ void main() {
     );
   });
 
+  test('key activity estimates remaining time from observed scan speed', () {
+    final startedAt = DateTime(2026, 7, 30, 12);
+    final activity = MifareClassicRecoveryActivity(
+      label: 'Key candidates',
+      completed: 20,
+      total: 100,
+      startedAt: startedAt,
+      unit: 'keys',
+    );
+
+    final now = startedAt.add(const Duration(seconds: 10));
+    expect(activity.itemsPerSecond(now), 2);
+    expect(activity.estimatedRemaining(now), const Duration(seconds: 40));
+  });
+
   testWidgets('Autopwn checklist exposes phase status and green completion', (
     tester,
   ) async {
@@ -127,10 +142,12 @@ void main() {
           body: SingleChildScrollView(
             child: AutopwnProgressChecklist(
               progress: progress,
-              activity: const MifareClassicRecoveryActivity(
+              activity: MifareClassicRecoveryActivity(
                 label: 'Key candidates',
                 completed: 12,
                 total: 40,
+                startedAt: DateTime.now().subtract(const Duration(seconds: 6)),
+                unit: 'keys',
               ),
             ),
           ),
@@ -144,6 +161,8 @@ void main() {
     );
     expect(find.text('Key candidates'), findsOneWidget);
     expect(find.text('12/40'), findsOneWidget);
+    expect(find.textContaining('Key scan ETA'), findsOneWidget);
+    expect(find.textContaining('keys/s'), findsOneWidget);
     expect(find.byType(LinearProgressIndicator), findsNWidgets(3));
   });
 

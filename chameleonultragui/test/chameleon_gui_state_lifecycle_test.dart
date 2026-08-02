@@ -3,6 +3,7 @@ import 'dart:typed_data';
 
 import 'package:chameleonultragui/bridge/chameleon.dart';
 import 'package:chameleonultragui/connector/serial_abstract.dart';
+import 'package:chameleonultragui/helpers/definitions.dart';
 import 'package:chameleonultragui/main.dart';
 import 'package:chameleonultragui/sharedprefsprovider.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -55,48 +56,139 @@ void main() {
     expect(fixture.state.hasCompletedDeviceScan, isFalse);
   });
 
-  test('disconnect rejects slot work queued for the previous connection',
-      () async {
+  test(
+    'disconnect rejects slot work queued for the previous connection',
+    () async {
+      final fixture = await _fixture();
+      fixture.serial.connected = true;
+      fixture.state.log = Logger(level: Level.off);
+      fixture.state.communicator = ChameleonCommunicator(
+        fixture.state.log!,
+        port: fixture.serial,
+      );
+      final started = Completer<void>();
+      final blocker = Completer<void>();
+      final first = fixture.state.runSlotOperation(() {
+        started.complete();
+        return blocker.future;
+      });
+      await started.future;
+      var secondRan = false;
+      final second = fixture.state.runSlotOperation(() async {
+        secondRan = true;
+      });
+      final secondExpectation = expectLater(second, throwsStateError);
+
+      await fixture.state.disconnect();
+      blocker.complete();
+      await first;
+
+      await secondExpectation;
+      expect(secondRan, isFalse);
+    },
+  );
+
+  test(
+    'BLE loss disarms LEDs but keeps the undercover launcher active',
+    () async {
+      final fixture = await _fixture();
+      fixture.state.undercoverMode = true;
+      fixture.state.undercoverDeviceArmed = true;
+      fixture.serial.connected = false;
+
+      fixture.state.onConnectorStateChanged();
+
+      expect(fixture.state.undercoverMode, isTrue);
+      expect(fixture.state.undercoverDeviceArmed, isFalse);
+    },
+  );
+
+  test(
+    'BLE enters local-only undercover without a firmware capability',
+    () async {
+      final fixture = await _fixture();
+      fixture.serial.connected = true;
+      fixture.serial.connectionType = ConnectionType.ble;
+      fixture.state.log = Logger(level: Level.off);
+      fixture.state.communicator = ChameleonCommunicator(
+        fixture.state.log!,
+        port: fixture.serial,
+      );
+
+      expect(fixture.state.canEnterUndercover, isTrue);
+      await fixture.state.enterUndercover();
+
+      expect(fixture.state.undercoverMode, isTrue);
+      expect(fixture.state.undercoverDeviceArmed, isFalse);
+      expect(fixture.serial.disconnectCount, 0);
+    },
+  );
+
+  test('uncertain Undercover activation disconnects to restore LEDs', () async {
     final fixture = await _fixture();
     fixture.serial.connected = true;
+    fixture.serial.connectionType = ConnectionType.ble;
     fixture.state.log = Logger(level: Level.off);
-    fixture.state.communicator = ChameleonCommunicator(
-      fixture.state.log!,
-      port: fixture.serial,
+    fixture.state.communicator = _UndercoverTestCommunicator(
+      fixture.serial,
+      failActivation: true,
     );
-    final started = Completer<void>();
-    final blocker = Completer<void>();
-    final first = fixture.state.runSlotOperation(() {
-      started.complete();
-      return blocker.future;
-    });
-    await started.future;
-    var secondRan = false;
-    final second = fixture.state.runSlotOperation(() async {
-      secondRan = true;
-    });
-    final secondExpectation = expectLater(second, throwsStateError);
 
-    await fixture.state.disconnect();
-    blocker.complete();
-    await first;
+    await expectLater(fixture.state.enterUndercover(), throwsStateError);
 
-    await secondExpectation;
-    expect(secondRan, isFalse);
-  });
-
-  test('BLE loss disarms LEDs but keeps the undercover launcher active',
-      () async {
-    final fixture = await _fixture();
-    fixture.state.undercoverMode = true;
-    fixture.state.undercoverDeviceArmed = true;
-    fixture.serial.connected = false;
-
-    fixture.state.onConnectorStateChanged();
-
-    expect(fixture.state.undercoverMode, isTrue);
+    expect(fixture.serial.disconnectCount, 1);
+    expect(fixture.state.undercoverMode, isFalse);
     expect(fixture.state.undercoverDeviceArmed, isFalse);
   });
+
+  test('uncertain activation reports an unconfirmed BLE disconnect', () async {
+    final fixture = await _fixture();
+    fixture.serial.connected = true;
+    fixture.serial.connectionType = ConnectionType.ble;
+    fixture.serial.failDisconnect = true;
+    fixture.state.log = Logger(level: Level.off);
+    fixture.state.communicator = _UndercoverTestCommunicator(
+      fixture.serial,
+      failActivation: true,
+    );
+
+    await expectLater(
+      fixture.state.enterUndercover(),
+      throwsA(
+        isA<StateError>().having(
+          (error) => error.message,
+          'message',
+          contains('disconnect could not be confirmed'),
+        ),
+      ),
+    );
+
+    expect(fixture.serial.connected, isTrue);
+    expect(fixture.serial.disconnectCount, 2);
+    expect(fixture.state.undercoverMode, isTrue);
+    expect(fixture.state.undercoverDeviceArmed, isTrue);
+  });
+
+  test(
+    'advertised Undercover capability arms and restores the device',
+    () async {
+      final fixture = await _fixture();
+      fixture.serial.connected = true;
+      fixture.serial.connectionType = ConnectionType.ble;
+      fixture.state.log = Logger(level: Level.off);
+      final communicator = _UndercoverTestCommunicator(fixture.serial);
+      fixture.state.communicator = communicator;
+
+      await fixture.state.enterUndercover();
+      expect(fixture.state.undercoverMode, isTrue);
+      expect(fixture.state.undercoverDeviceArmed, isTrue);
+      expect(communicator.modes, [true]);
+
+      await fixture.state.exitUndercover();
+      expect(communicator.modes, [true, false]);
+      expect(fixture.serial.disconnectCount, 0);
+    },
+  );
 
   test('failed LED restore disconnects before leaving undercover', () async {
     final fixture = await _fixture();
@@ -115,6 +207,26 @@ void main() {
     expect(fixture.serial.disconnectCount, 1);
     expect(fixture.state.undercoverMode, isFalse);
     expect(fixture.state.undercoverDeviceArmed, isFalse);
+  });
+
+  test('failed LED restore and disconnect keep Undercover active', () async {
+    final fixture = await _fixture();
+    fixture.serial.connected = true;
+    fixture.serial.connectionType = ConnectionType.ble;
+    fixture.serial.failDisconnect = true;
+    fixture.state.log = Logger(level: Level.off);
+    fixture.state.communicator = _UndercoverTestCommunicator(
+      fixture.serial,
+      failDeactivation: true,
+    );
+    fixture.state.undercoverMode = true;
+    fixture.state.undercoverDeviceArmed = true;
+
+    await expectLater(fixture.state.exitUndercover(), throwsStateError);
+
+    expect(fixture.serial.disconnectCount, 2);
+    expect(fixture.state.undercoverMode, isTrue);
+    expect(fixture.state.undercoverDeviceArmed, isTrue);
   });
 }
 
@@ -154,6 +266,7 @@ class _BlockingSerial extends AbstractSerial {
   final discovery = Completer<List<Chameleon>>();
   final started = Completer<void>();
   int disconnectCount = 0;
+  bool failDisconnect = false;
 
   @override
   Future<List<Chameleon>> availableChameleons(bool onlyDFU) {
@@ -164,6 +277,7 @@ class _BlockingSerial extends AbstractSerial {
   @override
   Future<bool> performDisconnect() async {
     disconnectCount++;
+    if (failDisconnect) throw StateError('BLE disconnect failed');
     resetConnectionState();
     notifyConnectionStateChanged();
     return true;
@@ -177,4 +291,33 @@ class _BlockingSerial extends AbstractSerial {
 
   @override
   Future<bool> write(Uint8List command, {bool firmware = false}) async => false;
+}
+
+class _UndercoverTestCommunicator extends ChameleonCommunicator {
+  _UndercoverTestCommunicator(
+    AbstractSerial serial, {
+    this.failActivation = false,
+    this.failDeactivation = false,
+  }) : super(Logger(level: Level.off), port: serial);
+
+  final bool failActivation;
+  final bool failDeactivation;
+  final List<bool> modes = [];
+
+  @override
+  bool? supportsCommandSync(ChameleonCommand command) =>
+      command == ChameleonCommand.setRuntimeUndercoverMode
+      ? true
+      : super.supportsCommandSync(command);
+
+  @override
+  Future<void> setRuntimeUndercoverMode(bool enabled) async {
+    modes.add(enabled);
+    if (enabled && failActivation) {
+      throw StateError('Undercover activation response was lost');
+    }
+    if (!enabled && failDeactivation) {
+      throw StateError('Undercover LED restore failed');
+    }
+  }
 }

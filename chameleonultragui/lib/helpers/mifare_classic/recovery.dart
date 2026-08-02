@@ -181,13 +181,34 @@ class MifareClassicRecoveryActivity {
     required this.label,
     required this.completed,
     required this.total,
+    this.startedAt,
+    this.unit = 'items',
   });
 
   final String label;
   final int completed;
   final int total;
+  final DateTime? startedAt;
+  final String unit;
 
   double get progress => total == 0 ? 0 : (completed / total).clamp(0, 1);
+
+  double? itemsPerSecond(DateTime now) {
+    final started = startedAt;
+    if (started == null || completed == 0) return null;
+    final elapsed = now.difference(started);
+    if (elapsed <= Duration.zero) return null;
+    return completed / elapsed.inMicroseconds * Duration.microsecondsPerSecond;
+  }
+
+  Duration? estimatedRemaining(DateTime now) {
+    final rate = itemsPerSecond(now);
+    if (rate == null || rate <= 0 || completed >= total) return null;
+    return Duration(
+      microseconds:
+          ((total - completed) / rate * Duration.microsecondsPerSecond).round(),
+    );
+  }
 }
 
 class MifareClassicRecovery {
@@ -205,8 +226,10 @@ class MifareClassicRecovery {
   double? hardnestedProgress;
   double? keyCheckProgress;
   MifareClassicRecoveryActivity? activityProgress;
+  DateTime? _activityStartedAt;
   String? cardUid;
   CardData? cardIdentity;
+  final Map<String, Set<int>> _failedCandidateSlots = {};
   void Function() update;
   MifareClassicType mifareClassicType;
   bool isMifareClassicEV1;
@@ -285,10 +308,24 @@ class MifareClassicRecovery {
     required int completed,
     required int total,
   }) {
+    if (completed == 0 ||
+        activityProgress?.label != label ||
+        activityProgress?.total != total) {
+      _activityStartedAt = DateTime.now();
+    }
     activityProgress = MifareClassicRecoveryActivity(
       label: label,
       completed: completed,
       total: total,
+      startedAt: _activityStartedAt,
+      unit: switch (label) {
+        'Key candidates' || 'Reused key checks' => 'keys',
+        'Card blocks' => 'blocks',
+        'Nested nonces' ||
+        'Static Nested nonces' ||
+        'Hardnested nonce coverage' => 'nonces',
+        _ => 'items',
+      },
     );
     update();
   }
@@ -303,6 +340,7 @@ class MifareClassicRecovery {
 
   void clearActivityProgress() {
     activityProgress = null;
+    _activityStartedAt = null;
     update();
   }
 
@@ -335,6 +373,45 @@ class MifareClassicRecovery {
       uid,
       fingerprint,
     );
+  }
+
+  List<Uint8List> _withoutRememberedFailedKeys(List<Uint8List> keys) {
+    final uid = cardUid;
+    if (uid == null) return keys;
+    return [
+      for (final key in keys)
+        if (!appState.sharedPreferencesProvider.hasMifareClassicFailedKey(
+          uid,
+          bytesToHex(key),
+        ))
+          key,
+    ];
+  }
+
+  Future<void> _rememberFailedKeyChecks(
+    Iterable<Uint8List> keys,
+    int keyType,
+    int sector,
+  ) async {
+    final uid = cardUid;
+    final preferences = appState.sharedPreferencesProvider;
+    if (uid == null || !preferences.getMifareClassicNonceHistoryEnabled()) {
+      return;
+    }
+    final slotCount =
+        mfClassicGetSectorCount(mifareClassicType, isEV1: isMifareClassicEV1) *
+        2;
+    if (slotCount == 0) return;
+    final slot = sector * 2 + keyType;
+    for (final key in keys) {
+      if (key.length != 6) continue;
+      final failedSlots = _failedCandidateSlots.putIfAbsent(
+        bytesToHex(key),
+        () => <int>{},
+      );
+      if (!failedSlots.add(slot) || failedSlots.length != slotCount) continue;
+      await preferences.recordMifareClassicFailedKey(uid, bytesToHex(key));
+    }
   }
 
   // Reorder candidates so defaults and keys already verified on another sector
@@ -490,6 +567,7 @@ class MifareClassicRecovery {
   ) async {
     _throwIfCancelled();
     keys = _prioritiseCandidates(keys);
+    keys = _withoutRememberedFailedKeys(keys);
     state = localizations.checking_keys(keys.length);
     Uint8List? key;
     keyCheckProgress = null;
@@ -537,9 +615,12 @@ class MifareClassicRecovery {
           }
           await recheckKey(key, sector);
           return true;
-        } else if (totalChunks > 1) {
-          keyCheckProgress = chunkIndex / totalChunks;
-          update();
+        } else {
+          await _rememberFailedKeyChecks(chunk, keyType, sector);
+          if (totalChunks > 1) {
+            keyCheckProgress = chunkIndex / totalChunks;
+            update();
+          }
         }
       }
 
