@@ -1,5 +1,6 @@
 enum ModuleId {
   appShell,
+  undercover,
   device,
   library,
   slotManager,
@@ -74,8 +75,13 @@ const _initialReleaseDate = '2026-07-30';
 const moduleVersions = <ModuleId, ModuleRelease>{
   ModuleId.appShell: ModuleRelease(
     name: 'App Shell',
-    version: '1.0.0',
-    updatedAt: _initialReleaseDate,
+    version: '1.1.0',
+    updatedAt: '2026-08-02',
+  ),
+  ModuleId.undercover: ModuleRelease(
+    name: 'Undercover',
+    version: '1.0.1',
+    updatedAt: '2026-08-02',
   ),
   ModuleId.device: ModuleRelease(
     name: 'Device',

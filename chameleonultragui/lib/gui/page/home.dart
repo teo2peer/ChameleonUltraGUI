@@ -284,6 +284,27 @@ class HomePageState extends State<HomePage> {
                               mainAxisAlignment: MainAxisAlignment.end,
                               children: [
                                 IconButton(
+                                  key: const Key('home-undercover-button'),
+                                  tooltip: appState.canEnterUndercover
+                                      ? localizations.undercover_enter
+                                      : localizations.undercover_unavailable,
+                                  onPressed: () async {
+                                    try {
+                                      await appState.enterUndercover();
+                                    } catch (error) {
+                                      if (!context.mounted) return;
+                                      scaffoldMessenger.hideCurrentSnackBar();
+                                      scaffoldMessenger.showSnackBar(
+                                        SnackBar(
+                                          content: Text(
+                                              '${localizations.undercover_unavailable} $error'),
+                                        ),
+                                      );
+                                    }
+                                  },
+                                  icon: const Icon(Icons.visibility_off),
+                                ),
+                                IconButton(
                                   onPressed: () async {
                                     // Disconnect
                                     await appState.disconnect(manual: true);
