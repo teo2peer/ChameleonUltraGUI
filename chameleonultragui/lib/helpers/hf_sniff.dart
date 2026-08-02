@@ -26,20 +26,14 @@ class HfSniffAnnotatedFrame {
   final HfSniffFrame frame;
   final String label;
 
-  const HfSniffAnnotatedFrame({
-    required this.frame,
-    required this.label,
-  });
+  const HfSniffAnnotatedFrame({required this.frame, required this.label});
 }
 
 class HfSniffAuthRequest {
   final String keyType;
   final int block;
 
-  const HfSniffAuthRequest({
-    required this.keyType,
-    required this.block,
-  });
+  const HfSniffAuthRequest({required this.keyType, required this.block});
 }
 
 class HfSniffSummary {
@@ -79,6 +73,7 @@ class HfSniffNonceExchange {
   final int nt;
   final int nr;
   final int ar;
+  final int? at;
 
   const HfSniffNonceExchange({
     required this.uid,
@@ -87,6 +82,7 @@ class HfSniffNonceExchange {
     required this.nt,
     required this.nr,
     required this.ar,
+    this.at,
   });
 
   String get ntHex => _u32Hex(nt);
@@ -94,6 +90,8 @@ class HfSniffNonceExchange {
   String get nrHex => _u32Hex(nr);
 
   String get arHex => _u32Hex(ar);
+
+  String? get atHex => at == null ? null : _u32Hex(at!);
 }
 
 class HfSniffNonceGroup {
@@ -109,7 +107,12 @@ class HfSniffNonceGroup {
     required this.exchanges,
   });
 
-  bool get canRecover => exchanges.length >= 2;
+  bool get canRecoverMfkey64 =>
+      exchanges.any((exchange) => exchange.at != null);
+
+  bool get canRecoverMfkey32 => exchanges.length >= 2;
+
+  bool get canRecover => canRecoverMfkey64 || canRecoverMfkey32;
 
   String get id => '$uid-$block-$keyType';
 }
@@ -168,20 +171,24 @@ List<HfSniffFrame> parseHf14aSniffFrames(Uint8List buffer) {
     offset += rawByteLength;
 
     final stripped = _stripParityBits(rawBytes, rawBitLength);
-    frames.add(HfSniffFrame(
-      rawBitLength: rawBitLength,
-      bitLength: stripped.$1,
-      data: stripped.$2,
-      direction:
-          isTx ? HfSniffDirection.cardToReader : HfSniffDirection.readerToCard,
-    ));
+    frames.add(
+      HfSniffFrame(
+        rawBitLength: rawBitLength,
+        bitLength: stripped.$1,
+        data: stripped.$2,
+        direction: isTx
+            ? HfSniffDirection.cardToReader
+            : HfSniffDirection.readerToCard,
+      ),
+    );
   }
 
   return frames;
 }
 
 List<HfSniffAnnotatedFrame> annotateHf14aSniffFrames(
-    List<HfSniffFrame> frames) {
+  List<HfSniffFrame> frames,
+) {
   final annotated = <HfSniffAnnotatedFrame>[];
   bool expectNt = false;
   bool expectNrAr = false;
@@ -254,8 +261,9 @@ HfSniffSummary summarizeHf14aSniff(List<HfSniffFrame> frames) {
         data.length >= 6 &&
         data[1] == 0x70) {
       final chunk = List<int>.from(data.sublist(2, 6));
-      final uidPart =
-          (chunk.isNotEmpty && chunk.first == 0x88) ? chunk.sublist(1) : chunk;
+      final uidPart = (chunk.isNotEmpty && chunk.first == 0x88)
+          ? chunk.sublist(1)
+          : chunk;
       if (b0 == 0x93) {
         uidCl1 = uidPart;
       } else if (b0 == 0x95) {
@@ -322,11 +330,7 @@ HfSniffSummary summarizeHf14aSniff(List<HfSniffFrame> frames) {
     }
   }
 
-  final uidBytes = <int>[
-    ...?uidCl1,
-    ...?uidCl2,
-    ...?uidCl3,
-  ];
+  final uidBytes = <int>[...?uidCl1, ...?uidCl2, ...?uidCl3];
   final uid = uidBytes.isEmpty ? null : _hex(Uint8List.fromList(uidBytes));
 
   return HfSniffSummary(
@@ -338,7 +342,7 @@ HfSniffSummary summarizeHf14aSniff(List<HfSniffFrame> frames) {
     aids: aids,
     authRequests: authRequests.isEmpty && authSeen
         ? const <HfSniffAuthRequest>[
-            HfSniffAuthRequest(keyType: 'unknown', block: -1)
+            HfSniffAuthRequest(keyType: 'unknown', block: -1),
           ]
         : authRequests,
     arqcSeen: arqcSeen,
@@ -389,21 +393,31 @@ List<HfSniffNonceExchange> extractHf14aSniffNonces(List<HfSniffFrame> frames) {
       continue;
     }
 
-    nonces.add(HfSniffNonceExchange(
-      uid: uidHex,
-      block: data[1],
-      keyType: data[0] == 0x60 ? 'A' : 'B',
-      nt: _bytesToInt(ntFrame.data),
-      nr: _bytesToInt(Uint8List.fromList(nrArFrame.data.sublist(0, 4))),
-      ar: _bytesToInt(Uint8List.fromList(nrArFrame.data.sublist(4, 8))),
-    ));
+    final atFrame = index + 3 < frames.length ? frames[index + 3] : null;
+    final at =
+        atFrame != null && atFrame.isCardToReader && atFrame.data.length == 4
+        ? _bytesToInt(atFrame.data)
+        : null;
+
+    nonces.add(
+      HfSniffNonceExchange(
+        uid: uidHex,
+        block: data[1],
+        keyType: data[0] == 0x60 ? 'A' : 'B',
+        nt: _bytesToInt(ntFrame.data),
+        nr: _bytesToInt(Uint8List.fromList(nrArFrame.data.sublist(0, 4))),
+        ar: _bytesToInt(Uint8List.fromList(nrArFrame.data.sublist(4, 8))),
+        at: at,
+      ),
+    );
   }
 
   return nonces;
 }
 
 List<HfSniffNonceGroup> groupHf14aSniffNonces(
-    List<HfSniffNonceExchange> nonces) {
+  List<HfSniffNonceExchange> nonces,
+) {
   final grouped = <String, List<HfSniffNonceExchange>>{};
 
   for (final nonce in nonces) {
@@ -411,30 +425,29 @@ List<HfSniffNonceGroup> groupHf14aSniffNonces(
     grouped.putIfAbsent(key, () => <HfSniffNonceExchange>[]).add(nonce);
   }
 
-  return grouped.entries.map((entry) {
-    final first = entry.value.first;
-    return HfSniffNonceGroup(
-      uid: first.uid,
-      block: first.block,
-      keyType: first.keyType,
-      exchanges: List<HfSniffNonceExchange>.unmodifiable(entry.value),
-    );
-  }).toList(growable: false);
+  return grouped.entries
+      .map((entry) {
+        final first = entry.value.first;
+        return HfSniffNonceGroup(
+          uid: first.uid,
+          block: first.block,
+          keyType: first.keyType,
+          exchanges: List<HfSniffNonceExchange>.unmodifiable(entry.value),
+        );
+      })
+      .toList(growable: false);
 }
 
 String buildMfkey64Command(HfSniffNonceGroup group) {
-  if (!group.canRecover) {
-    final nonce = group.exchanges.first;
-    return 'mfkey64 ${group.uid} ${nonce.ntHex} ${nonce.nrHex} ${nonce.arHex} <nt2>';
-  }
-
-  final first = group.exchanges[0];
-  final second = group.exchanges[1];
-  return 'mfkey64 ${group.uid} ${first.ntHex} ${first.nrHex} ${first.arHex} ${second.ntHex}';
+  final exchange = group.exchanges.firstWhere(
+    (candidate) => candidate.at != null,
+    orElse: () => group.exchanges.first,
+  );
+  return 'mfkey64 ${group.uid} ${exchange.ntHex} ${exchange.nrHex} ${exchange.arHex} ${exchange.atHex ?? '<at>'}';
 }
 
 String buildMfkey32Command(HfSniffNonceGroup group) {
-  if (!group.canRecover) {
+  if (!group.canRecoverMfkey32) {
     return '';
   }
 
@@ -503,7 +516,7 @@ String _decodeHf14aFrame(HfSniffFrame frame) {
       0x30,
       0xA0,
       0xA2,
-      0xE0
+      0xE0,
     };
     if (!blocked.contains(data[0])) {
       final atqa = data[0] | (data[1] << 8);
@@ -541,12 +554,14 @@ String _decodeHf14aFrame(HfSniffFrame frame) {
   if (b0 == 0x93 || b0 == 0x95 || b0 == 0x97) {
     final level = b0 == 0x93 ? 'CL1' : (b0 == 0x95 ? 'CL2' : 'CL3');
     if (data.length > 1 && data[1] == 0x70) {
-      final uid =
-          data.length >= 6 ? _hex(Uint8List.fromList(data.sublist(2, 6))) : '';
+      final uid = data.length >= 6
+          ? _hex(Uint8List.fromList(data.sublist(2, 6)))
+          : '';
       return 'SELECT $level  UID=$uid';
     }
-    final nvb =
-        data.length > 1 ? data[1].toRadixString(16).padLeft(2, '0') : '';
+    final nvb = data.length > 1
+        ? data[1].toRadixString(16).padLeft(2, '0')
+        : '';
     return 'ANTICOLL $level  NVB=$nvb';
   }
 
@@ -655,7 +670,9 @@ String _decodeHf14aFrame(HfSniffFrame frame) {
   for (final swOffset in const <int>[-2, -4]) {
     if (data.length >= swOffset.abs()) {
       final label = _decodeSw(
-          data[data.length + swOffset], data[data.length + swOffset + 1]);
+        data[data.length + swOffset],
+        data[data.length + swOffset + 1],
+      );
       if (label != null) {
         return 'SW ${data[data.length + swOffset].toRadixString(16).padLeft(2, '0').toUpperCase()} ${data[data.length + swOffset + 1].toRadixString(16).padLeft(2, '0').toUpperCase()}  $label';
       }

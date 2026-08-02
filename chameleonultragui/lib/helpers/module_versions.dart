@@ -21,6 +21,7 @@ enum ModuleId {
   t55xxPasswordCleaner,
   lfSniffing,
   hfSniffing,
+  hfContinuousCapture,
   mifareClassicGen4,
   mifareClassicAttacks,
   captureAndSniffing,
@@ -115,8 +116,8 @@ const moduleVersions = <ModuleId, ModuleRelease>{
   ),
   ModuleId.settings: ModuleRelease(
     name: 'Settings',
-    version: '1.0.0',
-    updatedAt: _initialReleaseDate,
+    version: '1.1.0',
+    updatedAt: '2026-08-02',
   ),
   ModuleId.readerKeysCapture: ModuleRelease(
     name: 'Reader Keys Capture',
@@ -125,8 +126,8 @@ const moduleVersions = <ModuleId, ModuleRelease>{
   ),
   ModuleId.ethicalHacking: ModuleRelease(
     name: 'Ethical Hacking',
-    version: '1.0.0',
-    updatedAt: _initialReleaseDate,
+    version: '1.1.0',
+    updatedAt: '2026-08-02',
   ),
   ModuleId.debug: ModuleRelease(
     name: 'Debug',
@@ -135,8 +136,8 @@ const moduleVersions = <ModuleId, ModuleRelease>{
   ),
   ModuleId.dataSync: ModuleRelease(
     name: 'Data Sync',
-    version: '1.0.0',
-    updatedAt: _initialReleaseDate,
+    version: '1.2.0',
+    updatedAt: '2026-08-02',
   ),
   ModuleId.dumpEditor: ModuleRelease(
     name: 'Dump Editor',
@@ -180,8 +181,13 @@ const moduleVersions = <ModuleId, ModuleRelease>{
   ),
   ModuleId.hfSniffing: ModuleRelease(
     name: 'HF Sniffing',
-    version: '1.0.0',
-    updatedAt: _initialReleaseDate,
+    version: '1.1.0',
+    updatedAt: '2026-08-02',
+  ),
+  ModuleId.hfContinuousCapture: ModuleRelease(
+    name: 'Continuous HF Capture',
+    version: '1.2.0',
+    updatedAt: '2026-08-02',
   ),
   ModuleId.mifareClassicGen4: ModuleRelease(
     name: 'MIFARE Classic Gen4',
@@ -190,13 +196,13 @@ const moduleVersions = <ModuleId, ModuleRelease>{
   ),
   ModuleId.mifareClassicAttacks: ModuleRelease(
     name: 'MIFARE Classic Attacks',
-    version: '1.0.0',
-    updatedAt: _initialReleaseDate,
+    version: '1.1.0',
+    updatedAt: '2026-08-02',
   ),
   ModuleId.captureAndSniffing: ModuleRelease(
     name: 'Capture & Sniffing',
-    version: '1.0.0',
-    updatedAt: _initialReleaseDate,
+    version: '1.1.0',
+    updatedAt: '2026-08-02',
   ),
   ModuleId.emulationAndMagic: ModuleRelease(
     name: 'Emulation & Magic',
@@ -215,18 +221,18 @@ const moduleVersions = <ModuleId, ModuleRelease>{
   ),
   ModuleId.autopwn: ModuleRelease(
     name: 'Autopwn',
-    version: '1.1.0',
-    updatedAt: _initialReleaseDate,
+    version: '1.2.0',
+    updatedAt: '2026-08-02',
   ),
   ModuleId.autopwnPlus: ModuleRelease(
     name: 'Autopwn Plus',
-    version: '1.0.0',
-    updatedAt: _initialReleaseDate,
+    version: '1.1.0',
+    updatedAt: '2026-08-02',
   ),
   ModuleId.autopwnV2: ModuleRelease(
     name: 'Autopwn v2',
-    version: '1.0.0',
-    updatedAt: _initialReleaseDate,
+    version: '1.1.0',
+    updatedAt: '2026-08-02',
   ),
   ModuleId.mifareClassicNonceHistory: ModuleRelease(
     name: 'MIFARE Classic Nonce History',
@@ -235,8 +241,8 @@ const moduleVersions = <ModuleId, ModuleRelease>{
   ),
   ModuleId.dictionaryCheck: ModuleRelease(
     name: 'Dictionary Check',
-    version: '1.0.0',
-    updatedAt: _initialReleaseDate,
+    version: '1.1.0',
+    updatedAt: '2026-08-02',
   ),
   ModuleId.darkside: ModuleRelease(
     name: 'Darkside',

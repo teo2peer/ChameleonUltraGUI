@@ -20,6 +20,7 @@ const Set<String> dataSyncSafeSettingKeys = {
   'sidebar_auto_expanded',
   'sidebar_expanded_index',
   'emulation_change_monitoring',
+  'hf_capture_retention_days',
 };
 
 extension DataSyncStorage on SharedPreferencesProvider {
@@ -45,6 +46,7 @@ extension DataSyncStorage on SharedPreferencesProvider {
       'sidebar_auto_expanded': getSideBarAutoExpansion(),
       'sidebar_expanded_index': getSideBarExpandedIndex(),
       'emulation_change_monitoring': getEmulationChangeMonitoring(),
+      'hf_capture_retention_days': getHfCaptureRetentionDays(),
     },
   );
 
@@ -121,6 +123,12 @@ extension DataSyncStorage on SharedPreferencesProvider {
     final deviceBanner = _syncBool(settings, 'device_found_banner');
     final sidebarAuto = _syncBool(settings, 'sidebar_auto_expanded');
     final monitor = _syncBool(settings, 'emulation_change_monitoring');
+    final retentionDays = _syncInt(
+      settings,
+      'hf_capture_retention_days',
+      1,
+      365,
+    );
 
     final scripts = snapshot.keyboardScripts.toList()
       ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
@@ -140,6 +148,7 @@ extension DataSyncStorage on SharedPreferencesProvider {
       'sidebar_auto_expanded': sidebarAuto,
       'sidebar_expanded_index': sidebarIndex,
       'emulation_change_monitoring': monitor,
+      'hf_capture_retention_days': retentionDays,
     };
   }
 }

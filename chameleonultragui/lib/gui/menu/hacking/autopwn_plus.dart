@@ -527,6 +527,11 @@ class _AutopwnPlusPageState extends State<AutopwnPlusPage> {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Text(localizations.autopwn_plus_description),
+            const SizedBox(height: 8),
+            Text(
+              localizations.autopwn_keep_card_present,
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
             const SizedBox(height: 12),
             Wrap(
               spacing: 8,

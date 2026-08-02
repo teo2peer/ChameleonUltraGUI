@@ -56,6 +56,60 @@ void main() {
     expect(keys.contains(0xFFFFFFFFFFFF), true);
   });
 
+  test('reused keys are checked in bounded multi-sector batches', () async {
+    final communicator = _BulkKeyCard();
+    final appState = ChameleonGUIState(SharedPreferencesProvider())
+      ..log = Logger(level: Level.off)
+      ..connector = _UsbTestSerial()
+      ..communicator = communicator;
+    final engine = MifareClassicRecovery(
+      appState: appState,
+      update: () {},
+      localizations: lookupAppLocalizations(const Locale('en')),
+      mifareClassicType: MifareClassicType.m4k,
+    );
+    final key = hexToBytes('FFFFFFFFFFFF');
+
+    await engine.recheckKey(key, 0);
+
+    expect(communicator.requestedSlots.length, 5);
+    expect(
+      communicator.requestedSlots.every((slots) => slots.length <= 16),
+      isTrue,
+    );
+    expect(
+      communicator.requestedSlots.expand((slots) => slots).toSet(),
+      Set<int>.from(List.generate(80, (index) => index)),
+    );
+    for (var sector = 0; sector < 40; sector++) {
+      expect(engine.getSectorKey(sector, 0), orderedEquals(key));
+      expect(engine.getSectorKey(sector, 1), orderedEquals(key));
+    }
+  });
+
+  test('bounded batches discard verified keys when the card changes', () async {
+    final communicator = _ChangingBulkKeyCard();
+    final appState = ChameleonGUIState(SharedPreferencesProvider())
+      ..log = Logger(level: Level.off)
+      ..connector = _UsbTestSerial()
+      ..communicator = communicator;
+    final engine = MifareClassicRecovery(
+      appState: appState,
+      update: () {},
+      localizations: lookupAppLocalizations(const Locale('en')),
+      mifareClassicType: MifareClassicType.mini,
+      cardUid: '01020304',
+    );
+
+    await expectLater(
+      engine.recheckKey(hexToBytes('FFFFFFFFFFFF'), 0),
+      throwsA(isA<StateError>()),
+    );
+
+    expect(communicator.identityChecks, 2);
+    expect(engine.validKeys.every((key) => key.isEmpty), isTrue);
+  });
+
   test('Autopwn verifies the key from a weak Nested acquisition', () async {
     final communicator = _WeakNestedCard();
     final serial = _UsbTestSerial();
@@ -526,6 +580,47 @@ class _WeakThenStaticFallbackCard extends ChameleonCommunicator {
     int keyType,
     List<Uint8List> keys,
   ) async => null;
+}
+
+class _BulkKeyCard extends ChameleonCommunicator {
+  _BulkKeyCard() : super(Logger(level: Level.off));
+
+  final List<Set<int>> requestedSlots = [];
+
+  @override
+  bool? supportsCommandSync(ChameleonCommand command) =>
+      command == ChameleonCommand.mf1CheckKeysOfSectors ? true : null;
+
+  @override
+  Future<Map<int, Uint8List>?> mf1CheckKeysOfSectors(
+    Uint8List mask,
+    List<Uint8List> keys,
+  ) async {
+    final slots = <int>{
+      for (var slot = 0; slot < 80; slot++)
+        if ((mask[slot ~/ 8] & (1 << (7 - slot % 8))) == 0) slot,
+    };
+    requestedSlots.add(slots);
+    return {for (final slot in slots) slot: Uint8List.fromList(keys.first)};
+  }
+
+  @override
+  Future<bool> mf1Auth(int block, int keyType, Uint8List key) async => true;
+}
+
+class _ChangingBulkKeyCard extends _BulkKeyCard {
+  int identityChecks = 0;
+
+  @override
+  Future<CardData?> scan14443aTag() async {
+    identityChecks++;
+    return CardData(
+      uid: hexToBytes(identityChecks == 1 ? '01020304' : 'AABBCCDD'),
+      sak: 0x08,
+      atqa: hexToBytes('0004'),
+      ats: Uint8List(0),
+    );
+  }
 }
 
 class _UsbTestSerial extends AbstractSerial {

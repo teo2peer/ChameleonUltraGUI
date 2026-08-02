@@ -375,6 +375,7 @@
   "value_block_tool": "Bloque de valor",
   "value_block_description": "Incrementar / decrementar / restaurar / transferir un bloque de valor",
   "start_autopwn": "Iniciar Autopwn",
+  "autopwn_keep_card_present": "Mantén la misma tarjeta inmóvil sobre la antena hasta finalizar. Los reinicios RF y la reselección automática son normales.",
   "run_dictionary_only": "Solo diccionario",
   "all_keys_recovered": "Todas las llaves recuperadas",
   "recover_key": "Recuperar llave",

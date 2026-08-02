@@ -15,6 +15,7 @@ import 'package:chameleonultragui/helpers/font.dart';
 import 'package:chameleonultragui/helpers/emulation_change.dart';
 import 'package:chameleonultragui/helpers/definitions.dart';
 import 'package:chameleonultragui/helpers/general.dart';
+import 'package:chameleonultragui/helpers/hf_capture_controller.dart';
 import 'package:chameleonultragui/helpers/mifare_classic/general.dart';
 import 'package:chameleonultragui/helpers/module_versions.dart';
 import 'package:flutter/material.dart';
@@ -75,7 +76,11 @@ class ChameleonGUI extends StatelessWidget {
 
 class ChameleonGUIState extends ChangeNotifier {
   final SharedPreferencesProvider sharedPreferencesProvider;
-  ChameleonGUIState(this.sharedPreferencesProvider);
+  late final HfCaptureController hfCaptureController;
+
+  ChameleonGUIState(this.sharedPreferencesProvider) {
+    hfCaptureController = HfCaptureController(sharedPreferencesProvider);
+  }
 
   SharedPreferencesProvider? _sharedPreferencesProvider;
   Logger? log; // Logger
@@ -153,7 +158,11 @@ class ChameleonGUIState extends ChangeNotifier {
       undercoverDeviceArmed = false;
       _slotOperationGeneration++;
       stopEmulationChangeMonitor();
-      communicator?.dispose('Connector disconnected');
+      final activeCommunicator = communicator;
+      if (activeCommunicator != null) {
+        hfCaptureController.detach(activeCommunicator);
+        activeCommunicator.dispose('Connector disconnected');
+      }
       communicator = null;
       progress = null;
     }
@@ -188,7 +197,11 @@ class ChameleonGUIState extends ChangeNotifier {
     _slotOperationGeneration++;
     final suppressedPort = manual ? connector?.activeDevicePort : null;
     stopEmulationChangeMonitor();
-    communicator?.dispose('Disconnected by the application');
+    final activeCommunicator = communicator;
+    if (activeCommunicator != null) {
+      hfCaptureController.detach(activeCommunicator);
+      activeCommunicator.dispose('Disconnected by the application');
+    }
     communicator = null;
     await connector?.performDisconnect();
     undercoverDeviceArmed = false;
@@ -203,7 +216,11 @@ class ChameleonGUIState extends ChangeNotifier {
     _slotOperationGeneration++;
     stopDeviceScan();
     stopEmulationChangeMonitor();
-    communicator?.dispose('Connector mode changed');
+    final activeCommunicator = communicator;
+    if (activeCommunicator != null) {
+      hfCaptureController.detach(activeCommunicator);
+      activeCommunicator.dispose('Connector mode changed');
+    }
     communicator = null;
     undercoverDeviceArmed = false;
     final previous = connector;
@@ -230,7 +247,11 @@ class ChameleonGUIState extends ChangeNotifier {
       await next.initializeCapabilities();
     } catch (error) {
       next.dispose(error);
-      communicator?.dispose(error);
+      final previousCommunicator = communicator;
+      if (previousCommunicator != null) {
+        hfCaptureController.detach(previousCommunicator);
+        previousCommunicator.dispose(error);
+      }
       communicator = null;
       activeConnector.pendingConnection = false;
       await activeConnector.performDisconnect();
@@ -256,8 +277,21 @@ class ChameleonGUIState extends ChangeNotifier {
       }
       return;
     }
-    communicator?.dispose('Replaced by a new connection');
+    final previousCommunicator = communicator;
+    if (previousCommunicator != null) {
+      hfCaptureController.detach(previousCommunicator);
+      previousCommunicator.dispose('Replaced by a new connection');
+    }
     communicator = next;
+    try {
+      await hfCaptureController.attach(next);
+    } catch (error, stackTrace) {
+      log?.w(
+        'HF capture state could not be attached',
+        error: error,
+        stackTrace: stackTrace,
+      );
+    }
     startEmulationChangeMonitor();
   }
 
@@ -651,8 +685,13 @@ class ChameleonGUIState extends ChangeNotifier {
     _slotOperationGeneration++;
     stopDeviceScan();
     stopEmulationChangeMonitor();
-    communicator?.dispose('Application state disposed');
+    final activeCommunicator = communicator;
+    if (activeCommunicator != null) {
+      hfCaptureController.detach(activeCommunicator);
+      activeCommunicator.dispose('Application state disposed');
+    }
     communicator = null;
+    hfCaptureController.dispose();
     final activeConnector = connector;
     connector = null;
     activeConnector?.connectionStateCallback = null;

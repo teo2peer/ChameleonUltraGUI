@@ -5,7 +5,7 @@ import 'package:chameleonultragui/gui/component/key_check_marks.dart';
 import 'package:chameleonultragui/gui/component/mifare_classic_activity_progress.dart';
 import 'package:chameleonultragui/gui/menu/dialogs/dictionary/export.dart';
 import 'package:chameleonultragui/gui/page/read_card.dart'
-    show MifareClassicInfo;
+    show HFCardInfo, MifareClassicInfo;
 import 'package:chameleonultragui/helpers/general.dart';
 import 'package:chameleonultragui/helpers/mifare_classic/general.dart';
 import 'package:chameleonultragui/helpers/mifare_classic/recovery.dart';
@@ -67,6 +67,29 @@ class AutopwnPageState extends State<AutopwnPage> {
     if (mounted) setState(() {});
   }
 
+  Future<void> _ensureSameCard(HFCardInfo expected) async {
+    final communicator = context.read<ChameleonGUIState>().communicator;
+    final localizations = AppLocalizations.of(context)!;
+    final current = await communicator?.scan14443aTag();
+    final currentAts = current == null
+        ? ''
+        : current.ats.isEmpty
+        ? localizations.no
+        : bytesToHexSpace(current.ats);
+    final matches =
+        current != null &&
+        bytesToHexSpace(current.uid) == expected.uid &&
+        bytesToHexSpace(current.atqa) == expected.atqa &&
+        current.sak.toRadixString(16).padLeft(2, '0').toUpperCase() ==
+            expected.sak &&
+        currentAts == expected.ats;
+    if (!matches) {
+      throw StateError(
+        'The card changed or left the antenna during recovery. Scan again.',
+      );
+    }
+  }
+
   Future<void> _run() async {
     var localizations = AppLocalizations.of(context)!;
     final progress = AutopwnRunProgress(exhaustive: _exhaustiveRecovery)
@@ -114,10 +137,14 @@ class AutopwnPageState extends State<AutopwnPage> {
 
       await recovery.checkKeys();
       if (!mounted || recovery.isCancelled) return;
+      await _ensureSameCard(hfInfo);
+      if (!mounted || recovery.isCancelled) return;
       if (widget.dictionaryOnly) {
         _skipPendingPhases(progress, "Dictionary-only run");
       } else if (!recovery.allKeysExists) {
         await recovery.recoverKeys();
+        if (!mounted || recovery.isCancelled) return;
+        await _ensureSameCard(hfInfo);
       } else {
         for (final phase in [
           AutopwnPhase.backdoor,
@@ -132,6 +159,8 @@ class AutopwnPageState extends State<AutopwnPage> {
       if (!mounted || recovery.isCancelled) return;
       if (!widget.dictionaryOnly && recovery.allKeysExists) {
         await recovery.dumpData();
+        if (!mounted || recovery.isCancelled) return;
+        await _ensureSameCard(hfInfo);
       } else if (!widget.dictionaryOnly) {
         progress.skip(AutopwnPhase.dump, "Not all sector keys were recovered");
       }
@@ -234,6 +263,11 @@ class AutopwnPageState extends State<AutopwnPage> {
               ),
               const SizedBox(height: 8),
             ],
+            Text(
+              localizations.autopwn_keep_card_present,
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+            const SizedBox(height: 8),
             Center(
               child: ElevatedButton.icon(
                 onPressed: running ? null : _run,
