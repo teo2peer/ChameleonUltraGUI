@@ -15,6 +15,7 @@ typedef HfCaptureDirectoryProvider = Future<Directory> Function();
 
 class HfCaptureRecordBatch {
   const HfCaptureRecordBatch({
+    required this.connectionGeneration,
     required this.sessionId,
     required this.bootId,
     required this.startToken,
@@ -25,6 +26,7 @@ class HfCaptureRecordBatch {
     required this.replayed,
   });
 
+  final int connectionGeneration;
   final int sessionId;
   final int bootId;
   final int startToken;
@@ -122,6 +124,7 @@ class HfCaptureController extends ChangeNotifier {
   String? get error => _error;
   String? get captureDirectory => _sessionDirectory?.path;
   HfCaptureMetadata? get metadata => _metadata;
+  int get connectionGeneration => _connectionGeneration;
   CardData? get lastReaderCard => _lastReaderCard;
   List<HfCaptureRecord> get recentRecords => List.unmodifiable(_recentRecords);
   Stream<HfCaptureRecordBatch> get persistedRecordBatches =>
@@ -699,6 +702,7 @@ class HfCaptureController extends ChangeNotifier {
     try {
       final persisted = await _readPersistedCheckpoint(
         session,
+        connectionGeneration: generation,
         sessionId: sessionId,
         bootId: bootId,
         startToken: startToken,
@@ -846,6 +850,7 @@ class HfCaptureController extends ChangeNotifier {
     try {
       final persisted = await _readPersistedCheckpoint(
         session,
+        connectionGeneration: generation,
         sessionId: metadata.sessionId,
         bootId: metadata.bootId,
         startToken: startToken,
@@ -895,6 +900,7 @@ class HfCaptureController extends ChangeNotifier {
 
   Future<(int?, int?, int, int, int)> _readPersistedCheckpoint(
     Directory session, {
+    required int connectionGeneration,
     required int sessionId,
     required int bootId,
     required int startToken,
@@ -931,7 +937,6 @@ class HfCaptureController extends ChangeNotifier {
     int? lastDeliveryToken;
     var missingRecords = 0;
     var persistedBytes = 0;
-    final replayedBatches = <HfCaptureRecordBatch>[];
     for (
       var expectedIndex = 0;
       expectedIndex < entries.length;
@@ -975,22 +980,29 @@ class HfCaptureController extends ChangeNotifier {
       }
       persistedBytes += bytes.length;
       lastDeliveryToken = page.deliveryToken;
-      replayedBatches.add(
-        HfCaptureRecordBatch(
-          sessionId: sessionId,
-          bootId: bootId,
-          startToken: startToken,
-          mode: mode,
-          pageIndex: entry.index,
-          deliveryToken: page.deliveryToken,
-          records: page.records,
-          replayed: true,
-        ),
-      );
     }
     if (!_disposed) {
-      for (final batch in replayedBatches) {
-        _persistedRecordBatches.add(batch);
+      for (final entry in entries) {
+        final page = HfCapturePage.decode(await entry.file.readAsBytes());
+        if (page.metadata.sessionId != sessionId ||
+            page.metadata.bootId != bootId ||
+            page.metadata.startToken != startToken ||
+            page.metadata.mode != mode) {
+          throw const FormatException('Persisted HF capture replay mismatch');
+        }
+        _persistedRecordBatches.add(
+          HfCaptureRecordBatch(
+            connectionGeneration: connectionGeneration,
+            sessionId: sessionId,
+            bootId: bootId,
+            startToken: startToken,
+            mode: mode,
+            pageIndex: entry.index,
+            deliveryToken: page.deliveryToken,
+            records: page.records,
+            replayed: true,
+          ),
+        );
       }
     }
     return (
@@ -1104,6 +1116,7 @@ class HfCaptureController extends ChangeNotifier {
         }
         _persistedRecordBatches.add(
           HfCaptureRecordBatch(
+            connectionGeneration: generation,
             sessionId: sessionId,
             bootId: bootId,
             startToken: startToken,

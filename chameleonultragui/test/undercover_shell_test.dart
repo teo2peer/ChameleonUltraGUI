@@ -51,7 +51,7 @@ void main() {
 
     expect(find.text('Submenu'), findsOneWidget);
     expect(find.byKey(const Key('undercover-shell')), findsOneWidget);
-    expect(find.text('Tools'), findsOneWidget);
+    expect(find.text('Details'), findsOneWidget);
   });
 
   testWidgets('shell themes controls as iOS widgets and exposes navigation', (

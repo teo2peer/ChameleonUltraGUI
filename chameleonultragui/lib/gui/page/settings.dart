@@ -1,3 +1,8 @@
+import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
+
+import 'package:chameleonultragui/bridge/chameleon.dart';
 import 'package:chameleonultragui/gui/component/developer_list.dart';
 import 'package:chameleonultragui/gui/component/error_page.dart';
 import 'package:chameleonultragui/gui/component/module_version_navigation.dart';
@@ -5,6 +10,7 @@ import 'package:chameleonultragui/gui/component/toggle_buttons.dart';
 import 'package:chameleonultragui/gui/menu/dialogs/qr/settings.dart';
 import 'package:chameleonultragui/helpers/general.dart';
 import 'package:chameleonultragui/helpers/github.dart';
+import 'package:chameleonultragui/helpers/definitions.dart';
 import 'package:chameleonultragui/helpers/module_versions.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -14,8 +20,6 @@ import 'package:chameleonultragui/helpers/open_collective.dart';
 import 'package:chameleonultragui/main.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:file_picker/file_picker.dart';
-import 'dart:convert';
-import 'dart:io';
 import 'package:chameleonultragui/gui/component/qrcode_viewer.dart';
 import 'package:crypto/crypto.dart';
 import 'package:chameleonultragui/gui/menu/dialogs/qr/import.dart';
@@ -39,9 +43,121 @@ class SettingsMainPage extends StatefulWidget {
 }
 
 class SettingsMainPageState extends State<SettingsMainPage> {
+  ChameleonCommunicator? _ledCommunicator;
+  AnimationSetting? _deviceLedMode;
+  bool _deviceLedBusy = false;
+  String? _deviceLedError;
+  bool? _pendingDeviceLedsEnabled;
+
   @override
-  void initState() {
-    super.initState();
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final communicator = context.watch<ChameleonGUIState>().communicator;
+    if (identical(communicator, _ledCommunicator)) return;
+    _ledCommunicator = communicator;
+    _deviceLedMode = null;
+    _deviceLedBusy = false;
+    _deviceLedError = null;
+    _pendingDeviceLedsEnabled = null;
+    if (communicator != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) unawaited(_refreshDeviceLeds());
+      });
+    }
+  }
+
+  Future<void> _refreshDeviceLeds() async {
+    final communicator = _ledCommunicator;
+    if (communicator == null || _deviceLedBusy) return;
+    setState(() {
+      _deviceLedBusy = true;
+      _deviceLedError = null;
+    });
+    try {
+      final mode = await communicator.getAnimationMode();
+      if (!mounted || !identical(communicator, _ledCommunicator)) return;
+      if (mode != AnimationSetting.none) {
+        await context
+            .read<ChameleonGUIState>()
+            .sharedPreferencesProvider
+            .setDeviceLedAnimationMode(mode);
+      }
+      if (!mounted || !identical(communicator, _ledCommunicator)) return;
+      setState(() => _deviceLedMode = mode);
+    } catch (error) {
+      if (mounted && identical(communicator, _ledCommunicator)) {
+        setState(() => _deviceLedError = error.toString());
+      }
+    } finally {
+      if (mounted && identical(communicator, _ledCommunicator)) {
+        setState(() => _deviceLedBusy = false);
+      }
+    }
+  }
+
+  Future<void> _setDeviceLedsEnabled(bool enabled) async {
+    final communicator = _ledCommunicator;
+    if (communicator == null || _deviceLedBusy || _deviceLedMode == null) {
+      return;
+    }
+    final appState = context.read<ChameleonGUIState>();
+    setState(() {
+      _deviceLedBusy = true;
+      _deviceLedError = null;
+      _pendingDeviceLedsEnabled = enabled;
+    });
+    try {
+      if (!enabled) {
+        final currentMode = await communicator.getAnimationMode();
+        if (!mounted || !identical(communicator, _ledCommunicator)) return;
+        if (currentMode != AnimationSetting.none) {
+          await appState.sharedPreferencesProvider.setDeviceLedAnimationMode(
+            currentMode,
+          );
+        }
+      }
+      final mode = enabled
+          ? appState.sharedPreferencesProvider.getDeviceLedAnimationMode()
+          : AnimationSetting.none;
+      await communicator.setAnimationMode(mode);
+      await communicator.saveSettings();
+      if (!mounted || !identical(communicator, _ledCommunicator)) return;
+      setState(() {
+        _deviceLedMode = mode;
+        _pendingDeviceLedsEnabled = null;
+      });
+      appState.changesMade();
+    } catch (error) {
+      AnimationSetting? actualMode;
+      try {
+        actualMode = await communicator.getAnimationMode();
+      } catch (_) {
+        // Keep the previous UI state if the device can no longer be queried.
+      }
+      if (mounted && identical(communicator, _ledCommunicator)) {
+        setState(() {
+          if (actualMode != null) _deviceLedMode = actualMode;
+          _deviceLedError = error.toString();
+        });
+      }
+    } finally {
+      if (mounted && identical(communicator, _ledCommunicator)) {
+        setState(() => _deviceLedBusy = false);
+      }
+    }
+  }
+
+  String _deviceLedSubtitle(AppLocalizations localizations) {
+    if (_ledCommunicator == null) {
+      return localizations.device_leds_disconnected_description;
+    }
+    if (_deviceLedError case final error?) {
+      return localizations.device_leds_update_failed(error);
+    }
+    if (_deviceLedMode == null) return localizations.device_leds_loading;
+    return _deviceLedMode == AnimationSetting.none
+        ? localizations.device_leds_disabled_description
+        : localizations.device_leds_enabled_description;
   }
 
   Future<(String, List<Map<String, String>>, PackageInfo)>
@@ -214,6 +330,53 @@ class SettingsMainPageState extends State<SettingsMainPage> {
                     },
                   ),
                 ],
+              ),
+              const SizedBox(height: 10),
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 560),
+                child: Card(
+                  child: Column(
+                    children: [
+                      SwitchListTile.adaptive(
+                        key: const Key('device-led-toggle'),
+                        secondary: const Icon(Icons.lightbulb_outline_rounded),
+                        title: Text(localizations.device_leds),
+                        subtitle: Text(_deviceLedSubtitle(localizations)),
+                        value:
+                            _deviceLedMode != null &&
+                            _deviceLedMode != AnimationSetting.none,
+                        onChanged:
+                            _ledCommunicator == null ||
+                                _deviceLedBusy ||
+                                _deviceLedMode == null
+                            ? null
+                            : (enabled) =>
+                                  unawaited(_setDeviceLedsEnabled(enabled)),
+                      ),
+                      if (_deviceLedBusy)
+                        const LinearProgressIndicator(minHeight: 2),
+                      if (_deviceLedError != null)
+                        Align(
+                          alignment: Alignment.centerRight,
+                          child: TextButton.icon(
+                            key: const Key('device-led-retry'),
+                            onPressed: _deviceLedBusy
+                                ? null
+                                : () {
+                                    final enabled = _pendingDeviceLedsEnabled;
+                                    unawaited(
+                                      enabled == null
+                                          ? _refreshDeviceLeds()
+                                          : _setDeviceLedsEnabled(enabled),
+                                    );
+                                  },
+                            icon: const Icon(Icons.refresh_rounded),
+                            label: Text(localizations.device_leds_retry),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
               ),
               const SizedBox(height: 10),
               Row(

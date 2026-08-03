@@ -116,6 +116,7 @@ class HfCaptureMifareParser {
     if (pending != null) {
       if (pending.nt == null &&
           frame.isCardToReader &&
+          frame.bitLength == 32 &&
           frame.data.length == 4) {
         pending.nt = _bytesToInt(frame.data);
         return;
@@ -123,13 +124,16 @@ class HfCaptureMifareParser {
       if (pending.nt != null &&
           pending.nr == null &&
           frame.isReaderToCard &&
+          frame.bitLength == 64 &&
           frame.data.length == 8) {
         pending.nr = _bytesToInt(frame.data.sublist(0, 4));
         pending.ar = _bytesToInt(frame.data.sublist(4, 8));
         return;
       }
       if (pending.nr != null) {
-        if (frame.isCardToReader && frame.data.length == 4) {
+        if (frame.isCardToReader &&
+            frame.bitLength == 32 &&
+            frame.data.length == 4) {
           output.add(pending.toEvidence(at: _bytesToInt(frame.data)));
           _pending = null;
           return;
@@ -142,16 +146,24 @@ class HfCaptureMifareParser {
 
     final data = frame.data;
     if (frame.isReaderToCard &&
-        data.length >= 6 &&
+        data.length >= 2 &&
         (data[0] == 0x93 || data[0] == 0x95 || data[0] == 0x97) &&
         data[1] == 0x70) {
-      if (!(data[0] == 0x93 && data[2] == 0x88)) {
+      _selectedUid = null;
+      final validLength =
+          (frame.bitLength == 56 && data.length == 7) ||
+          (frame.bitLength == 72 && data.length == 9);
+      if (!validLength || (data[2] ^ data[3] ^ data[4] ^ data[5]) != data[6]) {
+        return;
+      }
+      if (data[2] != 0x88) {
         _selectedUid = _bytesToInt(data.sublist(2, 6));
       }
       return;
     }
 
     if (!frame.isReaderToCard ||
+        (frame.bitLength != 16 && frame.bitLength != 32) ||
         data.length < 2 ||
         (data[0] != 0x60 && data[0] != 0x61)) {
       return;
@@ -288,7 +300,8 @@ class HfCaptureMifareRecoveryController extends ChangeNotifier {
     HfCaptureMfkey64Solver? mfkey64Solver,
     Stream<HfCaptureRecordBatch>? recordBatches,
   }) : _mfkey32Solver = mfkey32Solver ?? _defaultMfkey32Solver,
-       _mfkey64Solver = mfkey64Solver ?? _defaultMfkey64Solver {
+       _mfkey64Solver = mfkey64Solver ?? _defaultMfkey64Solver,
+       _usesInjectedBatches = recordBatches != null {
     _captureController.addListener(_captureStateChanged);
     _batchSubscription =
         (recordBatches ?? _captureController.persistedRecordBatches).listen(
@@ -309,12 +322,12 @@ class HfCaptureMifareRecoveryController extends ChangeNotifier {
   final VoidCallback? _onKeysSaved;
   final HfCaptureMfkey32Solver _mfkey32Solver;
   final HfCaptureMfkey64Solver _mfkey64Solver;
+  final bool _usesInjectedBatches;
   late final StreamSubscription<HfCaptureRecordBatch> _batchSubscription;
 
   HfCaptureMifareParser _parser = HfCaptureMifareParser();
   final List<HfCaptureMifareEvidence> _evidence = [];
   final Set<String> _evidenceIds = {};
-  final Set<String> _batchIds = {};
   final Map<ReaderKeyTarget, HfCaptureRecoveredKey> _recovered = {};
   final Map<int, String> _dictionaryNames = {};
   String? _sessionIdentity;
@@ -324,6 +337,8 @@ class HfCaptureMifareRecoveryController extends ChangeNotifier {
   bool _recovering = false;
   bool _recoveryPending = false;
   bool _disposed = false;
+  int _lastBatchPageIndex = -1;
+  int _solverRetryCount = 0;
   int _saveRetryCount = 0;
   Timer? _recoveryTimer;
   Timer? _flushTimer;
@@ -356,9 +371,26 @@ class HfCaptureMifareRecoveryController extends ChangeNotifier {
         : _cardCryptoUid(expectedCard.uid);
   }
 
+  void retry() {
+    if (_disposed || (!_hasRecoverableEvidence && _recovered.isEmpty)) return;
+    _solverRetryCount = 0;
+    _saveRetryCount = 0;
+    _lastRecoveryFingerprint = '';
+    _error = null;
+    _scheduleRecovery(Duration.zero);
+    _notify();
+  }
+
   void _captureStateChanged() {
+    if (!_captureController.isConnected) {
+      if (_sessionIdentity != null) _clearSession();
+      return;
+    }
     final metadata = _captureController.metadata;
-    if (metadata == null) return;
+    if (metadata == null) {
+      if (_sessionIdentity != null) _clearSession();
+      return;
+    }
     final identity = _metadataIdentity(metadata);
     if (_sessionIdentity != identity) _beginSession(identity);
     if (!metadata.isRunning && metadata.storedRecords == 0) {
@@ -372,10 +404,17 @@ class HfCaptureMifareRecoveryController extends ChangeNotifier {
 
   void _acceptBatch(HfCaptureRecordBatch batch) {
     if (_disposed) return;
+    if (!_usesInjectedBatches &&
+        (!_captureController.isConnected ||
+            batch.connectionGeneration !=
+                _captureController.connectionGeneration)) {
+      return;
+    }
     if (_sessionIdentity != batch.sessionIdentity) {
       _beginSession(batch.sessionIdentity);
     }
-    if (!_batchIds.add(batch.batchIdentity)) return;
+    if (batch.pageIndex <= _lastBatchPageIndex) return;
+    _lastBatchPageIndex = batch.pageIndex;
     try {
       _ingest(_parser.addRecords(batch.records));
     } catch (error) {
@@ -392,12 +431,32 @@ class HfCaptureMifareRecoveryController extends ChangeNotifier {
     _preparedExpectedUid = null;
     _evidence.clear();
     _evidenceIds.clear();
-    _batchIds.clear();
     _recovered.clear();
     _dictionaryNames.clear();
     _lastRecoveryFingerprint = '';
     _error = null;
     _recoveryPending = false;
+    _lastBatchPageIndex = -1;
+    _solverRetryCount = 0;
+    _saveRetryCount = 0;
+    _notify();
+  }
+
+  void _clearSession() {
+    _recoveryTimer?.cancel();
+    _flushTimer?.cancel();
+    _sessionIdentity = null;
+    _preparedExpectedUid = null;
+    _parser = HfCaptureMifareParser();
+    _evidence.clear();
+    _evidenceIds.clear();
+    _recovered.clear();
+    _dictionaryNames.clear();
+    _lastRecoveryFingerprint = '';
+    _error = null;
+    _recoveryPending = false;
+    _lastBatchPageIndex = -1;
+    _solverRetryCount = 0;
     _saveRetryCount = 0;
     _notify();
   }
@@ -425,6 +484,7 @@ class HfCaptureMifareRecoveryController extends ChangeNotifier {
       changed = true;
     }
     if (!changed) return;
+    _solverRetryCount = 0;
     _saveRetryCount = 0;
     _notify();
     if (_hasRecoverableEvidence) _scheduleRecovery();
@@ -452,6 +512,7 @@ class HfCaptureMifareRecoveryController extends ChangeNotifier {
       while (_recoveryPending && !_disposed) {
         _recoveryPending = false;
         final sessionIdentity = _sessionIdentity;
+        if (sessionIdentity == null) continue;
         final fingerprint = _evidence.map((item) => item.identity).join('|');
         if (fingerprint != _lastRecoveryFingerprint) {
           try {
@@ -466,12 +527,17 @@ class HfCaptureMifareRecoveryController extends ChangeNotifier {
               _recovered[result.target] = result;
             }
             _lastRecoveryFingerprint = fingerprint;
+            _solverRetryCount = 0;
           } catch (error) {
             if (_isRecoveryWorkerBusy(error)) {
               _scheduleDelayedRecovery(const Duration(seconds: 1));
             } else {
-              _lastRecoveryFingerprint = fingerprint;
               _error = error.toString();
+              if (++_solverRetryCount <= 3) {
+                _scheduleDelayedRecovery(const Duration(seconds: 2));
+              } else {
+                _lastRecoveryFingerprint = fingerprint;
+              }
             }
             continue;
           }
@@ -479,7 +545,7 @@ class HfCaptureMifareRecoveryController extends ChangeNotifier {
 
         if (_recovered.values.any((result) => !result.saved)) {
           try {
-            await _persistRecoveredKeys();
+            await _persistRecoveredKeys(sessionIdentity);
             _saveRetryCount = 0;
           } catch (error) {
             _error = error.toString();
@@ -506,61 +572,40 @@ class HfCaptureMifareRecoveryController extends ChangeNotifier {
     });
   }
 
-  Future<void> _persistRecoveredKeys() async {
-    final unsaved = _recovered.values.where((result) => !result.saved).toList();
+  Future<void> _persistRecoveredKeys(String sessionIdentity) async {
+    final snapshot = Map<ReaderKeyTarget, HfCaptureRecoveredKey>.from(
+      _recovered,
+    );
+    final unsaved = snapshot.values.where((result) => !result.saved).toList();
     if (unsaved.isEmpty) return;
-    final dictionaries = List<Dictionary>.from(_preferences.getDictionaries());
     final byUid = <int, List<HfCaptureRecoveredKey>>{};
-    for (final result in _recovered.values) {
+    final persistedNames = <int, String>{};
+    for (final result in snapshot.values) {
       byUid.putIfAbsent(result.target.uid, () => []).add(result);
     }
-    var changed = false;
 
     for (final entry in byUid.entries) {
       final uidHex = _u32Hex(entry.key);
       final name = 'hf-capture-${uidHex.toLowerCase()}';
-      var index = dictionaries.indexWhere(
-        (dictionary) =>
-            dictionary.keyLength == 12 &&
-            (_dictionaryNames[entry.key] == dictionary.name ||
-                dictionary.name == name),
-      );
-      final existing = index < 0 ? null : dictionaries[index];
-      final merged = <String, Uint8List>{
-        for (final key in existing?.keys ?? const <Uint8List>[])
-          _hex(key): Uint8List.fromList(key),
-      };
-      for (final result in entry.value) {
-        merged[result.keyHex] = Uint8List.fromList(result.key);
-      }
-      final mergedKeys = merged.entries.toList()
-        ..sort((left, right) => left.key.compareTo(right.key));
-      final dictionary = Dictionary(
-        id: existing?.id,
-        name: existing?.name ?? name,
-        keys: mergedKeys.map((entry) => entry.value).toList(),
-        color: existing?.color ?? _dictionaryColor,
+      final dictionary = await _preferences.mergeDictionaryKeys(
+        dictionaryId: name,
+        name: name,
+        keys: entry.value.map((result) => result.key),
         keyLength: 12,
+        color: _dictionaryColor,
       );
-      _dictionaryNames[entry.key] = dictionary.name;
-      if (existing == null ||
-          existing.keys.length != dictionary.keys.length ||
-          !_sameDictionaryKeys(existing.keys, dictionary.keys)) {
-        if (index < 0) {
-          dictionaries.add(dictionary);
-          index = dictionaries.length - 1;
-        } else {
-          dictionaries[index] = dictionary;
-        }
-        changed = true;
-      }
+      persistedNames[entry.key] = dictionary.name;
     }
 
-    if (changed) await _preferences.setDictionaries(dictionaries);
-    for (final entry in _recovered.entries.toList()) {
-      _recovered[entry.key] = entry.value.copyWith(saved: true);
+    if (_disposed || sessionIdentity != _sessionIdentity) return;
+    _dictionaryNames.addAll(persistedNames);
+    for (final entry in snapshot.entries) {
+      final current = _recovered[entry.key];
+      if (current != null && current.keyHex == entry.value.keyHex) {
+        _recovered[entry.key] = current.copyWith(saved: true);
+      }
     }
-    if (changed) _onKeysSaved?.call();
+    _onKeysSaved?.call();
   }
 
   bool _isRecoveryWorkerBusy(Object error) => error.toString().contains(
@@ -638,12 +683,4 @@ int _compareRecoveredKeys(
       : left.target.keyB
       ? 1
       : -1;
-}
-
-bool _sameDictionaryKeys(List<Uint8List> left, List<Uint8List> right) {
-  if (left.length != right.length) return false;
-  for (var index = 0; index < left.length; index++) {
-    if (_hex(left[index]) != _hex(right[index])) return false;
-  }
-  return true;
 }

@@ -55,6 +55,7 @@ void main() {
     final batch = await firstBatch.timeout(const Duration(seconds: 10));
     expect(batch.records.single.sequence, 0);
     expect(batch.replayed, isFalse);
+    expect(batch.connectionGeneration, controller.connectionGeneration);
     expect(batch.sessionIdentity, '7:42:${serial.startToken}');
 
     final captureDirectory = controller.captureDirectory!;

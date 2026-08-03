@@ -1,6 +1,4 @@
 import 'dart:async';
-import 'dart:ui';
-
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -355,11 +353,6 @@ class _SpringBoard extends StatelessWidget {
             },
           ),
         ),
-        _PageIndicator(
-          screens: screens,
-          selectedIndex: index,
-          onSelected: onPageSelected,
-        ),
         _CategoryDock(
           screens: screens,
           selectedIndex: index,
@@ -378,37 +371,53 @@ class _BoardHeading extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 5, 20, 0),
-      child: Column(
+      padding: const EdgeInsets.fromLTRB(18, 4, 18, 6),
+      child: Row(
         children: [
-          Semantics(
-            header: true,
-            child: Text(
-              screen.title,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              textAlign: TextAlign.center,
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 27,
-                height: 1.08,
-                fontWeight: FontWeight.w700,
-                letterSpacing: -0.5,
-                shadows: [Shadow(color: Colors.black38, blurRadius: 8)],
-              ),
+          Container(
+            width: 42,
+            height: 42,
+            decoration: BoxDecoration(
+              color: screen.accent.withValues(alpha: 0.22),
+              borderRadius: BorderRadius.circular(13),
+              border: Border.all(color: screen.accent.withValues(alpha: 0.5)),
             ),
+            child: Icon(screen.icon, color: Colors.white, size: 21),
           ),
-          const SizedBox(height: 4),
-          Text(
-            screen.subtitle,
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-            textAlign: TextAlign.center,
-            style: const TextStyle(
-              color: Colors.white70,
-              fontSize: 12,
-              height: 1.15,
-              shadows: [Shadow(color: Colors.black38, blurRadius: 6)],
+          const SizedBox(width: 11),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Semantics(
+                  header: true,
+                  child: Text(
+                    screen.title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 24,
+                      height: 1.05,
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: -0.4,
+                      shadows: [Shadow(color: Colors.black38, blurRadius: 8)],
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  screen.subtitle,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Colors.white70,
+                    fontSize: 12,
+                    height: 1.1,
+                    shadows: [Shadow(color: Colors.black38, blurRadius: 6)],
+                  ),
+                ),
+              ],
             ),
           ),
         ],
@@ -684,17 +693,17 @@ class _AppActionBoard extends StatelessWidget {
       ),
       _AppAction(
         id: 'home',
-        title: 'Home Screen',
-        subtitle: 'All menus',
+        title: 'My Week',
+        subtitle: 'All lists',
         icon: Icons.apps_rounded,
         colors: const [Color(0xFFBF5AF2), Color(0xFF7D3CC8)],
         onTap: onHome,
       ),
       _AppAction(
         id: 'exit',
-        title: 'Exit Mode',
-        subtitle: 'Restore navigation',
-        icon: Icons.lock_open_rounded,
+        title: 'Done',
+        subtitle: 'Close My Week',
+        icon: Icons.check_circle_outline_rounded,
         colors: const [Color(0xFFFF6961), Color(0xFFD70015)],
         onTap: onExitRequested,
       ),
@@ -761,7 +770,7 @@ class _AppActionBoard extends StatelessWidget {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Text(
-                              connected ? 'Device connected' : 'Local mode',
+                              connected ? 'Cloud sync ready' : 'Offline mode',
                               style: const TextStyle(
                                 color: Colors.white,
                                 fontWeight: FontWeight.w700,
@@ -770,8 +779,8 @@ class _AppActionBoard extends StatelessWidget {
                             const SizedBox(height: 2),
                             Text(
                               app.requiresConnection
-                                  ? 'This app uses the active device connection.'
-                                  : 'This app can run without a device connection.',
+                                  ? 'This item needs cloud sync to continue.'
+                                  : 'This item is available offline.',
                               style: const TextStyle(
                                 color: Colors.white70,
                                 fontSize: 12,
@@ -833,8 +842,8 @@ class _AppActionBoard extends StatelessWidget {
                         const SizedBox(height: 10),
                         Text(
                           app.requiresConnection
-                              ? 'Requires an active Chameleon connection.'
-                              : 'Available in local and connected sessions.',
+                              ? 'Available when cloud sync is ready.'
+                              : 'Available online and offline.',
                           style: const TextStyle(
                             color: Colors.white60,
                             fontSize: 12,
@@ -1148,7 +1157,7 @@ class _IOSStatusBar extends StatelessWidget {
         children: [
           Semantics(
             button: true,
-            label: 'Exit Undercover',
+            label: 'Current time',
             onLongPress: onExitRequested,
             child: GestureDetector(
               key: const Key('undercover-exit-anchor'),
@@ -1191,71 +1200,16 @@ class _IOSStatusBar extends StatelessWidget {
           const SizedBox(width: 2),
           IconButton(
             key: const Key('undercover-exit-button'),
-            tooltip: 'Exit Undercover',
+            tooltip: 'Done',
             onPressed: onExitRequested,
             visualDensity: VisualDensity.compact,
             style: IconButton.styleFrom(
               foregroundColor: Colors.white,
               minimumSize: const Size(44, 44),
             ),
-            icon: const Icon(Icons.lock_outline_rounded, size: 18),
+            icon: const Icon(Icons.check_circle_outline_rounded, size: 20),
           ),
         ],
-      ),
-    );
-  }
-}
-
-class _PageIndicator extends StatelessWidget {
-  const _PageIndicator({
-    required this.screens,
-    required this.selectedIndex,
-    required this.onSelected,
-  });
-
-  final List<UndercoverMenuScreen> screens;
-  final int selectedIndex;
-  final ValueChanged<int> onSelected;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 5),
-      child: _IOSWidget(
-        radius: 15,
-        padding: EdgeInsets.zero,
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            for (var index = 0; index < screens.length; index++)
-              Semantics(
-                button: true,
-                selected: index == selectedIndex,
-                label: screens[index].title,
-                child: SizedBox(
-                  width: 44,
-                  height: 44,
-                  child: InkWell(
-                    borderRadius: BorderRadius.circular(22),
-                    onTap: () => onSelected(index),
-                    child: Center(
-                      child: AnimatedContainer(
-                        duration: const Duration(milliseconds: 180),
-                        width: index == selectedIndex ? 18 : 7,
-                        height: 7,
-                        decoration: BoxDecoration(
-                          color: index == selectedIndex
-                              ? Colors.white
-                              : Colors.white38,
-                          borderRadius: BorderRadius.circular(4),
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-          ],
-        ),
       ),
     );
   }
@@ -1275,10 +1229,10 @@ class _CategoryDock extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(14, 0, 14, 10),
+      padding: const EdgeInsets.fromLTRB(14, 5, 14, 10),
       child: _IOSWidget(
-        radius: 27,
-        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 7),
+        radius: 22,
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 5),
         child: LayoutBuilder(
           builder: (context, constraints) {
             return SingleChildScrollView(
@@ -1304,7 +1258,7 @@ class _CategoryDock extends StatelessWidget {
                               foregroundColor: Colors.white,
                               backgroundColor: index == selectedIndex
                                   ? screens[index].accent
-                                  : Colors.white.withValues(alpha: 0.12),
+                                  : Colors.white.withValues(alpha: 0.08),
                               side: BorderSide(
                                 color: index == selectedIndex
                                     ? Colors.white38
@@ -1340,25 +1294,22 @@ class _IOSWidget extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(radius),
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
-        child: DecoratedBox(
-          decoration: BoxDecoration(
-            color: Colors.white.withValues(alpha: 0.16),
-            borderRadius: BorderRadius.circular(radius),
-            border: Border.all(color: Colors.white.withValues(alpha: 0.20)),
-            boxShadow: const [
-              BoxShadow(
-                color: Color(0x33000000),
-                blurRadius: 22,
-                offset: Offset(0, 11),
-              ),
-            ],
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: const Color(0xE624273D),
+        borderRadius: BorderRadius.circular(radius),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.14)),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x33000000),
+            blurRadius: 14,
+            offset: Offset(0, 7),
           ),
-          child: Padding(padding: padding, child: child),
-        ),
+        ],
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(radius),
+        child: Padding(padding: padding, child: child),
       ),
     );
   }

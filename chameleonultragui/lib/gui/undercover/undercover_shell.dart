@@ -58,7 +58,7 @@ class UndercoverShell extends StatelessWidget {
                             builder: (context, moduleId, _) {
                               return _IOSNavigationBar(
                                 rootLabel: rootLabel,
-                                moduleLabel: moduleReleaseFor(moduleId).name,
+                                moduleLabel: _coverModuleLabel(moduleId),
                                 connected: connected,
                                 onBack: onBack,
                                 onLauncher: onLauncher,
@@ -189,7 +189,7 @@ class _IOSNavigationBar extends StatelessWidget {
                     ),
                   ),
                   Semantics(
-                    label: connected ? 'Device connected' : 'Local mode',
+                    label: connected ? 'Cloud sync ready' : 'Offline mode',
                     child: Container(
                       width: 8,
                       height: 8,
@@ -214,7 +214,7 @@ class _IOSNavigationBar extends StatelessWidget {
                   ),
                   Semantics(
                     button: true,
-                    label: 'Undercover home screen',
+                    label: 'My Week home',
                     child: IconButton(
                       key: const Key('undercover-shell-launcher'),
                       onPressed: onLauncher,
@@ -236,6 +236,15 @@ class _IOSNavigationBar extends StatelessWidget {
     );
   }
 }
+
+String _coverModuleLabel(ModuleId moduleId) => switch (moduleId) {
+  ModuleId.undercover || ModuleId.undercoverSlots => 'Home',
+  ModuleId.undercoverRecovery => 'Progress',
+  ModuleId.undercoverCapture => 'Journal',
+  ModuleId.undercoverEmulation => 'Routines',
+  ModuleId.undercoverSniff => 'Activity',
+  _ => 'Details',
+};
 
 ThemeData _undercoverTheme(ThemeData base) {
   const colors = ColorScheme.dark(

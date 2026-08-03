@@ -23,13 +23,28 @@
   "read_card": "Read Card",
   "write_card": "Write Card",
   "settings": "Settings",
+  "device_leds": "Device LEDs",
+  "device_leds_enabled_description": "Status animations are enabled.",
+  "device_leds_disabled_description": "All device LEDs are disabled.",
+  "device_leds_disconnected_description": "Connect a device to manage its LEDs.",
+  "device_leds_loading": "Reading the LED setting...",
+  "device_leds_update_failed": "Unable to update device LEDs: {error}",
+  "@device_leds_update_failed": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "device_leds_retry": "Retry",
   "undercover_mode": "Undercover mode",
   "undercover_enter": "Enter Undercover",
   "undercover_description": "Turn off every device LED and replace the app with a discreet home screen until you exit manually.",
   "undercover_unavailable": "Undercover mode requires a compatible firmware and an active BLE connection.",
-  "undercover_exit_title": "Leave this home screen?",
-  "undercover_exit_message": "Normal navigation will return and device LEDs will be restored if the BLE link is still active.",
-  "undercover_exit": "Leave",
+  "undercover_exit_title": "Close My Week?",
+  "undercover_exit_message": "You will return to the main screen. Pending changes will be synchronized when possible.",
+  "undercover_exit": "Close",
+  "undercover_exit_error": "My Week could not be closed. Try again.",
   "undercover_app_status": "Weather",
   "undercover_app_wallet": "Wallet",
   "undercover_app_files": "Files",
@@ -1264,6 +1279,7 @@
   "hf_capture_card_atqa": "ATQA",
   "hf_capture_card_ats": "ATS",
   "hf_capture_card_confirmed": "This is the card identity that will answer the external reader when capture starts.",
+  "hf_capture_card_random_uid": "Random UID mode is active. The displayed UID may change; key recovery will use the UID observed in each RF selection.",
   "hf_capture_observed": "Observed",
   "hf_capture_buffered": "Buffered",
   "hf_capture_dropped": "Dropped",
@@ -1305,5 +1321,6 @@
   "hf_capture_recovery_save_pending": "save pending",
   "hf_capture_recovery_copy_key": "Copy recovered key",
   "hf_capture_recovery_key_copied": "Recovered key copied",
+  "hf_capture_recovery_retry": "Retry key recovery and saving",
   "hf_capture_recovery_dictionaries": "Automatic dictionaries"
 }

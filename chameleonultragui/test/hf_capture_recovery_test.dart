@@ -27,6 +27,7 @@ void main() {
             0xAD,
             0xBE,
             0xEF,
+            0x22,
           ]),
           _frame(1, HfCaptureDirection.readerToCard, [0x60, 0x04]),
           _frame(2, HfCaptureDirection.cardToReader, [1, 2, 3, 4]),
@@ -68,6 +69,7 @@ void main() {
           0x04,
           0x25,
           0x85,
+          0x2C,
         ]),
         _frame(1, HfCaptureDirection.readerToCard, [
           0x95,
@@ -75,6 +77,7 @@ void main() {
           0x11,
           0x22,
           0x33,
+          0x44,
           0x44,
         ]),
         _frame(2, HfCaptureDirection.readerToCard, [0x61, 0x08]),
@@ -85,6 +88,63 @@ void main() {
 
       expect(evidence.single.uidHex, '11223344');
       expect(evidence.single.target.keyType, 'B');
+    });
+
+    test('accepts a full SELECT frame with RF CRC bytes', () {
+      final parser = HfCaptureMifareParser();
+      final records = _completeExchange();
+      records[0] = _frame(0, HfCaptureDirection.readerToCard, [
+        0x93,
+        0x70,
+        0xDE,
+        0xAD,
+        0xBE,
+        0xEF,
+        0x22,
+        0xAA,
+        0xBB,
+      ]);
+
+      expect(parser.addRecords(records).single.uidHex, 'DEADBEEF');
+    });
+
+    test('rejects SELECT frames with an invalid BCC', () {
+      final parser = HfCaptureMifareParser();
+      final records = _completeExchange();
+      records[0] = _frame(0, HfCaptureDirection.readerToCard, [
+        0x93,
+        0x70,
+        0xDE,
+        0xAD,
+        0xBE,
+        0xEF,
+        0x00,
+      ]);
+
+      expect(parser.addRecords(records), isEmpty);
+    });
+
+    test('tracks a new observed UID after each RF field cycle', () {
+      final parser = HfCaptureMifareParser();
+      final evidence = parser.addRecords([
+        ..._completeExchange(),
+        _field(5),
+        _frame(6, HfCaptureDirection.readerToCard, [
+          0x93,
+          0x70,
+          0x11,
+          0x22,
+          0x33,
+          0x44,
+          0x44,
+        ]),
+        _frame(7, HfCaptureDirection.readerToCard, [0x61, 0x08]),
+        _frame(8, HfCaptureDirection.cardToReader, [1, 2, 3, 4]),
+        _frame(9, HfCaptureDirection.readerToCard, [5, 6, 7, 8, 9, 10, 11, 12]),
+        _frame(10, HfCaptureDirection.cardToReader, [13, 14, 15, 16]),
+      ]);
+
+      expect(evidence.map((item) => item.uidHex), ['DEADBEEF', '11223344']);
     });
 
     test('does not join authentication frames across a sequence gap', () {
@@ -110,6 +170,18 @@ void main() {
       ]);
 
       expect(evidence, isEmpty);
+    });
+
+    test('rejects byte-sized payloads with partial RF bit lengths', () {
+      final parser = HfCaptureMifareParser(expectedUid: 0xDEADBEEF);
+      final evidence = parser.addRecords([
+        _frame(0, HfCaptureDirection.readerToCard, [0x60, 0x04]),
+        _frame(1, HfCaptureDirection.cardToReader, [1, 2, 3, 4], bitLength: 31),
+        _frame(2, HfCaptureDirection.readerToCard, [5, 6, 7, 8, 9, 10, 11, 12]),
+      ]);
+
+      expect(evidence, isEmpty);
+      expect(parser.flush(), isEmpty);
     });
 
     test('flushes a complete MFKey32 transcript without AT', () {
@@ -188,6 +260,15 @@ void main() {
         SharedPreferences.setMockInitialValues({});
         final preferences = SharedPreferencesProvider();
         await preferences.load();
+        await preferences.setDictionaries([
+          Dictionary(
+            name: 'manual-keys',
+            keys: [
+              Uint8List.fromList([1, 2, 3, 4, 5, 6]),
+            ],
+            keyLength: 12,
+          ),
+        ]);
         final captureController = HfCaptureController(preferences);
         final batches = StreamController<HfCaptureRecordBatch>();
         final saved = Completer<void>();
@@ -207,6 +288,7 @@ void main() {
 
         batches.add(
           HfCaptureRecordBatch(
+            connectionGeneration: 0,
             sessionId: 1,
             bootId: 2,
             startToken: 3,
@@ -222,11 +304,50 @@ void main() {
         expect(recoveryController.savedKeyCount, 1);
         expect(recoveryController.recoveredKeys.single.saved, isTrue);
         final dictionaries = preferences.getDictionaries(keyLength: 12);
-        expect(dictionaries, hasLength(1));
-        expect(dictionaries.single.name, 'hf-capture-deadbeef');
-        expect(dictionaries.single.toString().trim(), 'A0A1A2A3A4A5');
+        expect(dictionaries, hasLength(2));
+        expect(
+          dictionaries.any((dictionary) => dictionary.name == 'manual-keys'),
+          isTrue,
+        );
+        final automatic = dictionaries.singleWhere(
+          (dictionary) => dictionary.id == 'hf-capture-deadbeef',
+        );
+        expect(automatic.name, 'hf-capture-deadbeef');
+        expect(automatic.toString().trim(), 'A0A1A2A3A4A5');
       },
     );
+
+    test(
+      'serializes concurrent key merges without losing either key',
+      () async {
+        SharedPreferences.setMockInitialValues({});
+        final preferences = SharedPreferencesProvider();
+        await preferences.load();
+
+        await Future.wait([
+          preferences.mergeDictionaryKeys(
+            dictionaryId: 'hf-capture-deadbeef',
+            name: 'hf-capture-deadbeef',
+            keys: [
+              Uint8List.fromList([1, 2, 3, 4, 5, 6]),
+            ],
+            keyLength: 12,
+          ),
+          preferences.mergeDictionaryKeys(
+            dictionaryId: 'hf-capture-deadbeef',
+            name: 'hf-capture-deadbeef',
+            keys: [
+              Uint8List.fromList([7, 8, 9, 10, 11, 12]),
+            ],
+            keyLength: 12,
+          ),
+        ]);
+
+        final dictionary = preferences.getDictionaries(keyLength: 12).single;
+        expect(dictionary.keys, hasLength(2));
+      },
+    );
+
   });
 }
 
@@ -253,6 +374,7 @@ List<HfCaptureRecord> _completeExchange() => [
     0xAD,
     0xBE,
     0xEF,
+    0x22,
   ]),
   _frame(1, HfCaptureDirection.readerToCard, [0x60, 0x04]),
   _frame(2, HfCaptureDirection.cardToReader, [1, 2, 3, 4]),
@@ -263,14 +385,15 @@ List<HfCaptureRecord> _completeExchange() => [
 HfCaptureRecord _frame(
   int sequence,
   HfCaptureDirection direction,
-  List<int> data,
-) => HfCaptureRecord(
+  List<int> data, {
+  int? bitLength,
+}) => HfCaptureRecord(
   type: HfCaptureRecordType.frame,
   sequence: sequence,
   timestampTicks: sequence,
   direction: direction,
   flags: 0,
-  bitLength: data.length * 8,
+  bitLength: bitLength ?? data.length * 8,
   data: Uint8List.fromList(data),
   encoded: Uint8List(0),
 );

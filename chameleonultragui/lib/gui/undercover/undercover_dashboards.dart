@@ -95,23 +95,21 @@ Future<List<_SlotSnapshot>> _readHfSlots(
   });
 }
 
-String _tagLabel(TagType type) => switch (type) {
-  TagType.mifareMini => 'MIFARE Mini',
-  TagType.mifare1K => 'MIFARE 1K',
-  TagType.mifare2K => 'MIFARE 2K',
-  TagType.mifare4K => 'MIFARE 4K',
-  TagType.ntag210 => 'NTAG 210',
-  TagType.ntag212 => 'NTAG 212',
-  TagType.ntag213 => 'NTAG 213',
-  TagType.ntag215 => 'NTAG 215',
-  TagType.ntag216 => 'NTAG 216',
-  TagType.ultralight => 'Ultralight',
-  TagType.ultralightC => 'Ultralight C',
-  TagType.ultralight11 => 'Ultralight 11',
-  TagType.ultralight21 => 'Ultralight 21',
-  TagType.hf14a4 => 'ISO 14443-4',
-  _ => type == TagType.unknown ? 'Empty' : type.name,
-};
+const _listNames = [
+  'Today',
+  'Home',
+  'Errands',
+  'Work',
+  'Ideas',
+  'Health',
+  'Reading',
+  'Archive',
+];
+
+String _listName(int index) => _listNames[index.clamp(0, 7)];
+
+String _tagLabel(TagType type) =>
+    type == TagType.unknown ? 'Empty list' : 'Personal list';
 
 void _showNotice(BuildContext context, String message, {bool error = false}) {
   ScaffoldMessenger.of(context)
@@ -140,16 +138,13 @@ _DeviceOperationLease? _beginDeviceOperation(
           capture.needsDrain ||
           capture.needsFinalize)) {
     if (!quiet) {
-      _showNotice(context, 'Recorder is active. Stop it before using $owner.');
+      _showNotice(context, 'A journal update is already in progress.');
     }
     return null;
   }
   final lease = _deviceOperations.acquire(owner);
   if (lease == null && !quiet) {
-    _showNotice(
-      context,
-      '${_deviceOperations.owner ?? 'Another operation'} is using the device.',
-    );
+    _showNotice(context, 'Another update is already in progress.');
   }
   return lease;
 }
@@ -171,7 +166,7 @@ Future<T?> _showUndercoverSheet<T>(
       child: ClipRRect(
         borderRadius: const BorderRadius.vertical(top: Radius.circular(30)),
         child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 24, sigmaY: 24),
+          filter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
           child: DecoratedBox(
             decoration: BoxDecoration(
               color: const Color(0xF21C1C1E),
@@ -239,26 +234,20 @@ class _GlassCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(22),
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
-        child: DecoratedBox(
-          decoration: BoxDecoration(
-            color: color ?? Colors.black.withValues(alpha: 0.28),
-            borderRadius: BorderRadius.circular(22),
-            border: Border.all(color: Colors.white.withValues(alpha: 0.2)),
-            boxShadow: const [
-              BoxShadow(
-                color: Color(0x33000000),
-                blurRadius: 18,
-                offset: Offset(0, 8),
-              ),
-            ],
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: color ?? const Color(0xD92A2D43),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.12)),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x29000000),
+            blurRadius: 12,
+            offset: Offset(0, 6),
           ),
-          child: Padding(padding: padding, child: child),
-        ),
+        ],
       ),
+      child: Padding(padding: padding, child: child),
     );
   }
 }
@@ -274,9 +263,9 @@ class _DashboardList extends StatelessWidget {
     return ListView.separated(
       key: PageStorageKey(storageKey),
       physics: const BouncingScrollPhysics(),
-      padding: const EdgeInsets.fromLTRB(14, 8, 14, 18),
+      padding: const EdgeInsets.fromLTRB(16, 6, 16, 16),
       itemCount: children.length,
-      separatorBuilder: (_, _) => const SizedBox(height: 12),
+      separatorBuilder: (_, _) => const SizedBox(height: 10),
       itemBuilder: (_, index) => children[index],
     );
   }
@@ -305,12 +294,12 @@ class _ActionButton extends StatelessWidget {
       label: label,
       child: Material(
         color: enabled ? color.withValues(alpha: 0.9) : Colors.white12,
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(12),
         child: InkWell(
-          borderRadius: BorderRadius.circular(14),
+          borderRadius: BorderRadius.circular(12),
           onTap: enabled ? onPressed : null,
           child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
             child: Row(
               mainAxisSize: MainAxisSize.min,
               mainAxisAlignment: MainAxisAlignment.center,
@@ -417,7 +406,7 @@ class _UndercoverSlotsDashboardState extends State<UndercoverSlotsDashboard>
       _deviceOperations.selectedSlot(active);
     } catch (error) {
       if (mounted && identical(communicator, _communicator)) {
-        setState(() => _error = error.toString());
+        setState(() => _error = 'Lists could not be updated.');
       }
     } finally {
       lease.release();
@@ -444,8 +433,12 @@ class _UndercoverSlotsDashboardState extends State<UndercoverSlotsDashboard>
       if (mounted) setState(() => _activeSlot = index);
     } catch (error) {
       if (mounted) {
-        setState(() => _error = error.toString());
-        _showNotice(context, 'Unable to select slot: $error', error: true);
+        setState(() => _error = 'The selected list could not be opened.');
+        _showNotice(
+          context,
+          'The selected list could not be opened.',
+          error: true,
+        );
       }
     } finally {
       lease.release();
@@ -486,7 +479,7 @@ class _UndercoverSlotsDashboardState extends State<UndercoverSlotsDashboard>
                 child: Column(
                   children: [
                     Text(
-                      'SLOT ${_activeSlot + 1}',
+                      'LIST ${_activeSlot + 1}',
                       style: const TextStyle(
                         color: Colors.white60,
                         fontSize: 11,
@@ -496,8 +489,9 @@ class _UndercoverSlotsDashboardState extends State<UndercoverSlotsDashboard>
                     ),
                     const SizedBox(height: 4),
                     Text(
-                      slot?.name ??
-                          (_communicator == null ? 'Offline' : 'Loading'),
+                      _communicator == null
+                          ? 'Available offline'
+                          : _listName(_activeSlot),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
@@ -524,7 +518,11 @@ class _UndercoverSlotsDashboardState extends State<UndercoverSlotsDashboard>
                         const SizedBox(width: 7),
                         Flexible(
                           child: Text(
-                            slot == null ? 'No device' : _tagLabel(slot.type),
+                            slot == null
+                                ? 'Waiting to sync'
+                                : slot.enabled
+                                ? 'Ready for today'
+                                : 'Not available',
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: const TextStyle(
@@ -592,8 +590,8 @@ class _UndercoverSlotsDashboardState extends State<UndercoverSlotsDashboard>
                 SizedBox(
                   width: width,
                   child: _ActionButton(
-                    label: 'Refresh',
-                    icon: Icons.refresh_rounded,
+                    label: 'Sync lists',
+                    icon: Icons.sync_rounded,
                     enabled: _communicator != null && !_busy,
                     onPressed: () => unawaited(_refresh()),
                   ),
@@ -602,8 +600,8 @@ class _UndercoverSlotsDashboardState extends State<UndercoverSlotsDashboard>
                   width: width,
                   child: _ActionButton(
                     label: slot?.enabled == true
-                        ? 'Portfolio active'
-                        : 'Empty position',
+                        ? 'Ready for today'
+                        : 'Not available',
                     icon: slot?.enabled == true
                         ? Icons.check_circle_rounded
                         : Icons.radio_button_unchecked_rounded,
@@ -641,9 +639,8 @@ class _SlotTile extends StatelessWidget {
     return Semantics(
       button: true,
       selected: selected,
-      label: slot == null
-          ? 'Slot ${index + 1}'
-          : '${slot!.name}, ${_tagLabel(slot!.type)}',
+      label:
+          '${_listName(index)}, ${slot?.enabled == true ? 'ready' : 'not available'}',
       child: InkWell(
         key: Key('undercover-slot-${index + 1}'),
         borderRadius: BorderRadius.circular(18),
@@ -689,7 +686,7 @@ class _SlotTile extends StatelessWidget {
             ),
             const SizedBox(height: 5),
             Text(
-              slot?.name ?? 'Slot ${index + 1}',
+              _listName(index),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               textAlign: TextAlign.center,
@@ -713,45 +710,11 @@ class _SlotGlyph extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final count = switch (type) {
-      TagType.mifare1K => 1,
-      TagType.mifare2K => 2,
-      TagType.mifare4K => 4,
-      _ => 0,
-    };
-    if (count > 0) {
-      return Wrap(
-        spacing: 3,
-        runSpacing: 3,
-        alignment: WrapAlignment.center,
-        children: List.generate(
-          count,
-          (_) => Container(
-            width: 10,
-            height: 10,
-            decoration: const BoxDecoration(
-              color: Colors.white,
-              shape: BoxShape.circle,
-            ),
-          ),
-        ),
-      );
-    }
-    final icon = switch (type) {
-      TagType.mifareMini => Icons.diamond_rounded,
-      TagType.ntag210 ||
-      TagType.ntag212 ||
-      TagType.ntag213 ||
-      TagType.ntag215 ||
-      TagType.ntag216 => Icons.waves_rounded,
-      TagType.ultralight ||
-      TagType.ultralightC ||
-      TagType.ultralight11 ||
-      TagType.ultralight21 => Icons.bolt_rounded,
-      TagType.hf14a4 => Icons.contactless_rounded,
-      _ => Icons.remove_rounded,
-    };
-    return Icon(icon, color: Colors.white, size: 28);
+    return Icon(
+      type == TagType.unknown ? Icons.add_rounded : Icons.checklist_rounded,
+      color: Colors.white,
+      size: 28,
+    );
   }
 }
 
@@ -871,16 +834,20 @@ class _UndercoverRecoveryDashboardState
       if (!_isCurrent(generation, communicator)) return;
       setState(() => _lfIdentity = card?.toString());
       if (card == null && mounted) {
-        _showNotice(context, 'No LF credential found');
+        _showNotice(context, 'No new item was found.');
       }
     } catch (error) {
       if (!mounted) return;
       if (_isCurrent(generation, communicator)) {
         setState(() {
           _lfIdentity = null;
-          _error = error.toString();
+          _error = 'The quick review could not be completed.';
         });
-        _showNotice(context, 'LF scan failed: $error', error: true);
+        _showNotice(
+          context,
+          'The quick review could not be completed.',
+          error: true,
+        );
       }
     } finally {
       lease.release();
@@ -933,7 +900,7 @@ class _UndercoverRecoveryDashboardState
         _hfTagType = tagType;
       });
       if (card == null && mounted) {
-        _showNotice(context, 'No HF asset found');
+        _showNotice(context, 'No new item was found.');
       }
     } catch (error) {
       if (!mounted) return;
@@ -941,9 +908,13 @@ class _UndercoverRecoveryDashboardState
         setState(() {
           _hfCard = null;
           _hfTagType = TagType.unknown;
-          _error = error.toString();
+          _error = 'The full review could not be completed.';
         });
-        _showNotice(context, 'HF scan failed: $error', error: true);
+        _showNotice(
+          context,
+          'The full review could not be completed.',
+          error: true,
+        );
       }
     } finally {
       lease.release();
@@ -957,7 +928,7 @@ class _UndercoverRecoveryDashboardState
     final card = _hfCard;
     if (card == null) return;
     if (_hfTagType == TagType.unknown) {
-      _showNotice(context, 'Unsupported asset type; UUID was not saved.');
+      _showNotice(context, 'This item cannot be saved yet.');
       return;
     }
     final appState = context.read<ChameleonGUIState>();
@@ -969,12 +940,12 @@ class _UndercoverRecoveryDashboardState
         sak: card.sak,
         atqa: Uint8List.fromList(card.atqa),
         ats: Uint8List.fromList(card.ats),
-        name: 'Market ${DateTime.now().toIso8601String().substring(0, 16)}',
+        name: 'Saved item ${DateTime.now().toIso8601String().substring(0, 16)}',
         tag: _hfTagType,
       ),
     );
     await appState.sharedPreferencesProvider.setCards(cards);
-    if (mounted) _showNotice(context, 'UUID saved to local portfolio');
+    if (mounted) _showNotice(context, 'Reference saved.');
   }
 
   Future<bool> _sameCard(
@@ -1045,8 +1016,8 @@ class _UndercoverRecoveryDashboardState
     } catch (error) {
       if (!mounted) return;
       if (_isCurrent(generation, communicator)) {
-        setState(() => _error = error.toString());
-        _showNotice(context, 'Weather refresh failed: $error', error: true);
+        setState(() => _error = 'The review could not be completed.');
+        _showNotice(context, 'The review could not be completed.', error: true);
       }
     } finally {
       lease.release();
@@ -1068,7 +1039,7 @@ class _UndercoverRecoveryDashboardState
   Future<void> _chooseDictionaries() async {
     await _showUndercoverSheet<void>(
       context,
-      title: 'Weather sources',
+      title: 'Review sources',
       child: StatefulBuilder(
         builder: (sheetContext, setSheetState) => ListView(
           padding: const EdgeInsets.fromLTRB(14, 0, 14, 24),
@@ -1076,14 +1047,14 @@ class _UndercoverRecoveryDashboardState
             const Padding(
               padding: EdgeInsets.fromLTRB(8, 0, 8, 12),
               child: Text(
-                'Long press the weather widget to return here. Default keys are always included.',
+                'Long press the review card to return here. Basic items are always included.',
                 style: TextStyle(color: Colors.white60),
               ),
             ),
             if (_dictionaries.isEmpty)
               const _GlassCard(
                 child: Text(
-                  'No additional sources are installed.',
+                  'No additional sources are available.',
                   style: TextStyle(color: Colors.white70),
                 ),
               ),
@@ -1093,11 +1064,11 @@ class _UndercoverRecoveryDashboardState
                 activeColor: _blue,
                 checkColor: Colors.white,
                 title: Text(
-                  dictionary.name,
+                  'Source ${_dictionaries.indexOf(dictionary) + 1}',
                   style: const TextStyle(color: Colors.white),
                 ),
                 subtitle: Text(
-                  '${dictionary.keys.length} indicators',
+                  '${dictionary.keys.length} items',
                   style: const TextStyle(color: Colors.white54),
                 ),
                 secondary: CircleAvatar(backgroundColor: dictionary.color),
@@ -1124,7 +1095,7 @@ class _UndercoverRecoveryDashboardState
     final keys = _result?.verifiedKeys ?? const <AutopwnV2VerifiedKey>[];
     await _showUndercoverSheet<void>(
       context,
-      title: 'Recovered positions',
+      title: 'Completed items',
       child: ListView.builder(
         padding: const EdgeInsets.fromLTRB(14, 0, 14, 24),
         itemCount: keys.isEmpty ? 1 : keys.length,
@@ -1132,24 +1103,21 @@ class _UndercoverRecoveryDashboardState
           if (keys.isEmpty) {
             return const _GlassCard(
               child: Text(
-                'No verified positions yet.',
+                'No completed items yet.',
                 style: TextStyle(color: Colors.white70),
               ),
             );
           }
           final key = keys[index];
           return ListTile(
-            leading: const Icon(Icons.trending_up_rounded, color: _green),
+            leading: const Icon(Icons.check_circle_rounded, color: _green),
             title: Text(
-              'Sector ${key.sector + 1} · Key ${key.keyType == 0 ? 'A' : 'B'}',
+              'Area ${key.sector + 1} · Item ${key.keyType == 0 ? 'A' : 'B'}',
               style: const TextStyle(color: Colors.white),
             ),
-            subtitle: Text(
-              bytesToHex(key.key).toUpperCase(),
-              style: const TextStyle(
-                color: Colors.white70,
-                fontFamily: 'RobotoMono',
-              ),
+            subtitle: const Text(
+              'Completed',
+              style: TextStyle(color: Colors.white70),
             ),
           );
         },
@@ -1166,7 +1134,7 @@ class _UndercoverRecoveryDashboardState
     }
     await _showUndercoverSheet<void>(
       context,
-      title: 'Sector outlook',
+      title: 'Progress by area',
       child: GridView.builder(
         padding: const EdgeInsets.fromLTRB(14, 0, 14, 24),
         gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
@@ -1192,10 +1160,10 @@ class _UndercoverRecoveryDashboardState
               children: [
                 Icon(
                   found == 2
-                      ? Icons.wb_sunny_rounded
+                      ? Icons.check_circle_rounded
                       : found == 1
-                      ? Icons.cloud_queue_rounded
-                      : Icons.cloud_rounded,
+                      ? Icons.pending_rounded
+                      : Icons.circle_outlined,
                   color: Colors.white,
                 ),
                 const SizedBox(height: 5),
@@ -1223,7 +1191,7 @@ class _UndercoverRecoveryDashboardState
       'complete': result.complete,
     });
     await Clipboard.setData(ClipboardData(text: payload));
-    if (mounted) _showNotice(context, 'Verified keys exported to clipboard');
+    if (mounted) _showNotice(context, 'Private summary copied.');
   }
 
   Future<void> _copyDump() async {
@@ -1234,7 +1202,7 @@ class _UndercoverRecoveryDashboardState
       'complete': result.complete,
     });
     await Clipboard.setData(ClipboardData(text: payload));
-    if (mounted) _showNotice(context, 'Partial dump exported to clipboard');
+    if (mounted) _showNotice(context, 'Private draft copied.');
   }
 
   @override
@@ -1259,7 +1227,7 @@ class _UndercoverRecoveryDashboardState
                   SizedBox(width: 8),
                   Expanded(
                     child: Text(
-                      'Investments',
+                      'Weekly progress',
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
@@ -1287,35 +1255,24 @@ class _UndercoverRecoveryDashboardState
                 runSpacing: 8,
                 children: [
                   _MarketTicker(
-                    symbol: 'UUID',
-                    value: card == null
-                        ? '--'
-                        : bytesToHex(card.uid).toUpperCase(),
+                    symbol: 'Reference',
+                    value: card == null ? 'Pending' : 'Added',
                     positive: card != null,
                   ),
                   _MarketTicker(
-                    symbol: 'SAK',
-                    value: card == null
-                        ? '--'
-                        : card.sak
-                              .toRadixString(16)
-                              .padLeft(2, '0')
-                              .toUpperCase(),
+                    symbol: 'Status',
+                    value: card == null ? 'Waiting' : 'Ready',
                     positive: card != null,
                   ),
                   _MarketTicker(
-                    symbol: 'ATQA',
-                    value: card == null
-                        ? '--'
-                        : bytesToHex(card.atqa).toUpperCase(),
+                    symbol: 'Groups',
+                    value: result == null ? 'Pending' : '$verified of $total',
                     positive: card != null,
                   ),
                   _MarketTicker(
-                    symbol: 'ATS',
-                    value: card == null || card.ats.isEmpty
-                        ? '--'
-                        : bytesToHex(card.ats).toUpperCase(),
-                    positive: card?.ats.isNotEmpty == true,
+                    symbol: 'Notes',
+                    value: result?.blocks.isNotEmpty == true ? 'Saved' : 'None',
+                    positive: result?.blocks.isNotEmpty == true,
                   ),
                 ],
               ),
@@ -1331,9 +1288,9 @@ class _UndercoverRecoveryDashboardState
                 Expanded(
                   child: _ScanHalf(
                     key: const Key('undercover-recovery-lf'),
-                    label: 'LF Market',
-                    value: _lfIdentity ?? 'Tap to scan',
-                    icon: Icons.multiline_chart_rounded,
+                    label: 'Quick review',
+                    value: _lfIdentity == null ? 'Tap to update' : 'Updated',
+                    icon: Icons.bolt_rounded,
                     busy: _readingLf,
                     onTap: () => unawaited(_readLf()),
                   ),
@@ -1342,11 +1299,9 @@ class _UndercoverRecoveryDashboardState
                 Expanded(
                   child: _ScanHalf(
                     key: const Key('undercover-recovery-hf'),
-                    label: 'HF Market',
-                    value: card == null
-                        ? 'Tap to scan'
-                        : bytesToHex(card.uid).toUpperCase(),
-                    icon: Icons.candlestick_chart_rounded,
+                    label: 'Full review',
+                    value: card == null ? 'Tap to update' : 'Updated',
+                    icon: Icons.fact_check_rounded,
                     busy: _readingHf,
                     onTap: () => unawaited(_readHf()),
                   ),
@@ -1380,7 +1335,7 @@ class _UndercoverRecoveryDashboardState
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           const Text(
-                            'Sector Weather',
+                            'Plan review',
                             style: TextStyle(
                               color: Colors.white,
                               fontSize: 19,
@@ -1390,12 +1345,12 @@ class _UndercoverRecoveryDashboardState
                           const SizedBox(height: 3),
                           Text(
                             _running
-                                ? progress?.operation ?? 'Reading pressure'
+                                ? 'Reviewing your items'
                                 : result == null
-                                ? 'Tap to forecast · hold for sources'
+                                ? 'Tap to review · hold for sources'
                                 : result.complete
-                                ? 'Clear skies across every sector'
-                                : '${total - verified} cloudy positions remain',
+                                ? 'Every area is up to date'
+                                : '${total - verified} items still need attention',
                             maxLines: 2,
                             overflow: TextOverflow.ellipsis,
                             style: const TextStyle(color: Colors.white70),
@@ -1404,7 +1359,7 @@ class _UndercoverRecoveryDashboardState
                       ),
                     ),
                     Text(
-                      '$verified°',
+                      '$verified/$total',
                       style: const TextStyle(
                         color: Colors.white,
                         fontSize: 31,
@@ -1437,29 +1392,29 @@ class _UndercoverRecoveryDashboardState
           runSpacing: 8,
           children: [
             _ActionButton(
-              label: 'Save UUID',
+              label: 'Save reference',
               icon: Icons.bookmark_add_rounded,
               enabled:
                   card != null && _hfTagType != TagType.unknown && !_running,
               onPressed: () => unawaited(_saveUuid()),
             ),
             _ActionButton(
-              label: 'Keys',
-              icon: Icons.key_rounded,
+              label: 'Completed',
+              icon: Icons.check_circle_rounded,
               enabled: result != null,
               onPressed: () => unawaited(_showKeys()),
               color: _green,
             ),
             _ActionButton(
-              label: 'Sectors',
+              label: 'Areas',
               icon: Icons.grid_view_rounded,
               enabled: result != null,
               onPressed: () => unawaited(_showSectors()),
               color: _orange,
             ),
             _ActionButton(
-              label: 'Verify',
-              icon: Icons.verified_rounded,
+              label: 'Review now',
+              icon: Icons.task_alt_rounded,
               enabled:
                   !_running &&
                   context.read<ChameleonGUIState>().communicator != null,
@@ -1467,15 +1422,15 @@ class _UndercoverRecoveryDashboardState
               color: const Color(0xFFBF5AF2),
             ),
             _ActionButton(
-              label: 'Export keys',
-              icon: Icons.ios_share_rounded,
+              label: 'Copy private summary',
+              icon: Icons.content_copy_rounded,
               enabled: result?.verifiedKeys.isNotEmpty == true,
               onPressed: () => unawaited(_copyKeys()),
               color: const Color(0xFF64D2FF),
             ),
             _ActionButton(
-              label: 'Partial dump',
-              icon: Icons.inventory_2_rounded,
+              label: 'Copy private draft',
+              icon: Icons.note_alt_rounded,
               enabled: result?.blocks.isNotEmpty == true,
               onPressed: () => unawaited(_copyDump()),
               color: const Color(0xFF5E5CE6),
@@ -1523,10 +1478,8 @@ class _MarketTicker extends StatelessWidget {
                 ),
               ),
               Icon(
-                positive
-                    ? Icons.arrow_upward_rounded
-                    : Icons.arrow_downward_rounded,
-                color: positive ? _green : _red,
+                positive ? Icons.check_circle_rounded : Icons.schedule_rounded,
+                color: positive ? _green : Colors.white38,
                 size: 15,
               ),
             ],
@@ -1537,8 +1490,7 @@ class _MarketTicker extends StatelessWidget {
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: TextStyle(
-              color: positive ? _green : _red,
-              fontFamily: 'RobotoMono',
+              color: positive ? _green : Colors.white60,
               fontSize: 11,
             ),
           ),
@@ -1676,7 +1628,7 @@ class _UndercoverCaptureDashboardState extends State<UndercoverCaptureDashboard>
       _deviceOperations.selectedSlot(active);
     } catch (error) {
       if (mounted && identical(communicator, _communicator)) {
-        _showNotice(context, 'Unable to load assets: $error', error: true);
+        _showNotice(context, 'Lists could not be updated.', error: true);
       }
     } finally {
       lease.release();
@@ -1697,7 +1649,7 @@ class _UndercoverCaptureDashboardState extends State<UndercoverCaptureDashboard>
     if (!mounted) return;
     await _showUndercoverSheet<void>(
       context,
-      title: 'Choose emulation asset',
+      title: 'Choose active list',
       heightFactor: 0.64,
       child: ListView(
         padding: const EdgeInsets.fromLTRB(14, 0, 14, 24),
@@ -1712,7 +1664,7 @@ class _UndercoverCaptureDashboardState extends State<UndercoverCaptureDashboard>
                 child: _SlotGlyph(type: slot.type),
               ),
               title: Text(
-                slot.name,
+                _listName(slot.index),
                 style: const TextStyle(color: Colors.white),
               ),
               subtitle: Text(
@@ -1744,7 +1696,7 @@ class _UndercoverCaptureDashboardState extends State<UndercoverCaptureDashboard>
       if (_mode == HfCaptureMode.emulation) {
         final slot = _selectedEntry;
         if (slot == null) {
-          throw StateError('Choose an emulation asset first');
+          throw StateError('Choose an active list first');
         }
         await appState.runSlotOperation(
           () => communicator.activateSlot(slot.index),
@@ -1754,7 +1706,9 @@ class _UndercoverCaptureDashboardState extends State<UndercoverCaptureDashboard>
       }
       await controller.start(_mode);
     } catch (error) {
-      if (mounted) _showNotice(context, 'Recorder failed: $error', error: true);
+      if (mounted) {
+        _showNotice(context, 'The journal could not be started.', error: true);
+      }
     } finally {
       lease.release();
     }
@@ -1770,7 +1724,9 @@ class _UndercoverCaptureDashboardState extends State<UndercoverCaptureDashboard>
     try {
       await controller.stop();
     } catch (error) {
-      if (mounted) _showNotice(context, 'Unable to stop: $error', error: true);
+      if (mounted) {
+        _showNotice(context, 'The journal could not be paused.', error: true);
+      }
     } finally {
       lease.release();
     }
@@ -1789,7 +1745,7 @@ class _UndercoverCaptureDashboardState extends State<UndercoverCaptureDashboard>
       if (mounted) {
         _showNotice(
           context,
-          'Unable to finalize recording: $error',
+          'The previous journal session could not be restored.',
           error: true,
         );
       }
@@ -1809,7 +1765,7 @@ class _UndercoverCaptureDashboardState extends State<UndercoverCaptureDashboard>
       await controller.probeReader();
     } catch (error) {
       if (mounted) {
-        _showNotice(context, 'Reader probe failed: $error', error: true);
+        _showNotice(context, 'A marker could not be added.', error: true);
       }
     } finally {
       lease.release();
@@ -1848,7 +1804,9 @@ class _UndercoverCaptureDashboardState extends State<UndercoverCaptureDashboard>
                       shape: BoxShape.circle,
                     ),
                     child: Icon(
-                      running ? Icons.graphic_eq_rounded : Icons.radio_rounded,
+                      running
+                          ? Icons.edit_note_rounded
+                          : Icons.menu_book_rounded,
                       color: Colors.white,
                       size: 31,
                     ),
@@ -1859,7 +1817,7 @@ class _UndercoverCaptureDashboardState extends State<UndercoverCaptureDashboard>
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          running ? 'Recording live' : 'HF Recorder',
+                          running ? 'Journal active' : 'Daily journal',
                           style: const TextStyle(
                             color: Colors.white,
                             fontSize: 20,
@@ -1869,8 +1827,8 @@ class _UndercoverCaptureDashboardState extends State<UndercoverCaptureDashboard>
                         const SizedBox(height: 4),
                         Text(
                           running
-                              ? '${metadata?.observedRecords ?? 0} observations · ${controller.persistedBytes} bytes'
-                              : 'Durable continuous acquisition',
+                              ? '${metadata?.observedRecords ?? 0} entries · saved automatically'
+                              : 'Keep a private activity log',
                           style: const TextStyle(color: Colors.white70),
                         ),
                       ],
@@ -1888,12 +1846,12 @@ class _UndercoverCaptureDashboardState extends State<UndercoverCaptureDashboard>
                               ? unawaited(_stop(controller))
                               : unawaited(_start(controller)),
                     style: IconButton.styleFrom(
-                      backgroundColor: running ? Colors.white : _red,
-                      foregroundColor: running ? _red : Colors.white,
+                      backgroundColor: running ? Colors.white : _blue,
+                      foregroundColor: running ? _blue : Colors.white,
                       minimumSize: const Size(52, 52),
                     ),
                     icon: Icon(
-                      running ? Icons.stop_rounded : Icons.fiber_manual_record,
+                      running ? Icons.pause_rounded : Icons.play_arrow_rounded,
                     ),
                   ),
                 ],
@@ -1904,7 +1862,7 @@ class _UndercoverCaptureDashboardState extends State<UndercoverCaptureDashboard>
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   const Text(
-                    'Acquisition mode',
+                    'Journal mode',
                     style: TextStyle(
                       color: Colors.white,
                       fontWeight: FontWeight.w700,
@@ -1926,14 +1884,14 @@ class _UndercoverCaptureDashboardState extends State<UndercoverCaptureDashboard>
               _GlassCard(
                 child: Row(
                   children: [
-                    const Icon(Icons.credit_card_rounded, color: Colors.white),
+                    const Icon(Icons.list_alt_rounded, color: Colors.white),
                     const SizedBox(width: 10),
                     Expanded(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           const Text(
-                            'Emulation asset',
+                            'Active list',
                             style: TextStyle(
                               color: Colors.white,
                               fontWeight: FontWeight.w700,
@@ -1942,10 +1900,10 @@ class _UndercoverCaptureDashboardState extends State<UndercoverCaptureDashboard>
                           const SizedBox(height: 3),
                           Text(
                             _slotsLoading
-                                ? 'Loading positions'
+                                ? 'Loading lists'
                                 : _selectedEntry == null
-                                ? 'No position selected'
-                                : '${_selectedEntry!.name} · ${_tagLabel(_selectedEntry!.type)}',
+                                ? 'No list selected'
+                                : '${_listName(_selectedEntry!.index)} · ${_tagLabel(_selectedEntry!.type)}',
                             style: const TextStyle(color: Colors.white60),
                           ),
                         ],
@@ -1964,8 +1922,8 @@ class _UndercoverCaptureDashboardState extends State<UndercoverCaptureDashboard>
               SizedBox(
                 width: double.infinity,
                 child: _ActionButton(
-                  label: 'Probe reader field',
-                  icon: Icons.sensors_rounded,
+                  label: 'Add marker now',
+                  icon: Icons.add_task_rounded,
                   enabled: !controller.isBusy,
                   onPressed: () => unawaited(_probeReader(controller)),
                   color: _green,
@@ -1977,8 +1935,8 @@ class _UndercoverCaptureDashboardState extends State<UndercoverCaptureDashboard>
               SizedBox(
                 width: double.infinity,
                 child: _ActionButton(
-                  label: 'Finalize retained recording',
-                  icon: Icons.sync_rounded,
+                  label: 'Restore previous session',
+                  icon: Icons.restore_rounded,
                   enabled: controller.isConnected && !controller.isBusy,
                   onPressed: () => unawaited(_retryDrain(controller)),
                   color: _orange,
@@ -1988,7 +1946,7 @@ class _UndercoverCaptureDashboardState extends State<UndercoverCaptureDashboard>
               children: [
                 Expanded(
                   child: _CaptureMetric(
-                    label: 'Observed',
+                    label: 'Entries',
                     value: '${metadata?.observedRecords ?? 0}',
                     color: _blue,
                   ),
@@ -1996,7 +1954,7 @@ class _UndercoverCaptureDashboardState extends State<UndercoverCaptureDashboard>
                 const SizedBox(width: 8),
                 Expanded(
                   child: _CaptureMetric(
-                    label: 'Stored',
+                    label: 'Saved',
                     value: '${metadata?.storedRecords ?? 0}',
                     color: _green,
                   ),
@@ -2004,7 +1962,7 @@ class _UndercoverCaptureDashboardState extends State<UndercoverCaptureDashboard>
                 const SizedBox(width: 8),
                 Expanded(
                   child: _CaptureMetric(
-                    label: 'Dropped',
+                    label: 'Skipped',
                     value: '${metadata?.droppedRecords ?? 0}',
                     color: _red,
                   ),
@@ -2015,7 +1973,7 @@ class _UndercoverCaptureDashboardState extends State<UndercoverCaptureDashboard>
               _GlassCard(
                 color: _red.withValues(alpha: 0.22),
                 child: Text(
-                  controller.error!,
+                  'The journal could not be updated. Try again later.',
                   style: const TextStyle(color: Colors.white),
                 ),
               ),
@@ -2034,7 +1992,7 @@ class _UndercoverCaptureDashboardState extends State<UndercoverCaptureDashboard>
                   const SizedBox(height: 9),
                   if (records.isEmpty)
                     const Text(
-                      'No retained frames yet.',
+                      'No recent activity yet.',
                       style: TextStyle(color: Colors.white60),
                     ),
                   for (final record in records)
@@ -2043,32 +2001,26 @@ class _UndercoverCaptureDashboardState extends State<UndercoverCaptureDashboard>
                       child: Row(
                         children: [
                           Icon(
-                            record.direction == HfCaptureDirection.readerToCard
-                                ? Icons.arrow_forward_rounded
-                                : record.direction ==
-                                      HfCaptureDirection.cardToReader
-                                ? Icons.arrow_back_rounded
-                                : Icons.bolt_rounded,
+                            record.hasRfError
+                                ? Icons.error_outline_rounded
+                                : Icons.check_circle_outline_rounded,
                             size: 16,
                             color: record.hasRfError ? _red : Colors.white60,
                           ),
                           const SizedBox(width: 8),
                           Expanded(
                             child: Text(
-                              record.data.isEmpty
-                                  ? record.type.name
-                                  : bytesToHex(record.data).toUpperCase(),
+                              'Journal entry ${record.sequence + 1}',
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                               style: const TextStyle(
                                 color: Colors.white,
-                                fontFamily: 'RobotoMono',
                                 fontSize: 11,
                               ),
                             ),
                           ),
                           Text(
-                            '#${record.sequence}',
+                            record.hasRfError ? 'Needs review' : 'Saved',
                             style: const TextStyle(
                               color: Colors.white38,
                               fontSize: 10,
@@ -2104,19 +2056,19 @@ class _CaptureModeRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final (title, subtitle, icon) = switch (mode) {
       HfCaptureMode.emulation => (
-        'Emulation',
-        'Observe traffic while the selected asset is presented',
-        Icons.credit_card_rounded,
+        'Routine',
+        'Add entries while the active list is in use',
+        Icons.repeat_rounded,
       ),
       HfCaptureMode.passive => (
-        'Passive',
-        'Listen without initiating reader traffic',
-        Icons.hearing_rounded,
+        'Silent',
+        'Keep notes quietly in the background',
+        Icons.notifications_off_rounded,
       ),
       HfCaptureMode.reader => (
-        'Reader',
-        'Record transactions initiated by the device',
-        Icons.sensors_rounded,
+        'Manual',
+        'Add entries only when you request them',
+        Icons.touch_app_rounded,
       ),
     };
     return Material(
@@ -2296,7 +2248,7 @@ class _UndercoverEmulationDashboardState
     } catch (error) {
       if (!mounted) return;
       if (_isCurrent(generation, communicator)) {
-        setState(() => _error = error.toString());
+        setState(() => _error = 'Routines could not be updated.');
       }
     } finally {
       if (!identical(_emulationLease, lease)) lease.release();
@@ -2312,7 +2264,7 @@ class _UndercoverEmulationDashboardState
     if (communicator == null || _busy || _slots.isEmpty) return;
     final slot = _slots[_selectedSlot];
     if (!slot.enabled || slot.type == TagType.unknown) {
-      _showNotice(context, 'Choose a funded position first', error: true);
+      _showNotice(context, 'Choose an available plan first.', error: true);
       return;
     }
     final lease = _beginDeviceOperation(context, 'Contactless Studio');
@@ -2340,8 +2292,8 @@ class _UndercoverEmulationDashboardState
     } catch (error) {
       if (!mounted) return;
       if (_isCurrent(generation, communicator)) {
-        setState(() => _error = error.toString());
-        _showNotice(context, 'Unable to open position: $error', error: true);
+        setState(() => _error = 'The routine could not be started.');
+        _showNotice(context, 'The routine could not be started.', error: true);
       }
     } finally {
       if (!keepLease) {
@@ -2374,8 +2326,8 @@ class _UndercoverEmulationDashboardState
     } catch (error) {
       if (!mounted) return;
       if (_isCurrent(generation, communicator)) {
-        setState(() => _error = error.toString());
-        _showNotice(context, 'Unable to close position: $error', error: true);
+        setState(() => _error = 'The routine could not be stopped.');
+        _showNotice(context, 'The routine could not be stopped.', error: true);
       }
     } finally {
       if (stopped) {
@@ -2427,7 +2379,13 @@ class _UndercoverEmulationDashboardState
                       color: Colors.white.withValues(alpha: 0.15),
                       borderRadius: BorderRadius.circular(18),
                     ),
-                    child: _SlotGlyph(type: slot?.type ?? TagType.unknown),
+                    child: Icon(
+                      _emulating
+                          ? Icons.event_available_rounded
+                          : Icons.event_repeat_rounded,
+                      color: Colors.white,
+                      size: 30,
+                    ),
                   ),
                   const SizedBox(width: 13),
                   Expanded(
@@ -2435,9 +2393,7 @@ class _UndercoverEmulationDashboardState
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          _emulating
-                              ? 'Position broadcasting'
-                              : 'Contactless Studio',
+                          _emulating ? 'Routine active' : 'My routines',
                           style: const TextStyle(
                             color: Colors.white,
                             fontSize: 20,
@@ -2447,8 +2403,8 @@ class _UndercoverEmulationDashboardState
                         const SizedBox(height: 4),
                         Text(
                           slot == null
-                              ? 'No asset selected'
-                              : '${slot.name} · ${_tagLabel(slot.type)}',
+                              ? 'No plan selected'
+                              : '${_listName(slot.index)} · ready to use',
                           style: const TextStyle(color: Colors.white70),
                         ),
                       ],
@@ -2471,10 +2427,10 @@ class _UndercoverEmulationDashboardState
               SizedBox(
                 width: double.infinity,
                 child: _ActionButton(
-                  label: _emulating ? 'Stop broadcast' : 'Start broadcast',
+                  label: _emulating ? 'Stop routine' : 'Start routine',
                   icon: _emulating
-                      ? Icons.stop_rounded
-                      : Icons.contactless_rounded,
+                      ? Icons.pause_rounded
+                      : Icons.play_arrow_rounded,
                   color: _emulating ? _red : _green,
                   enabled:
                       !_busy &&
@@ -2503,7 +2459,7 @@ class _UndercoverEmulationDashboardState
                 children: [
                   const Expanded(
                     child: Text(
-                      'Positions',
+                      'Plans',
                       style: TextStyle(
                         color: Colors.white,
                         fontSize: 17,
@@ -2563,11 +2519,13 @@ class _UndercoverEmulationDashboardState
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
                           _SlotGlyph(type: entry?.type ?? TagType.unknown),
-                          const SizedBox(height: 5),
+                          const SizedBox(height: 3),
                           Text(
                             '${index + 1}',
                             style: const TextStyle(
                               color: Colors.white,
+                              fontSize: 11,
+                              height: 1,
                               fontWeight: FontWeight.w700,
                             ),
                           ),
@@ -2655,13 +2613,17 @@ class _UndercoverSniffDashboardState extends State<UndercoverSniffDashboard>
         _capture = raw.isEmpty ? null : HfSniffCapture.fromRawBytes(raw);
       });
       if (raw.isEmpty && mounted) {
-        _showNotice(context, 'No signal frames detected');
+        _showNotice(context, 'No new activity was found.');
       }
     } catch (error) {
       if (!mounted) return;
       if (_isCurrent(generation, communicator)) {
-        setState(() => _error = error.toString());
-        _showNotice(context, 'Signal scan failed: $error', error: true);
+        setState(() => _error = 'The activity review could not be completed.');
+        _showNotice(
+          context,
+          'The activity review could not be completed.',
+          error: true,
+        );
       }
     } finally {
       if (previousReaderMode != null) {
@@ -2689,7 +2651,7 @@ class _UndercoverSniffDashboardState extends State<UndercoverSniffDashboard>
     await Clipboard.setData(
       ClipboardData(text: bytesToHex(capture.rawBytes).toUpperCase()),
     );
-    if (mounted) _showNotice(context, 'Raw signal exported to clipboard');
+    if (mounted) _showNotice(context, 'Private details copied.');
   }
 
   Future<void> _showFrames() async {
@@ -2697,15 +2659,14 @@ class _UndercoverSniffDashboardState extends State<UndercoverSniffDashboard>
     if (capture == null) return;
     await _showUndercoverSheet<void>(
       context,
-      title: 'Signal timeline',
+      title: 'Recent activity',
       heightFactor: 0.82,
       child: ListView.separated(
         padding: const EdgeInsets.fromLTRB(14, 0, 14, 24),
         itemCount: capture.annotatedFrames.length,
         separatorBuilder: (_, _) => const Divider(color: Colors.white12),
         itemBuilder: (context, index) {
-          final annotated = capture.annotatedFrames[index];
-          final frame = annotated.frame;
+          final frame = capture.annotatedFrames[index].frame;
           return ListTile(
             leading: CircleAvatar(
               backgroundColor: frame.isReaderToCard ? _blue : _green,
@@ -2717,20 +2678,16 @@ class _UndercoverSniffDashboardState extends State<UndercoverSniffDashboard>
               ),
             ),
             title: Text(
-              annotated.label,
+              'Activity ${index + 1}',
               style: const TextStyle(color: Colors.white, fontSize: 13),
             ),
             subtitle: Text(
-              frame.hexString,
-              style: const TextStyle(
-                color: Colors.white60,
-                fontFamily: 'RobotoMono',
-                fontSize: 11,
-              ),
+              frame.isReaderToCard ? 'Outgoing update' : 'Incoming update',
+              style: const TextStyle(color: Colors.white60, fontSize: 11),
             ),
-            trailing: Text(
-              '${frame.bitLength}b',
-              style: const TextStyle(color: Colors.white38),
+            trailing: const Text(
+              'Saved',
+              style: TextStyle(color: Colors.white38),
             ),
           );
         },
@@ -2760,7 +2717,7 @@ class _UndercoverSniffDashboardState extends State<UndercoverSniffDashboard>
                       shape: BoxShape.circle,
                     ),
                     child: Icon(
-                      _capturing ? Icons.radar_rounded : Icons.waves_rounded,
+                      _capturing ? Icons.update_rounded : Icons.history_rounded,
                       color: Colors.white,
                       size: 32,
                     ),
@@ -2771,7 +2728,7 @@ class _UndercoverSniffDashboardState extends State<UndercoverSniffDashboard>
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          _capturing ? 'Listening now' : 'Signals',
+                          _capturing ? 'Reviewing now' : 'Activity',
                           style: const TextStyle(
                             color: Colors.white,
                             fontSize: 21,
@@ -2781,10 +2738,10 @@ class _UndercoverSniffDashboardState extends State<UndercoverSniffDashboard>
                         const SizedBox(height: 4),
                         Text(
                           _capturing
-                              ? '$_durationSeconds second observation window'
+                              ? 'Checking recent updates'
                               : summary == null
-                              ? 'Passive ISO 14443-A outlook'
-                              : '${summary.frameCount} frames · ${summary.authRequests.length} auth requests',
+                              ? 'A simple history of your updates'
+                              : '${summary.frameCount} updates · ${capture!.nonces.length} pending',
                           style: const TextStyle(color: Colors.white70),
                         ),
                       ],
@@ -2800,7 +2757,11 @@ class _UndercoverSniffDashboardState extends State<UndercoverSniffDashboard>
                       child: Padding(
                         padding: const EdgeInsets.symmetric(horizontal: 3),
                         child: ChoiceChip(
-                          label: Text('${seconds}s'),
+                          label: Text(switch (seconds) {
+                            5 => 'Quick',
+                            10 => 'Regular',
+                            _ => 'Full',
+                          }),
                           selected: _durationSeconds == seconds,
                           onSelected: _capturing
                               ? null
@@ -2820,10 +2781,10 @@ class _UndercoverSniffDashboardState extends State<UndercoverSniffDashboard>
               SizedBox(
                 width: double.infinity,
                 child: _ActionButton(
-                  label: _capturing ? 'Listening…' : 'Start signal scan',
+                  label: _capturing ? 'Reviewing…' : 'Run review',
                   icon: _capturing
                       ? Icons.hourglass_top_rounded
-                      : Icons.radar_rounded,
+                      : Icons.manage_search_rounded,
                   color: _capturing ? _red : _blue,
                   enabled:
                       !_capturing &&
@@ -2846,7 +2807,7 @@ class _UndercoverSniffDashboardState extends State<UndercoverSniffDashboard>
             children: [
               Expanded(
                 child: _CaptureMetric(
-                  label: 'Reader',
+                  label: 'Outgoing',
                   value: '${summary.readerFrameCount}',
                   color: _blue,
                 ),
@@ -2854,7 +2815,7 @@ class _UndercoverSniffDashboardState extends State<UndercoverSniffDashboard>
               const SizedBox(width: 8),
               Expanded(
                 child: _CaptureMetric(
-                  label: 'Card',
+                  label: 'Incoming',
                   value: '${summary.cardFrameCount}',
                   color: _green,
                 ),
@@ -2862,7 +2823,7 @@ class _UndercoverSniffDashboardState extends State<UndercoverSniffDashboard>
               const SizedBox(width: 8),
               Expanded(
                 child: _CaptureMetric(
-                  label: 'Nonces',
+                  label: 'Pending',
                   value: '${capture!.nonces.length}',
                   color: _orange,
                 ),
@@ -2875,7 +2836,7 @@ class _UndercoverSniffDashboardState extends State<UndercoverSniffDashboard>
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 const Text(
-                  'Observation summary',
+                  'Activity summary',
                   style: TextStyle(
                     color: Colors.white,
                     fontSize: 17,
@@ -2884,28 +2845,28 @@ class _UndercoverSniffDashboardState extends State<UndercoverSniffDashboard>
                 ),
                 const SizedBox(height: 10),
                 _SignalSummaryRow(
-                  label: 'UID',
-                  value: summary.uid ?? 'Not observed',
+                  label: 'Reference',
+                  value: summary.uid == null ? 'Not available' : 'Available',
                 ),
                 _SignalSummaryRow(
-                  label: 'RATS',
-                  value: summary.ratsSeen ? 'Observed' : 'Not observed',
+                  label: 'Status',
+                  value: summary.ratsSeen ? 'Updated' : 'Pending',
                 ),
                 _SignalSummaryRow(
-                  label: 'AIDs',
+                  label: 'Groups',
                   value: summary.aids.isEmpty
                       ? 'None'
-                      : summary.aids.join(', '),
+                      : '${summary.aids.length} available',
                 ),
                 _SignalSummaryRow(
-                  label: 'Outcome',
+                  label: 'Result',
                   value: summary.arqcSeen
-                      ? 'ARQC'
+                      ? 'Completed'
                       : summary.tcSeen
-                      ? 'TC'
+                      ? 'Saved'
                       : summary.halted
-                      ? 'Halted'
-                      : 'Open',
+                      ? 'Interrupted'
+                      : 'In progress',
                 ),
               ],
             ),
@@ -2916,14 +2877,14 @@ class _UndercoverSniffDashboardState extends State<UndercoverSniffDashboard>
             runSpacing: 8,
             children: [
               _ActionButton(
-                label: 'Timeline',
+                label: 'Activity',
                 icon: Icons.timeline_rounded,
                 onPressed: () => unawaited(_showFrames()),
                 color: _green,
               ),
               _ActionButton(
-                label: 'Export raw',
-                icon: Icons.ios_share_rounded,
+                label: 'Copy private details',
+                icon: Icons.content_copy_rounded,
                 onPressed: () => unawaited(_copyCapture()),
                 color: const Color(0xFF5E5CE6),
               ),
@@ -2955,11 +2916,7 @@ class _SignalSummaryRow extends StatelessWidget {
             child: Text(
               value,
               textAlign: TextAlign.end,
-              style: const TextStyle(
-                color: Colors.white,
-                fontFamily: 'RobotoMono',
-                fontSize: 12,
-              ),
+              style: const TextStyle(color: Colors.white, fontSize: 12),
             ),
           ),
         ],

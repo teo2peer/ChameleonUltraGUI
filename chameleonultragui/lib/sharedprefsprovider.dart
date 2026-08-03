@@ -15,7 +15,7 @@ import 'package:uuid/uuid.dart';
 // Localizations
 import 'package:chameleonultragui/generated/i18n/app_localizations.dart';
 
-const int _legacySettingsFormatVersion = 2;
+const int _legacySettingsFormatVersion = 3;
 const int _legacySettingsMaxEncodedBytes = 16 * 1024;
 const Set<String> _legacyBooleanSettingKeys = {
   'confirm_delete',
@@ -33,6 +33,7 @@ const Set<String> _legacyScalarSettingKeys = {
   'locale',
   'sidebar_expanded_index',
   'hf_capture_retention_days',
+  'device_led_animation_mode',
 };
 
 const String dataSyncMetaPreferenceKey = 'data_sync_meta_v1';
@@ -1403,6 +1404,85 @@ class SharedPreferencesProvider extends ChangeNotifier {
     await _setSynchronizedRecords('dictionaries', output);
   }
 
+  Future<Dictionary> mergeDictionaryKeys({
+    required String dictionaryId,
+    required String name,
+    required Iterable<Uint8List> keys,
+    required int keyLength,
+    Color color = Colors.blue,
+  }) {
+    if (dictionaryId.isEmpty || name.trim().isEmpty) {
+      return Future.error(
+        const FormatException('Dictionary ID and name are required'),
+      );
+    }
+    final additions = <String, Uint8List>{};
+    for (final key in keys) {
+      if (key.length * 2 != keyLength) {
+        return Future.error(
+          const FormatException('Invalid dictionary key length'),
+        );
+      }
+      additions[bytesToHex(key).toUpperCase()] = Uint8List.fromList(key);
+    }
+
+    return _serializeDataSync(() async {
+      final desired = List<String>.from(
+        _visibleStringList('dictionaries') ?? const [],
+      );
+      var index = -1;
+      Dictionary? existing;
+      for (var recordIndex = 0; recordIndex < desired.length; recordIndex++) {
+        if (_recordId(desired[recordIndex]) != dictionaryId) continue;
+        if (index >= 0) {
+          throw const FormatException('Duplicate dictionary ID');
+        }
+        index = recordIndex;
+        try {
+          existing = Dictionary.fromJson(desired[recordIndex]);
+        } catch (_) {
+          throw const FormatException('Target dictionary is corrupt');
+        }
+      }
+      if (existing != null && existing.keyLength != keyLength) {
+        throw const FormatException('Dictionary key length changed');
+      }
+      final mergedKeys = <String, Uint8List>{
+        for (final key in existing?.keys ?? const <Uint8List>[])
+          bytesToHex(key).toUpperCase(): Uint8List.fromList(key),
+        ...additions,
+      };
+      final orderedKeys = mergedKeys.entries.toList()
+        ..sort((left, right) => left.key.compareTo(right.key));
+      final merged = Dictionary(
+        id: dictionaryId,
+        name: existing?.name ?? name.trim(),
+        keys: orderedKeys.map((entry) => entry.value).toList(),
+        color: existing?.color ?? color,
+        keyLength: keyLength,
+      );
+      _validateStoredDictionary(merged);
+      if (index < 0) {
+        desired.add(merged.toJson());
+      } else {
+        desired[index] = merged.toJson();
+      }
+      if (_reservedDataSyncTransaction case final reserved?) {
+        final captured = _captureDeferredRecords(
+          reserved,
+          'dictionaries',
+          desired,
+        );
+        await _persistCapturedDeferredJournal(reserved, captured);
+      } else {
+        await _checkedSet('dictionaries', desired);
+        _publishCommittedPreferenceValues({'dictionaries': desired});
+        _syncMutationEpoch++;
+      }
+      return merged;
+    });
+  }
+
   List<CardSave> getCards() {
     return _decodeStoredCards(_visibleStringList('cards') ?? const []);
   }
@@ -1584,6 +1664,7 @@ class SharedPreferencesProvider extends ChangeNotifier {
       'hf_capture_retention_days': getHfCaptureRetentionDays(),
       'mifare_classic_nonce_history_enabled_v1':
           getMifareClassicNonceHistoryEnabled(),
+      'device_led_animation_mode': getDeviceLedAnimationMode().value,
     };
     _validateLegacySettings(settings);
     return jsonEncode({
@@ -1620,6 +1701,12 @@ class SharedPreferencesProvider extends ChangeNotifier {
               candidate['hf_capture_retention_days'] ?? 30,
         };
       }
+      if (version < 3 && candidate is Map<String, dynamic>) {
+        candidate = <String, dynamic>{
+          ...candidate,
+          'device_led_animation_mode': AnimationSetting.full.value,
+        };
+      }
     } else {
       final migrated = <String, dynamic>{
         for (final entry in decoded.entries)
@@ -1636,12 +1723,18 @@ class SharedPreferencesProvider extends ChangeNotifier {
     final settings = _validateLegacySettings(candidate);
     final nonceHistoryEnabled =
         settings.remove('mifare_classic_nonce_history_enabled_v1') as bool?;
+    final deviceLedAnimationMode = settings.remove('device_led_animation_mode');
     await _setSynchronizedScalars(
       settings,
       notify: settings.containsKey('locale'),
     );
     if (nonceHistoryEnabled != null) {
       await setMifareClassicNonceHistoryEnabled(nonceHistoryEnabled);
+    }
+    if (deviceLedAnimationMode != null) {
+      await setDeviceLedAnimationMode(
+        getAnimationModeType(deviceLedAnimationMode as int),
+      );
     }
   }
 
@@ -1680,6 +1773,33 @@ class SharedPreferencesProvider extends ChangeNotifier {
 
   Future<void> setDeviceFoundBanner(bool value) =>
       _setSynchronizedScalar('device_found_banner', value);
+
+  AnimationSetting getDeviceLedAnimationMode() {
+    final value = _sharedPreferences.getInt('device_led_animation_mode');
+    final animation = value == null ? null : getAnimationModeType(value);
+    return animation == null || animation == AnimationSetting.none
+        ? AnimationSetting.full
+        : animation;
+  }
+
+  Future<void> setDeviceLedAnimationMode(AnimationSetting animation) async {
+    if (animation == AnimationSetting.none) {
+      throw ArgumentError.value(
+        animation,
+        'animation',
+        'The LED restore mode must enable animations',
+      );
+    }
+    final written = await _sharedPreferences.setInt(
+      'device_led_animation_mode',
+      animation.value,
+    );
+    if (!written ||
+        _sharedPreferences.getInt('device_led_animation_mode') !=
+            animation.value) {
+      throw StateError('Device LED animation mode was not durably stored');
+    }
+  }
 
   int? _visibleInt(String key) => _visiblePreferenceValue(key) as int?;
 
@@ -3178,6 +3298,16 @@ Map<String, Object> _validateLegacySettings(Object? value) {
         settings[key] = setting;
       case 'hf_capture_retention_days':
         if (setting is! int || setting < 1 || setting > 365) {
+          throw FormatException('Invalid settings backup value: $key');
+        }
+        settings[key] = setting;
+      case 'device_led_animation_mode':
+        if (setting is! int ||
+            !const {
+              AnimationSetting.full,
+              AnimationSetting.minimal,
+              AnimationSetting.symmetric,
+            }.any((animation) => animation.value == setting)) {
           throw FormatException('Invalid settings backup value: $key');
         }
         settings[key] = setting;

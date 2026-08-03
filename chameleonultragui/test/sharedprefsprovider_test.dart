@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:chameleonultragui/sharedprefsprovider.dart';
+import 'package:chameleonultragui/helpers/definitions.dart';
 import 'package:crypto/crypto.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -35,13 +36,14 @@ void main() {
       await preferences.setLocale(const Locale('de', 'AT'));
       await preferences.setHfCaptureRetentionDays(90);
       await preferences.setMifareClassicNonceHistoryEnabled(true);
+      await preferences.setDeviceLedAnimationMode(AnimationSetting.symmetric);
 
       final encoded = preferences.dumpSettingsToJson();
       final decoded = jsonDecode(encoded) as Map<String, dynamic>;
       final settings = decoded['settings'] as Map<String, dynamic>;
 
       expect(decoded.keys.toSet(), {'version', 'settings'});
-      expect(decoded['version'], 2);
+      expect(decoded['version'], 3);
       expect(settings.keys.toSet(), {
         'app_theme',
         'app_theme_color',
@@ -55,19 +57,29 @@ void main() {
         'emulation_change_monitoring',
         'hf_capture_retention_days',
         'mifare_classic_nonce_history_enabled_v1',
+        'device_led_animation_mode',
       });
       expect(settings['app_theme'], ThemeMode.dark.index);
       expect(settings['app_theme_color'], 7);
       expect(settings['locale'], 'de-AT');
       expect(settings['hf_capture_retention_days'], 90);
       expect(settings['mifare_classic_nonce_history_enabled_v1'], isTrue);
+      expect(
+        settings['device_led_animation_mode'],
+        AnimationSetting.symmetric.value,
+      );
       expect(encoded, isNot(contains('plaintext-')));
 
       await preferences.setHfCaptureRetentionDays(7);
       await preferences.setMifareClassicNonceHistoryEnabled(false);
+      await preferences.setDeviceLedAnimationMode(AnimationSetting.full);
       await preferences.restoreSettingsFromJson(encoded);
       expect(preferences.getHfCaptureRetentionDays(), 90);
       expect(preferences.getMifareClassicNonceHistoryEnabled(), isTrue);
+      expect(
+        preferences.getDeviceLedAnimationMode(),
+        AnimationSetting.symmetric,
+      );
     },
   );
 
@@ -96,6 +108,7 @@ void main() {
 
   test('version 1 settings backup migrates capture retention safely', () async {
     await preferences.setHfCaptureRetentionDays(90);
+    await preferences.setDeviceLedAnimationMode(AnimationSetting.symmetric);
 
     await preferences.restoreSettingsFromJson(
       jsonEncode({
@@ -106,13 +119,28 @@ void main() {
 
     expect(preferences.getConfirmDelete(), isFalse);
     expect(preferences.getHfCaptureRetentionDays(), 30);
+    expect(preferences.getDeviceLedAnimationMode(), AnimationSetting.full);
+  });
+
+  test('version 2 settings backup migrates the LED restore mode', () async {
+    await preferences.setDeviceLedAnimationMode(AnimationSetting.symmetric);
+
+    await preferences.restoreSettingsFromJson(
+      jsonEncode({
+        'version': 2,
+        'settings': {'confirm_delete': false},
+      }),
+    );
+
+    expect(preferences.getConfirmDelete(), isFalse);
+    expect(preferences.getDeviceLedAnimationMode(), AnimationSetting.full);
   });
 
   test(
     'restore rejects unknown keys, types, versions, and oversized input',
     () async {
       final invalidBackups = <Object>[
-        {'version': 3, 'settings': <String, Object>{}},
+        {'version': 4, 'settings': <String, Object>{}},
         {
           'version': 1,
           'settings': {'cards': <Object>[]},
@@ -124,6 +152,12 @@ void main() {
         {
           'version': 1,
           'settings': {'locale': 'not-supported'},
+        },
+        {
+          'version': 3,
+          'settings': {
+            'device_led_animation_mode': AnimationSetting.none.value,
+          },
         },
         {'version': 1, 'settings': <String, Object>{}, 'extra': true},
       ];
@@ -146,10 +180,12 @@ void main() {
     await raw.setInt('app_theme', 99);
     await raw.setInt('app_theme_color', 99);
     await raw.setInt('hf_capture_retention_days', 0);
+    await raw.setInt('device_led_animation_mode', AnimationSetting.none.value);
 
     expect(preferences.getTheme(), ThemeMode.system);
     expect(preferences.getThemeColorIndex(), 0);
     expect(preferences.getHfCaptureRetentionDays(), 30);
+    expect(preferences.getDeviceLedAnimationMode(), AnimationSetting.full);
   });
 
   test(

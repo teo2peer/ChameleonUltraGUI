@@ -23,13 +23,28 @@
   "read_card": "Leer tarjeta",
   "write_card": "Escribir tarjeta",
   "settings": "Configuraci\u00f3n",
+  "device_leds": "LED del dispositivo",
+  "device_leds_enabled_description": "Las animaciones de estado est\u00e1n activadas.",
+  "device_leds_disabled_description": "Todos los LED del dispositivo est\u00e1n desactivados.",
+  "device_leds_disconnected_description": "Conecta un dispositivo para gestionar sus LED.",
+  "device_leds_loading": "Leyendo el ajuste de los LED...",
+  "device_leds_update_failed": "No se pudieron actualizar los LED del dispositivo: {error}",
+  "@device_leds_update_failed": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "device_leds_retry": "Reintentar",
   "undercover_mode": "Modo encubierto",
   "undercover_enter": "Entrar en modo encubierto",
   "undercover_description": "Apaga todos los LED del dispositivo y sustituye la app por una pantalla de inicio discreta hasta que salgas manualmente.",
   "undercover_unavailable": "El modo encubierto requiere firmware compatible y una conexi\u00f3n BLE activa.",
-  "undercover_exit_title": "\u00bfSalir de esta pantalla de inicio?",
-  "undercover_exit_message": "Volver\u00e1 la navegaci\u00f3n normal y se restaurar\u00e1n los LED si la conexi\u00f3n BLE sigue activa.",
-  "undercover_exit": "Salir",
+  "undercover_exit_title": "\u00bfCerrar Mi semana?",
+  "undercover_exit_message": "Volver\u00e1s a la pantalla principal. Los cambios pendientes se sincronizar\u00e1n cuando sea posible.",
+  "undercover_exit": "Cerrar",
+  "undercover_exit_error": "No se pudo cerrar Mi semana. Int\u00e9ntalo de nuevo.",
   "undercover_app_status": "Tiempo",
   "undercover_app_wallet": "Cartera",
   "undercover_app_files": "Archivos",
@@ -627,6 +642,7 @@
   "hf_capture_card_atqa": "ATQA",
   "hf_capture_card_ats": "ATS",
   "hf_capture_card_confirmed": "Esta es la identidad de tarjeta que responderá al lector externo cuando comience la captura.",
+  "hf_capture_card_random_uid": "El modo UID aleatorio está activo. El UID mostrado puede cambiar; la recuperación usará el UID observado en cada selección RF.",
   "hf_capture_observed": "Observados",
   "hf_capture_buffered": "En búfer",
   "hf_capture_dropped": "Perdidos",
@@ -668,5 +684,6 @@
   "hf_capture_recovery_save_pending": "guardado pendiente",
   "hf_capture_recovery_copy_key": "Copiar clave recuperada",
   "hf_capture_recovery_key_copied": "Clave recuperada copiada",
+  "hf_capture_recovery_retry": "Reintentar recuperación y guardado de claves",
   "hf_capture_recovery_dictionaries": "Diccionarios automáticos"
 }

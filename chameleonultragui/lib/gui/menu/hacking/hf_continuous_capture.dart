@@ -26,6 +26,13 @@ class _HfEmulationSlot {
   final TagType type;
 }
 
+class _HfInspectedCard {
+  const _HfInspectedCard({required this.card, required this.randomUid});
+
+  final CardData card;
+  final bool randomUid;
+}
+
 class HfContinuousCapturePage extends StatefulWidget {
   const HfContinuousCapturePage({super.key});
 
@@ -40,6 +47,7 @@ class _HfContinuousCapturePageState extends State<HfContinuousCapturePage> {
   List<_HfEmulationSlot> _emulationSlots = const [];
   int? _selectedEmulationSlot;
   CardData? _selectedEmulationCard;
+  bool _selectedRandomUid = false;
   bool _slotsLoading = false;
   bool _slotBusy = false;
   String? _slotError;
@@ -55,6 +63,7 @@ class _HfContinuousCapturePageState extends State<HfContinuousCapturePage> {
     _emulationSlots = const [];
     _selectedEmulationSlot = null;
     _selectedEmulationCard = null;
+    _selectedRandomUid = false;
     _slotError = null;
     _slotsLoading = communicator != null;
     if (communicator != null) {
@@ -71,10 +80,12 @@ class _HfContinuousCapturePageState extends State<HfContinuousCapturePage> {
     HfCaptureController controller,
   ) async {
     var ownsSlotBusy = false;
-    CardData? expectedCard;
     final localizations = AppLocalizations.of(context)!;
     try {
       if (_mode == HfCaptureMode.emulation) {
+        if (!identical(_slotCommunicator, appState.communicator)) {
+          throw StateError(localizations.hf_capture_slot_connection_changed);
+        }
         final entry = _selectedSlotEntry;
         final displayedCard = _selectedEmulationCard;
         if (entry == null || displayedCard == null) {
@@ -82,17 +93,38 @@ class _HfContinuousCapturePageState extends State<HfContinuousCapturePage> {
         }
         ownsSlotBusy = true;
         setState(() => _slotBusy = true);
-        final currentCard = await _inspectEmulationSlot(appState, entry);
-        if (!_sameCard(displayedCard, currentCard)) {
-          if (mounted) setState(() => _selectedEmulationCard = currentCard);
-          throw StateError(localizations.hf_capture_card_changed);
-        }
-        if (isMifareClassic(entry.type)) expectedCard = currentCard;
+        await appState.runSlotOperation(() async {
+          final current = await _inspectActivatedSlot(entry);
+          if (!_sameCard(
+            displayedCard,
+            current.card,
+            ignoreUid: current.randomUid,
+          )) {
+            if (mounted) {
+              setState(() {
+                _selectedEmulationCard = current.card;
+                _selectedRandomUid = current.randomUid;
+              });
+            }
+            throw StateError(localizations.hf_capture_card_changed);
+          }
+          appState.hfCaptureMifareRecoveryController.prepareForCapture(
+            expectedCard: isMifareClassic(entry.type) && !current.randomUid
+                ? current.card
+                : null,
+          );
+          await controller.start(_mode);
+          if (mounted) {
+            setState(() {
+              _selectedEmulationCard = current.card;
+              _selectedRandomUid = current.randomUid;
+            });
+          }
+        }, invalidatesMonitorBaseline: false);
+      } else {
+        appState.hfCaptureMifareRecoveryController.prepareForCapture();
+        await controller.start(_mode);
       }
-      appState.hfCaptureMifareRecoveryController.prepareForCapture(
-        expectedCard: expectedCard,
-      );
-      await controller.start(_mode);
     } catch (error) {
       if (mounted) _showError(error);
     } finally {
@@ -140,14 +172,11 @@ class _HfContinuousCapturePageState extends State<HfContinuousCapturePage> {
       }
 
       final activeEntry = _findSlot(slots, activeSlot);
-      CardData? activeCard;
+      _HfInspectedCard? activeCard;
       Object? cardError;
       if (activeEntry != null) {
         try {
-          activeCard = await appState.runSlotOperation(
-            communicator.mf1GetAntiCollData,
-            invalidatesMonitorBaseline: false,
-          );
+          activeCard = await _inspectEmulationSlot(appState, activeEntry);
         } catch (error) {
           cardError = error;
         }
@@ -156,7 +185,8 @@ class _HfContinuousCapturePageState extends State<HfContinuousCapturePage> {
       setState(() {
         _emulationSlots = slots;
         _selectedEmulationSlot = activeEntry?.index;
-        _selectedEmulationCard = activeCard;
+        _selectedEmulationCard = activeCard?.card;
+        _selectedRandomUid = activeCard?.randomUid ?? false;
         _slotError = cardError?.toString();
       });
     } catch (error) {
@@ -165,6 +195,7 @@ class _HfContinuousCapturePageState extends State<HfContinuousCapturePage> {
           _emulationSlots = const [];
           _selectedEmulationSlot = null;
           _selectedEmulationCard = null;
+          _selectedRandomUid = false;
           _slotError = error.toString();
         });
       }
@@ -175,7 +206,7 @@ class _HfContinuousCapturePageState extends State<HfContinuousCapturePage> {
     }
   }
 
-  Future<CardData> _inspectEmulationSlot(
+  Future<_HfInspectedCard> _inspectEmulationSlot(
     ChameleonGUIState appState,
     _HfEmulationSlot entry,
   ) async {
@@ -185,19 +216,34 @@ class _HfContinuousCapturePageState extends State<HfContinuousCapturePage> {
         AppLocalizations.of(context)!.hf_capture_slot_connection_changed,
       );
     }
+    return appState.runSlotOperation(
+      () => _inspectActivatedSlot(entry),
+      invalidatesMonitorBaseline: false,
+    );
+  }
+
+  Future<_HfInspectedCard> _inspectActivatedSlot(_HfEmulationSlot entry) async {
+    final communicator = _slotCommunicator;
+    if (communicator == null) {
+      throw StateError(
+        AppLocalizations.of(context)!.hf_capture_slot_connection_changed,
+      );
+    }
     final localizations = AppLocalizations.of(context)!;
-    return appState.runSlotOperation(() async {
-      final types = await communicator.getSlotTagTypes();
-      final enabled = await communicator.getEnabledSlots();
-      if (entry.index >= types.length ||
-          entry.index >= enabled.length ||
-          !enabled[entry.index].hf ||
-          types[entry.index].hf != entry.type) {
-        throw StateError(localizations.hf_capture_slot_changed);
-      }
-      await communicator.activateSlot(entry.index);
-      return communicator.mf1GetAntiCollData();
-    });
+    final types = await communicator.getSlotTagTypes();
+    final enabled = await communicator.getEnabledSlots();
+    if (entry.index >= types.length ||
+        entry.index >= enabled.length ||
+        !enabled[entry.index].hf ||
+        types[entry.index].hf != entry.type) {
+      throw StateError(localizations.hf_capture_slot_changed);
+    }
+    await communicator.activateSlot(entry.index);
+    final card = await communicator.mf1GetAntiCollData();
+    final randomUid = isMifareClassic(entry.type)
+        ? await communicator.getMf1RandomUidMode()
+        : false;
+    return _HfInspectedCard(card: card, randomUid: randomUid);
   }
 
   Future<void> _selectEmulationSlot(
@@ -210,12 +256,16 @@ class _HfContinuousCapturePageState extends State<HfContinuousCapturePage> {
       _slotBusy = true;
       _selectedEmulationSlot = index;
       _selectedEmulationCard = null;
+      _selectedRandomUid = false;
       _slotError = null;
     });
     try {
-      final card = await _inspectEmulationSlot(appState, entry);
+      final inspected = await _inspectEmulationSlot(appState, entry);
       if (mounted && identical(_slotCommunicator, appState.communicator)) {
-        setState(() => _selectedEmulationCard = card);
+        setState(() {
+          _selectedEmulationCard = inspected.card;
+          _selectedRandomUid = inspected.randomUid;
+        });
         appState.changesMade();
       }
     } catch (error) {
@@ -239,9 +289,9 @@ class _HfContinuousCapturePageState extends State<HfContinuousCapturePage> {
     return null;
   }
 
-  bool _sameCard(CardData left, CardData right) =>
+  bool _sameCard(CardData left, CardData right, {required bool ignoreUid}) =>
       left.sak == right.sak &&
-      listEquals(left.uid, right.uid) &&
+      (ignoreUid || listEquals(left.uid, right.uid)) &&
       listEquals(left.atqa, right.atqa) &&
       listEquals(left.ats, right.ats);
 
@@ -734,10 +784,18 @@ class _HfContinuousCapturePageState extends State<HfContinuousCapturePage> {
                   padding: const EdgeInsets.all(12),
                   child: Row(
                     children: [
-                      const Icon(Icons.verified_outlined),
+                      Icon(
+                        _selectedRandomUid
+                            ? Icons.shuffle
+                            : Icons.verified_outlined,
+                      ),
                       const SizedBox(width: 10),
                       Expanded(
-                        child: Text(localizations.hf_capture_card_confirmed),
+                        child: Text(
+                          _selectedRandomUid
+                              ? localizations.hf_capture_card_random_uid
+                              : localizations.hf_capture_card_confirmed,
+                        ),
                       ),
                     ],
                   ),
@@ -958,7 +1016,18 @@ class _HfContinuousCapturePageState extends State<HfContinuousCapturePage> {
                 ),
                 child: Padding(
                   padding: const EdgeInsets.all(12),
-                  child: SelectableText(recoveryController.error!),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: SelectableText(recoveryController.error!),
+                      ),
+                      IconButton(
+                        tooltip: localizations.hf_capture_recovery_retry,
+                        onPressed: recoveryController.retry,
+                        icon: const Icon(Icons.refresh),
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ],

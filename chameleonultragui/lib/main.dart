@@ -1134,7 +1134,7 @@ class _MainPageState extends State<MainPage> {
   bool _wasConnected = false;
   bool _wasUndercover = false;
   bool _showUndercoverLauncher = true;
-  String _undercoverRootLabel = 'Workspace';
+  String _undercoverRootLabel = 'My Week';
   int _lastShownEmulationChangeSequence = 0;
   final GlobalKey<NavigatorState> _navigatorKey = GlobalKey<NavigatorState>();
   final GlobalKey<ScaffoldMessengerState> _scaffoldMessengerKey =
@@ -1225,7 +1225,7 @@ class _MainPageState extends State<MainPage> {
       setState(() {
         selectedIndex = 0;
         _showUndercoverLauncher = true;
-        _undercoverRootLabel = 'Workspace';
+        _undercoverRootLabel = 'My Week';
       });
     } catch (error) {
       final errorContext = _navigatorKey.currentContext;
@@ -1234,7 +1234,7 @@ class _MainPageState extends State<MainPage> {
         context: errorContext,
         builder: (context) => AlertDialog(
           title: Text(localizations.error),
-          content: Text(error.toString()),
+          content: Text(localizations.undercover_exit_error),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(context),
@@ -1350,7 +1350,7 @@ class _MainPageState extends State<MainPage> {
     _moduleNavigationObserver.setRootModule(ModuleId.undercover);
     setState(() {
       _showUndercoverLauncher = true;
-      _undercoverRootLabel = 'Workspace';
+      _undercoverRootLabel = 'My Week';
     });
   }
 
@@ -1360,7 +1360,7 @@ class _MainPageState extends State<MainPage> {
     _moduleNavigationObserver.setRootModule(ModuleId.undercover);
     setState(() {
       _showUndercoverLauncher = true;
-      _undercoverRootLabel = 'Workspace';
+      _undercoverRootLabel = 'My Week';
     });
   }
 
@@ -1542,8 +1542,9 @@ class _MainPageState extends State<MainPage> {
     if (appState.undercoverMode != _wasUndercover) {
       _wasUndercover = appState.undercoverMode;
       if (appState.undercoverMode) {
+        _lastShownEmulationChangeSequence = appState.emulationChangeSequence;
         _showUndercoverLauncher = true;
-        _undercoverRootLabel = 'Workspace';
+        _undercoverRootLabel = 'My Week';
       }
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;

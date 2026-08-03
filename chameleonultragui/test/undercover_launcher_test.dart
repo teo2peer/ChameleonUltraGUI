@@ -45,6 +45,10 @@ void main() {
       screens.map((screen) => screen.id),
       orderedEquals(['home', 'markets', 'recorder', 'studio', 'signals']),
     );
+    expect(
+      screens.map((screen) => screen.title),
+      orderedEquals(['Home', 'Progress', 'Journal', 'Routines', 'Activity']),
+    );
     expect(screens.every((screen) => screen.apps.isEmpty), isTrue);
     expect(screens.every((screen) => screen.dashboardBuilder != null), isTrue);
   });
@@ -107,6 +111,7 @@ void main() {
     expect(find.text('Persistent dashboard'), findsOneWidget);
     expect(find.byKey(const Key('undercover-app-search')), findsNothing);
     expect(find.byKey(const Key('undercover-action-board')), findsNothing);
+    expect(tester.widget<Text>(find.text('Positions')).maxLines, 2);
   });
 
   testWidgets('all real dashboards render offline on a compact device', (
@@ -161,6 +166,34 @@ void main() {
         find.byKey(Key('undercover-dashboard-${ids[page]}')),
         findsOneWidget,
       );
+      final renderedText = tester
+          .widgetList<Text>(find.byType(Text))
+          .map((widget) => widget.data)
+          .whereType<String>()
+          .join(' ')
+          .toLowerCase();
+      for (final term in const [
+        'mifare',
+        'ntag',
+        'uuid',
+        'atqa',
+        'sector',
+        'nonce',
+        'signal',
+        'contactless',
+        'emulation',
+        'reader',
+        'frame',
+        'broadcast',
+        'chameleon',
+        'undercover',
+      ]) {
+        expect(
+          renderedText,
+          isNot(contains(term)),
+          reason: '${ids[page]}: $term',
+        );
+      }
       expect(tester.takeException(), isNull, reason: ids[page]);
       if (page == ids.length - 1) break;
       await tester.fling(
