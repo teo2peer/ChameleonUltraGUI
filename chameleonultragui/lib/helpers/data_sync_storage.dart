@@ -33,7 +33,9 @@ extension DataSyncStorage on SharedPreferencesProvider {
 
   SyncSnapshot _createSyncSnapshot() => SyncSnapshot(
     cards: _uniqueCards(getCards()),
+    cardFolders: getCardFolders(),
     dictionaries: _uniqueDictionaries(getDictionaries()),
+    dictionaryFolders: getDictionaryFolders(),
     keyboardScripts: _uniqueScripts(getKeyboardScripts()),
     settings: {
       'app_theme': getTheme().index,
@@ -134,8 +136,14 @@ extension DataSyncStorage on SharedPreferencesProvider {
       ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
     return {
       'cards': snapshot.cards.map((card) => card.toJson()).toList(),
+      'card_folders': snapshot.cardFolders
+          .map((folder) => folder.toJson())
+          .toList(),
       'dictionaries': snapshot.dictionaries
           .map((dictionary) => dictionary.toJson())
+          .toList(),
+      'dictionary_folders': snapshot.dictionaryFolders
+          .map((folder) => folder.toJson())
           .toList(),
       'keyboard_scripts': scripts.map((script) => script.toJson()).toList(),
       'app_theme': theme,

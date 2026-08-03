@@ -15,7 +15,7 @@ import 'package:uuid/uuid.dart';
 // Localizations
 import 'package:chameleonultragui/generated/i18n/app_localizations.dart';
 
-const int _legacySettingsFormatVersion = 3;
+const int _legacySettingsFormatVersion = 4;
 const int _legacySettingsMaxEncodedBytes = 16 * 1024;
 const Set<String> _legacyBooleanSettingKeys = {
   'confirm_delete',
@@ -25,6 +25,7 @@ const Set<String> _legacyBooleanSettingKeys = {
   'sidebar_auto_expanded',
   'emulation_change_monitoring',
   'mifare_classic_nonce_history_enabled_v1',
+  'device_leds_enabled',
 };
 const Set<String> _legacyScalarSettingKeys = {
   ..._legacyBooleanSettingKeys,
@@ -33,7 +34,6 @@ const Set<String> _legacyScalarSettingKeys = {
   'locale',
   'sidebar_expanded_index',
   'hf_capture_retention_days',
-  'device_led_animation_mode',
 };
 
 const String dataSyncMetaPreferenceKey = 'data_sync_meta_v1';
@@ -53,7 +53,9 @@ const int _mifareClassicNonceHistoryFormatVersion = 2;
 const int _dataSyncTransactionVersion = 2;
 const List<String> dataSyncStoredPreferenceKeys = [
   'cards',
+  'card_folders',
   'dictionaries',
+  'dictionary_folders',
   'keyboard_scripts',
   'app_theme',
   'app_theme_color',
@@ -67,6 +69,22 @@ const List<String> dataSyncStoredPreferenceKeys = [
   'emulation_change_monitoring',
   'hf_capture_retention_days',
 ];
+const Set<String> _legacyDataSyncStoredPreferenceKeys = {
+  'cards',
+  'dictionaries',
+  'keyboard_scripts',
+  'app_theme',
+  'app_theme_color',
+  'locale',
+  'confirm_delete',
+  'auto_scan_enabled',
+  'auto_connect_first_found',
+  'device_found_banner',
+  'sidebar_auto_expanded',
+  'sidebar_expanded_index',
+  'emulation_change_monitoring',
+  'hf_capture_retention_days',
+};
 
 class MifareClassicNonceHistorySummary {
   const MifareClassicNonceHistorySummary({
@@ -347,7 +365,9 @@ class _DeferredMutationJournal {
         if (operation.length != 6 ||
             !const {
               'cards',
+              'card_folders',
               'dictionaries',
+              'dictionary_folders',
               'keyboard_scripts',
             }.contains(key) ||
             upserts is! Map ||
@@ -493,8 +513,12 @@ void _validateDeferredRecord(String key, String encoded) {
   switch (key) {
     case 'cards':
       validateCardSaveSemantics(CardSave.fromJson(encoded));
+    case 'card_folders':
+      _validateStoredCardFolder(CardFolder.fromJson(encoded));
     case 'dictionaries':
       _validateStoredDictionary(Dictionary.fromJson(encoded));
+    case 'dictionary_folders':
+      _validateStoredDictionaryFolder(DictionaryFolder.fromJson(encoded));
     case 'keyboard_scripts':
       SavedKeyboardScript.fromJson(encoded);
     default:
@@ -545,6 +569,7 @@ class Dictionary {
   List<Uint8List> keys;
   Color color;
   int keyLength;
+  String? folderId;
 
   factory Dictionary.fromJson(String json) {
     Map<String, dynamic> data = jsonDecode(json);
@@ -562,6 +587,7 @@ class Dictionary {
 
     final keyLength = data['keyLength'] as int;
     final color = hexToColor(data['color']);
+    final folderId = data['folderId'] as String?;
 
     List<Uint8List> keys = [];
     for (var key in encodedKeys) {
@@ -573,6 +599,7 @@ class Dictionary {
       keys: keys,
       color: color,
       keyLength: keyLength,
+      folderId: folderId,
     );
   }
 
@@ -583,6 +610,7 @@ class Dictionary {
       'color': colorToHex(color),
       'keys': keys.map((key) => key.toList()).toList(),
       'keyLength': keyLength,
+      if (folderId != null) 'folderId': folderId,
     });
   }
 
@@ -645,7 +673,80 @@ class Dictionary {
     this.keys = const [],
     this.color = Colors.deepOrange,
     this.keyLength = 0,
+    this.folderId,
   }) : id = id ?? const Uuid().v4();
+}
+
+class DictionaryFolder {
+  String id;
+  String name;
+  Color color;
+  String? parentId;
+
+  DictionaryFolder({
+    String? id,
+    required this.name,
+    this.color = Colors.deepOrange,
+    this.parentId,
+  }) : id = id ?? const Uuid().v4();
+
+  factory DictionaryFolder.fromJson(String source) {
+    final data = jsonDecode(source) as Map<String, dynamic>;
+    return DictionaryFolder(
+      id: data['id'] as String,
+      name: data['name'] as String,
+      color: data['color'] == null
+          ? Colors.deepOrange
+          : hexToColor(data['color'] as String),
+      parentId: data['parentId'] as String?,
+    );
+  }
+
+  String toJson() => jsonEncode({
+    'id': id,
+    'name': name,
+    'color': colorToHex(color),
+    if (parentId != null) 'parentId': parentId,
+  });
+}
+
+class DictionaryFolderBundle {
+  final String rootFolderId;
+  final List<DictionaryFolder> folders;
+  final List<Dictionary> dictionaries;
+
+  DictionaryFolderBundle({
+    required this.rootFolderId,
+    required this.folders,
+    required this.dictionaries,
+  });
+
+  factory DictionaryFolderBundle.fromJson(String source) {
+    final data = jsonDecode(source) as Map<String, dynamic>;
+    if (data['format'] != 'chameleon-ultra-gui-dictionary-folder' ||
+        data['version'] != 1) {
+      throw const FormatException('Unsupported dictionary folder file');
+    }
+    return DictionaryFolderBundle(
+      rootFolderId: data['rootFolderId'] as String,
+      folders: (data['folders'] as List<dynamic>)
+          .map((item) => DictionaryFolder.fromJson(jsonEncode(item)))
+          .toList(),
+      dictionaries: (data['dictionaries'] as List<dynamic>)
+          .map((item) => Dictionary.fromJson(jsonEncode(item)))
+          .toList(),
+    );
+  }
+
+  String toJson() => jsonEncode({
+    'format': 'chameleon-ultra-gui-dictionary-folder',
+    'version': 1,
+    'rootFolderId': rootFolderId,
+    'folders': folders.map((folder) => jsonDecode(folder.toJson())).toList(),
+    'dictionaries': dictionaries
+        .map((dictionary) => jsonDecode(dictionary.toJson()))
+        .toList(),
+  });
 }
 
 class CardSave {
@@ -659,6 +760,7 @@ class CardSave {
   List<Uint8List> data;
   CardSaveExtra extraData;
   Color color;
+  String? folderId;
 
   factory CardSave.fromJson(String json) {
     Map<String, dynamic> data = jsonDecode(json);
@@ -673,6 +775,7 @@ class CardSave {
     final color = data['color'] == null
         ? Colors.deepOrange
         : hexToColor(data['color']);
+    final folderId = data['folderId'] as String?;
     List<Uint8List> tagData = (data['data'] as List<dynamic>)
         .map((e) => Uint8List.fromList(List<int>.from(e)))
         .toList();
@@ -685,6 +788,7 @@ class CardSave {
       tag: tag,
       data: tagData,
       color: color,
+      folderId: folderId,
       extraData: extraData,
       ats: Uint8List.fromList(ats),
       atqa: Uint8List.fromList(atqa),
@@ -703,6 +807,7 @@ class CardSave {
       'color': colorToHex(color),
       'data': data.map((data) => data.toList()).toList(),
       'extra': extraData.export(),
+      if (folderId != null) 'folderId': folderId,
     });
   }
 
@@ -716,12 +821,84 @@ class CardSave {
     Uint8List? ats,
     CardSaveExtra? extraData,
     this.color = Colors.deepOrange,
+    this.folderId,
     this.data = const [],
   }) : id = id ?? const Uuid().v4(),
        sak = sak ?? 0,
        atqa = atqa ?? Uint8List(0),
        ats = ats ?? Uint8List(0),
        extraData = extraData ?? CardSaveExtra();
+}
+
+class CardFolder {
+  String id;
+  String name;
+  Color color;
+  String? parentId;
+
+  CardFolder({
+    String? id,
+    required this.name,
+    this.color = Colors.deepOrange,
+    this.parentId,
+  }) : id = id ?? const Uuid().v4();
+
+  factory CardFolder.fromJson(String source) {
+    final data = jsonDecode(source) as Map<String, dynamic>;
+    return CardFolder(
+      id: data['id'] as String,
+      name: data['name'] as String,
+      color: data['color'] == null
+          ? Colors.deepOrange
+          : hexToColor(data['color'] as String),
+      parentId: data['parentId'] as String?,
+    );
+  }
+
+  String toJson() => jsonEncode({
+    'id': id,
+    'name': name,
+    'color': colorToHex(color),
+    if (parentId != null) 'parentId': parentId,
+  });
+}
+
+/// Versioned Chameleon Ultra GUI folder interchange format.
+class CardFolderBundle {
+  final String rootFolderId;
+  final List<CardFolder> folders;
+  final List<CardSave> cards;
+
+  CardFolderBundle({
+    required this.rootFolderId,
+    required this.folders,
+    required this.cards,
+  });
+
+  factory CardFolderBundle.fromJson(String source) {
+    final data = jsonDecode(source) as Map<String, dynamic>;
+    if (data['format'] != 'chameleon-ultra-gui-folder' ||
+        data['version'] != 1) {
+      throw const FormatException('Unsupported folder file');
+    }
+    return CardFolderBundle(
+      rootFolderId: data['rootFolderId'] as String,
+      folders: (data['folders'] as List<dynamic>)
+          .map((item) => CardFolder.fromJson(jsonEncode(item)))
+          .toList(),
+      cards: (data['cards'] as List<dynamic>)
+          .map((item) => CardSave.fromJson(jsonEncode(item)))
+          .toList(),
+    );
+  }
+
+  String toJson() => jsonEncode({
+    'format': 'chameleon-ultra-gui-folder',
+    'version': 1,
+    'rootFolderId': rootFolderId,
+    'folders': folders.map((folder) => jsonDecode(folder.toJson())).toList(),
+    'cards': cards.map((card) => jsonDecode(card.toJson())).toList(),
+  });
 }
 
 class CardSaveExtra {
@@ -1460,6 +1637,7 @@ class SharedPreferencesProvider extends ChangeNotifier {
         keys: orderedKeys.map((entry) => entry.value).toList(),
         color: existing?.color ?? color,
         keyLength: keyLength,
+        folderId: existing?.folderId,
       );
       _validateStoredDictionary(merged);
       if (index < 0) {
@@ -1481,6 +1659,32 @@ class SharedPreferencesProvider extends ChangeNotifier {
       }
       return merged;
     });
+  }
+
+  List<DictionaryFolder> getDictionaryFolders() {
+    return _decodeStoredDictionaryFolders(
+      _visibleStringList('dictionary_folders') ?? const [],
+    );
+  }
+
+  Future<void> setDictionaryFolders(List<DictionaryFolder> folders) {
+    for (final folder in folders) {
+      _validateStoredDictionaryFolder(folder);
+    }
+    try {
+      _validateStoredFolderTree(
+        ids: folders.map((folder) => folder.id),
+        parents: folders.map((folder) => folder.parentId),
+        referencedIds: const <String?>[],
+        label: 'dictionary folder',
+      );
+    } catch (error, stackTrace) {
+      return Future<void>.error(error, stackTrace);
+    }
+    return _setSynchronizedRecords(
+      'dictionary_folders',
+      folders.map((folder) => folder.toJson()).toList(),
+    );
   }
 
   List<CardSave> getCards() {
@@ -1584,6 +1788,32 @@ class SharedPreferencesProvider extends ChangeNotifier {
     await _setSynchronizedRecords('keyboard_scripts', encoded);
   }
 
+  List<CardFolder> getCardFolders() {
+    return _decodeStoredCardFolders(
+      _visibleStringList('card_folders') ?? const [],
+    );
+  }
+
+  Future<void> setCardFolders(List<CardFolder> folders) {
+    for (final folder in folders) {
+      _validateStoredCardFolder(folder);
+    }
+    try {
+      _validateStoredFolderTree(
+        ids: folders.map((folder) => folder.id),
+        parents: folders.map((folder) => folder.parentId),
+        referencedIds: const <String?>[],
+        label: 'card folder',
+      );
+    } catch (error, stackTrace) {
+      return Future<void>.error(error, stackTrace);
+    }
+    return _setSynchronizedRecords(
+      'card_folders',
+      folders.map((folder) => folder.toJson()).toList(),
+    );
+  }
+
   Future<void> setLocale(Locale loc) {
     for (var locale in AppLocalizations.supportedLocales) {
       if (locale.toLanguageTag().toLowerCase() ==
@@ -1664,7 +1894,7 @@ class SharedPreferencesProvider extends ChangeNotifier {
       'hf_capture_retention_days': getHfCaptureRetentionDays(),
       'mifare_classic_nonce_history_enabled_v1':
           getMifareClassicNonceHistoryEnabled(),
-      'device_led_animation_mode': getDeviceLedAnimationMode().value,
+      'device_leds_enabled': getDeviceLedsEnabled(),
     };
     _validateLegacySettings(settings);
     return jsonEncode({
@@ -1701,11 +1931,11 @@ class SharedPreferencesProvider extends ChangeNotifier {
               candidate['hf_capture_retention_days'] ?? 30,
         };
       }
-      if (version < 3 && candidate is Map<String, dynamic>) {
-        candidate = <String, dynamic>{
-          ...candidate,
-          'device_led_animation_mode': AnimationSetting.full.value,
-        };
+      if (version < 4 && candidate is Map<String, dynamic>) {
+        final migrated = <String, dynamic>{...candidate};
+        migrated.remove('device_led_animation_mode');
+        migrated['device_leds_enabled'] = true;
+        candidate = migrated;
       }
     } else {
       final migrated = <String, dynamic>{
@@ -1723,18 +1953,12 @@ class SharedPreferencesProvider extends ChangeNotifier {
     final settings = _validateLegacySettings(candidate);
     final nonceHistoryEnabled =
         settings.remove('mifare_classic_nonce_history_enabled_v1') as bool?;
-    final deviceLedAnimationMode = settings.remove('device_led_animation_mode');
     await _setSynchronizedScalars(
       settings,
       notify: settings.containsKey('locale'),
     );
     if (nonceHistoryEnabled != null) {
       await setMifareClassicNonceHistoryEnabled(nonceHistoryEnabled);
-    }
-    if (deviceLedAnimationMode != null) {
-      await setDeviceLedAnimationMode(
-        getAnimationModeType(deviceLedAnimationMode as int),
-      );
     }
   }
 
@@ -1774,32 +1998,13 @@ class SharedPreferencesProvider extends ChangeNotifier {
   Future<void> setDeviceFoundBanner(bool value) =>
       _setSynchronizedScalar('device_found_banner', value);
 
-  AnimationSetting getDeviceLedAnimationMode() {
-    final value = _sharedPreferences.getInt('device_led_animation_mode');
-    final animation = value == null ? null : getAnimationModeType(value);
-    return animation == null || animation == AnimationSetting.none
-        ? AnimationSetting.full
-        : animation;
+  bool getDeviceLedsEnabled() {
+    final value = _visiblePreferenceValue('device_leds_enabled');
+    return value is bool ? value : true;
   }
 
-  Future<void> setDeviceLedAnimationMode(AnimationSetting animation) async {
-    if (animation == AnimationSetting.none) {
-      throw ArgumentError.value(
-        animation,
-        'animation',
-        'The LED restore mode must enable animations',
-      );
-    }
-    final written = await _sharedPreferences.setInt(
-      'device_led_animation_mode',
-      animation.value,
-    );
-    if (!written ||
-        _sharedPreferences.getInt('device_led_animation_mode') !=
-            animation.value) {
-      throw StateError('Device LED animation mode was not durably stored');
-    }
-  }
+  Future<void> setDeviceLedsEnabled(bool enabled) =>
+      _setSynchronizedScalar('device_leds_enabled', enabled);
 
   int? _visibleInt(String key) => _visiblePreferenceValue(key) as int?;
 
@@ -2189,9 +2394,15 @@ class SharedPreferencesProvider extends ChangeNotifier {
     'cards': _decodeStoredCards(
       _sharedPreferences.getStringList('cards') ?? const [],
     ).map((card) => card.toJson()).toList(),
+    'card_folders': _decodeStoredCardFolders(
+      _sharedPreferences.getStringList('card_folders') ?? const [],
+    ).map((folder) => folder.toJson()).toList(),
     'dictionaries': _decodeStoredDictionaries(
       _sharedPreferences.getStringList('dictionaries') ?? const [],
     ).map((dictionary) => dictionary.toJson()).toList(),
+    'dictionary_folders': _decodeStoredDictionaryFolders(
+      _sharedPreferences.getStringList('dictionary_folders') ?? const [],
+    ).map((folder) => folder.toJson()).toList(),
     'keyboard_scripts': _decodeStoredScripts(
       _sharedPreferences.getStringList('keyboard_scripts') ?? const [],
     ).map((script) => script.toJson()).toList(),
@@ -2917,14 +3128,17 @@ class _DataSyncManifest {
       if (candidate.name == roleName) role = candidate;
     }
     final entries = rawEntries.map(_DataSyncStageEntry.fromJson).toList();
+    final entryKeys = entries.map((entry) => entry.key).toSet();
+    final hasCurrentKeys =
+        entryKeys.length == dataSyncStoredPreferenceKeys.length &&
+        entryKeys.containsAll(dataSyncStoredPreferenceKeys);
+    final hasLegacyKeys =
+        entryKeys.length == _legacyDataSyncStoredPreferenceKeys.length &&
+        entryKeys.containsAll(_legacyDataSyncStoredPreferenceKeys);
     if (phase == null ||
         role == null ||
-        entries.length != dataSyncStoredPreferenceKeys.length ||
-        entries.map((entry) => entry.key).toSet().length != entries.length ||
-        !entries
-            .map((entry) => entry.key)
-            .toSet()
-            .containsAll(dataSyncStoredPreferenceKeys) ||
+        entryKeys.length != entries.length ||
+        (!hasCurrentKeys && !hasLegacyKeys) ||
         entries.map((entry) => entry.stageKey).toSet().length !=
             entries.length) {
       throw const FormatException('Invalid data sync manifest');
@@ -2964,13 +3178,20 @@ class _DataSyncManifest {
 }
 
 Map<String, Object> _validateDataSyncValues(Map<String, Object> values) {
-  if (values.length != dataSyncStoredPreferenceKeys.length ||
-      !values.keys.toSet().containsAll(dataSyncStoredPreferenceKeys)) {
+  final completeValues = <String, Object>{
+    ...values,
+    if (!values.containsKey('card_folders'))
+      'card_folders': const <String>[],
+    if (!values.containsKey('dictionary_folders'))
+      'dictionary_folders': const <String>[],
+  };
+  if (completeValues.length != dataSyncStoredPreferenceKeys.length ||
+      !completeValues.keys.toSet().containsAll(dataSyncStoredPreferenceKeys)) {
     throw const FormatException('Data sync transaction has invalid keys');
   }
 
   List<String> stringList(String key) {
-    final value = values[key];
+    final value = completeValues[key];
     if (value is! List<String>) {
       throw FormatException('Invalid data sync value for $key');
     }
@@ -2978,7 +3199,7 @@ Map<String, Object> _validateDataSyncValues(Map<String, Object> values) {
   }
 
   int integer(String key, int min, int max) {
-    final value = values[key];
+    final value = completeValues[key];
     if (value is! int || value < min || value > max) {
       throw FormatException('Invalid data sync value for $key');
     }
@@ -2986,7 +3207,7 @@ Map<String, Object> _validateDataSyncValues(Map<String, Object> values) {
   }
 
   bool boolean(String key) {
-    final value = values[key];
+    final value = completeValues[key];
     if (value is! bool) {
       throw FormatException('Invalid data sync value for $key');
     }
@@ -2998,6 +3219,18 @@ Map<String, Object> _validateDataSyncValues(Map<String, Object> values) {
     validateCardSaveSemantics(card);
   }
   final cards = cardModels.map((card) => card.toJson()).toList();
+  final cardFolderModels = stringList(
+    'card_folders',
+  ).map(CardFolder.fromJson).toList();
+  _validateStoredFolderTree(
+    ids: cardFolderModels.map((folder) => folder.id),
+    parents: cardFolderModels.map((folder) => folder.parentId),
+    referencedIds: cardModels.map((card) => card.folderId),
+    label: 'card folder',
+  );
+  final cardFolders = cardFolderModels
+      .map((folder) => folder.toJson())
+      .toList();
   final dictionaryModels = stringList(
     'dictionaries',
   ).map(Dictionary.fromJson).toList();
@@ -3007,10 +3240,22 @@ Map<String, Object> _validateDataSyncValues(Map<String, Object> values) {
   final dictionaries = dictionaryModels
       .map((dictionary) => dictionary.toJson())
       .toList();
+  final dictionaryFolderModels = stringList(
+    'dictionary_folders',
+  ).map(DictionaryFolder.fromJson).toList();
+  _validateStoredFolderTree(
+    ids: dictionaryFolderModels.map((folder) => folder.id),
+    parents: dictionaryFolderModels.map((folder) => folder.parentId),
+    referencedIds: dictionaryModels.map((dictionary) => dictionary.folderId),
+    label: 'dictionary folder',
+  );
+  final dictionaryFolders = dictionaryFolderModels
+      .map((folder) => folder.toJson())
+      .toList();
   final scripts =
       stringList('keyboard_scripts').map(SavedKeyboardScript.fromJson).toList()
         ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
-  final localeValue = values['locale'];
+  final localeValue = completeValues['locale'];
   if (localeValue is! String || localeValue.isEmpty) {
     throw const FormatException('Invalid data sync value for locale');
   }
@@ -3027,7 +3272,9 @@ Map<String, Object> _validateDataSyncValues(Map<String, Object> values) {
 
   return {
     'cards': cards,
+    'card_folders': cardFolders,
     'dictionaries': dictionaries,
+    'dictionary_folders': dictionaryFolders,
     'keyboard_scripts': scripts.map((script) => script.toJson()).toList(),
     'app_theme': integer('app_theme', 0, ThemeMode.values.length - 1),
     'app_theme_color': integer('app_theme_color', 0, 7),
@@ -3045,7 +3292,11 @@ Map<String, Object> _validateDataSyncValues(Map<String, Object> values) {
 
 String _hashDataSyncValues(Map<String, Object> values) {
   final canonical = <String, Object>{
-    for (final key in dataSyncStoredPreferenceKeys) key: values[key]!,
+    for (final key in dataSyncStoredPreferenceKeys)
+      if (!(const {'card_folders', 'dictionary_folders'}.contains(key) &&
+          values[key] is List &&
+          (values[key]! as List).isEmpty))
+        key: values[key]!,
   };
   return sha256.convert(utf8.encode(jsonEncode(canonical))).toString();
 }
@@ -3098,6 +3349,32 @@ List<Dictionary> _decodeStoredDictionaries(List<String> encodedDictionaries) {
     }
   }
   return dictionaries;
+}
+
+List<CardFolder> _decodeStoredCardFolders(List<String> encodedFolders) {
+  final folders = <CardFolder>[];
+  for (final encoded in encodedFolders) {
+    try {
+      folders.add(CardFolder.fromJson(encoded));
+    } catch (_) {
+      // Preserve valid folders if one persisted record is corrupt.
+    }
+  }
+  return folders;
+}
+
+List<DictionaryFolder> _decodeStoredDictionaryFolders(
+  List<String> encodedFolders,
+) {
+  final folders = <DictionaryFolder>[];
+  for (final encoded in encodedFolders) {
+    try {
+      folders.add(DictionaryFolder.fromJson(encoded));
+    } catch (_) {
+      // Preserve valid folders if one persisted record is corrupt.
+    }
+  }
+  return folders;
 }
 
 List<SavedKeyboardScript> _decodeStoredScripts(List<String> encodedScripts) {
@@ -3253,6 +3530,60 @@ void _validateStoredDictionary(Dictionary dictionary) {
   }
 }
 
+void _validateStoredCardFolder(CardFolder folder) {
+  if (folder.id.isEmpty || folder.name.trim().isEmpty) {
+    throw const FormatException('Invalid card folder');
+  }
+}
+
+void _validateStoredDictionaryFolder(DictionaryFolder folder) {
+  if (folder.id.isEmpty || folder.name.trim().isEmpty) {
+    throw const FormatException('Invalid dictionary folder');
+  }
+}
+
+void _validateStoredFolderTree({
+  required Iterable<String> ids,
+  required Iterable<String?> parents,
+  required Iterable<String?> referencedIds,
+  required String label,
+}) {
+  final idList = ids.toList();
+  final parentList = parents.toList();
+  if (idList.length != parentList.length) {
+    throw FormatException('Invalid $label tree');
+  }
+  final known = <String>{};
+  for (final id in idList) {
+    if (id.isEmpty || !known.add(id)) {
+      throw FormatException('Invalid or duplicate $label ID');
+    }
+  }
+  final parentById = <String, String?>{
+    for (var index = 0; index < idList.length; index++)
+      idList[index]: parentList[index],
+  };
+  for (final entry in parentById.entries) {
+    final parent = entry.value;
+    if (parent != null && !known.contains(parent)) {
+      throw FormatException('Unknown $label parent');
+    }
+    final visited = <String>{entry.key};
+    var ancestor = parent;
+    while (ancestor != null) {
+      if (!visited.add(ancestor)) {
+        throw FormatException('Cyclic $label tree');
+      }
+      ancestor = parentById[ancestor];
+    }
+  }
+  for (final reference in referencedIds) {
+    if (reference != null && !known.contains(reference)) {
+      throw FormatException('Unknown $label reference');
+    }
+  }
+}
+
 Map<String, Object> _validateLegacySettings(Object? value) {
   if (value is! Map<String, dynamic>) {
     throw const FormatException('Invalid settings backup values');
@@ -3298,16 +3629,6 @@ Map<String, Object> _validateLegacySettings(Object? value) {
         settings[key] = setting;
       case 'hf_capture_retention_days':
         if (setting is! int || setting < 1 || setting > 365) {
-          throw FormatException('Invalid settings backup value: $key');
-        }
-        settings[key] = setting;
-      case 'device_led_animation_mode':
-        if (setting is! int ||
-            !const {
-              AnimationSetting.full,
-              AnimationSetting.minimal,
-              AnimationSetting.symmetric,
-            }.any((animation) => animation.value == setting)) {
           throw FormatException('Invalid settings backup value: $key');
         }
         settings[key] = setting;

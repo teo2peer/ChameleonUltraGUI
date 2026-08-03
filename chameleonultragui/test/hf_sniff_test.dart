@@ -10,7 +10,7 @@ void main() {
       ..._packFrame(Uint8List.fromList([0xDE, 0xAD, 0xBE, 0xEF]), isTx: true),
     ]);
 
-    final frames = parseHf14aSniffFrames(raw);
+    final frames = parseChameleonHfSniffFrames(raw);
 
     expect(frames, hasLength(2));
     expect(frames.first.rawBitLength, 7);
@@ -84,7 +84,7 @@ void main() {
       ..._packFrame(Uint8List.fromList([0x50, 0x51, 0x52, 0x53]), isTx: true),
     ]);
 
-    final capture = HfSniffCapture.fromRawBytes(raw);
+    final capture = HfSniffCapture.fromChameleonBytes(raw);
 
     expect(capture.nonces, hasLength(2));
     expect(capture.nonceGroups, hasLength(1));
@@ -134,6 +134,44 @@ void main() {
       'mfkey64 11223344 01020304 10111213 20212223 <at>',
     );
   });
+
+  test(
+    'proxmark trace round-trip preserves frames, direction and short bits',
+    () {
+      final raw = Uint8List.fromList([
+        ..._packFrame(Uint8List.fromList([0x26]), isTx: false, rawBitLength: 7),
+        ..._packFrame(
+          Uint8List.fromList([0x93, 0x70, 0x11, 0x22, 0x33, 0x44]),
+          isTx: false,
+        ),
+        ..._packFrame(Uint8List.fromList([0x08]), isTx: true),
+        ..._packFrame(
+          Uint8List.fromList([0x10, 0x11, 0x12, 0x13, 0x20, 0x21, 0x22, 0x23]),
+          isTx: false,
+        ),
+      ]);
+
+      final fromChameleon = HfSniffCapture.fromChameleonBytes(raw);
+      final roundTripped = HfSniffCapture.fromProxmarkTrace(
+        fromChameleon.rawBytes,
+      );
+
+      expect(roundTripped.frames, hasLength(fromChameleon.frames.length));
+      for (int i = 0; i < fromChameleon.frames.length; i++) {
+        expect(roundTripped.frames[i].data, fromChameleon.frames[i].data);
+        expect(
+          roundTripped.frames[i].bitLength,
+          fromChameleon.frames[i].bitLength,
+        );
+        expect(
+          roundTripped.frames[i].direction,
+          fromChameleon.frames[i].direction,
+        );
+      }
+      expect(roundTripped.frames.first.isShortFrame, isTrue);
+      expect(roundTripped.frames.first.bitLength, 7);
+    },
+  );
 }
 
 List<int> _packFrame(Uint8List data, {required bool isTx, int? rawBitLength}) {

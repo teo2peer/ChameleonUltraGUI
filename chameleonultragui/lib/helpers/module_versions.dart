@@ -116,13 +116,13 @@ const moduleVersions = <ModuleId, ModuleRelease>{
   ),
   ModuleId.device: ModuleRelease(
     name: 'Device',
-    version: '1.1.0',
-    updatedAt: '2026-08-02',
+    version: '1.2.0',
+    updatedAt: '2026-08-03',
   ),
   ModuleId.library: ModuleRelease(
     name: 'Library',
-    version: '1.0.0',
-    updatedAt: _initialReleaseDate,
+    version: '1.1.0',
+    updatedAt: '2026-08-03',
   ),
   ModuleId.slotManager: ModuleRelease(
     name: 'Slot Manager',
@@ -141,8 +141,8 @@ const moduleVersions = <ModuleId, ModuleRelease>{
   ),
   ModuleId.tools: ModuleRelease(
     name: 'Tools',
-    version: '1.0.0',
-    updatedAt: _initialReleaseDate,
+    version: '1.1.0',
+    updatedAt: '2026-08-03',
   ),
   ModuleId.settings: ModuleRelease(
     name: 'Settings',
@@ -166,13 +166,13 @@ const moduleVersions = <ModuleId, ModuleRelease>{
   ),
   ModuleId.dataSync: ModuleRelease(
     name: 'Data Sync',
-    version: '1.2.0',
-    updatedAt: '2026-08-02',
+    version: '1.3.0',
+    updatedAt: '2026-08-03',
   ),
   ModuleId.dumpEditor: ModuleRelease(
     name: 'Dump Editor',
-    version: '1.0.0',
-    updatedAt: _initialReleaseDate,
+    version: '1.1.0',
+    updatedAt: '2026-08-03',
   ),
   ModuleId.logsViewer: ModuleRelease(
     name: 'Logs Viewer',
@@ -206,13 +206,13 @@ const moduleVersions = <ModuleId, ModuleRelease>{
   ),
   ModuleId.lfSniffing: ModuleRelease(
     name: 'LF Sniffing',
-    version: '1.0.0',
-    updatedAt: _initialReleaseDate,
+    version: '1.1.0',
+    updatedAt: '2026-08-03',
   ),
   ModuleId.hfSniffing: ModuleRelease(
     name: 'HF Sniffing',
-    version: '1.1.0',
-    updatedAt: '2026-08-02',
+    version: '1.2.0',
+    updatedAt: '2026-08-03',
   ),
   ModuleId.hfContinuousCapture: ModuleRelease(
     name: 'Continuous HF Capture',

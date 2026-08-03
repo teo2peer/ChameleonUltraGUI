@@ -29,10 +29,19 @@ void main() {
   });
 
   test('capture, batching, and sync owners expose updated releases', () {
-    expect(moduleReleaseFor(ModuleId.dataSync).version, '1.2.0');
+    expect(moduleReleaseFor(ModuleId.dataSync).version, '1.3.0');
     expect(moduleReleaseFor(ModuleId.captureAndSniffing).version, '1.1.0');
     expect(moduleReleaseFor(ModuleId.mifareClassicAttacks).version, '1.1.1');
     expect(moduleReleaseFor(ModuleId.dictionaryCheck).version, '1.1.1');
+  });
+
+  test('folder and offline sniff integrations update their owners', () {
+    expect(moduleReleaseFor(ModuleId.device).version, '1.2.0');
+    expect(moduleReleaseFor(ModuleId.library).version, '1.1.0');
+    expect(moduleReleaseFor(ModuleId.tools).version, '1.1.0');
+    expect(moduleReleaseFor(ModuleId.dumpEditor).version, '1.1.0');
+    expect(moduleReleaseFor(ModuleId.lfSniffing).version, '1.1.0');
+    expect(moduleReleaseFor(ModuleId.hfSniffing).version, '1.2.0');
   });
 
   test('continuous capture exposes its durability revision', () {
@@ -43,7 +52,7 @@ void main() {
     final release = moduleReleaseFor(ModuleId.slotManager);
     expect(release.version, '1.1.0');
     expect(release.updatedAt, '2026-08-02');
-    expect(moduleReleaseFor(ModuleId.device).version, '1.1.0');
+    expect(moduleReleaseFor(ModuleId.device).version, '1.2.0');
   });
 
   test('Undercover keeps an independent release', () {

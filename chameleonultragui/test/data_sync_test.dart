@@ -58,17 +58,24 @@ void main() {
       );
 
   test('current snapshot round trips every data category', () {
+    final cardFolder = CardFolder(id: 'card-folder', name: 'Cards');
+    final dictionaryFolder = DictionaryFolder(
+      id: 'dictionary-folder',
+      name: 'Dictionaries',
+    );
     final original = SyncSnapshot(
       cards: [
         card('card-1', [
           [1, 2, 3],
-        ]),
+        ])..folderId = cardFolder.id,
       ],
+      cardFolders: [cardFolder],
       dictionaries: [
         dictionary('dict-1', 'Keys', [
           [1, 2, 3, 4, 5, 6],
-        ]),
+        ])..folderId = dictionaryFolder.id,
       ],
+      dictionaryFolders: [dictionaryFolder],
       keyboardScripts: [script('script-1', 'Hello', 'STRING hello')],
       settings: {
         'theme': 'dark',
@@ -85,8 +92,16 @@ void main() {
     expect(restored.version, SyncSnapshot.currentVersion);
     expect(restored.cards.single.toJson(), original.cards.single.toJson());
     expect(
+      restored.cardFolders.single.toJson(),
+      original.cardFolders.single.toJson(),
+    );
+    expect(
       restored.dictionaries.single.toJson(),
       original.dictionaries.single.toJson(),
+    );
+    expect(
+      restored.dictionaryFolders.single.toJson(),
+      original.dictionaryFolders.single.toJson(),
     );
     expect(
       restored.keyboardScripts.single.toJson(),
@@ -100,7 +115,7 @@ void main() {
 
     expect(() => SyncSnapshot.fromJson('{bad json'), throwsFormatException);
     expect(
-      () => SyncSnapshot.fromJson(jsonEncode({...valid, 'version': 4})),
+      () => SyncSnapshot.fromJson(jsonEncode({...valid, 'version': 5})),
       throwsFormatException,
     );
     expect(
@@ -120,12 +135,43 @@ void main() {
   test('legacy safe settings gain the default capture retention', () {
     final legacy = SyncSnapshot().toJsonMap()
       ..['version'] = 2
+      ..remove('cardFolders')
+      ..remove('dictionaryFolders')
       ..['settings'] = <String, Object>{'app_theme': 0};
 
     final restored = SyncSnapshot.fromJson(jsonEncode(legacy));
 
     expect(restored.version, SyncSnapshot.currentVersion);
     expect(restored.settings['hf_capture_retention_days'], 30);
+    expect(restored.cardFolders, isEmpty);
+    expect(restored.dictionaryFolders, isEmpty);
+  });
+
+  test('folder trees reject cycles and dangling library references', () {
+    expect(
+      () => SyncSnapshot(
+        cardFolders: [
+          CardFolder(id: 'a', name: 'A', parentId: 'b'),
+          CardFolder(id: 'b', name: 'B', parentId: 'a'),
+        ],
+      ),
+      throwsFormatException,
+    );
+    expect(
+      () => SyncSnapshot(
+        cards: [card('card-in-missing-folder', const [])..folderId = 'missing'],
+      ),
+      throwsFormatException,
+    );
+    expect(
+      () => SyncSnapshot(
+        dictionaries: [
+          dictionary('dict-in-missing-folder', 'Keys', const [])
+            ..folderId = 'missing',
+        ],
+      ),
+      throwsFormatException,
+    );
   });
 
   test('semantic validation rejects invalid card and dictionary geometry', () {

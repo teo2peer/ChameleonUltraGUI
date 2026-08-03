@@ -73,15 +73,24 @@ class NativeSerial extends AbstractSerial {
       if (await connectDevice(port, false)) {
         if (onlyDFU) {
           if (checkDFU) {
-            output.add(Chameleon(
+            output.add(
+              Chameleon(
                 port: port,
                 device: device,
                 type: connectionType,
-                dfu: checkDFU));
+                dfu: checkDFU,
+              ),
+            );
           }
         } else {
-          output.add(Chameleon(
-              port: port, device: device, type: connectionType, dfu: checkDFU));
+          output.add(
+            Chameleon(
+              port: port,
+              device: device,
+              type: connectionType,
+              dfu: checkDFU,
+            ),
+          );
         }
       }
     }
@@ -135,13 +144,24 @@ class NativeSerial extends AbstractSerial {
       log.d("Connected to $address");
       log.d("Manufacturer: ${candidate.manufacturer}");
       log.d("Product: ${candidate.productName}");
-      if (candidate.manufacturer == "Proxgrind") {
+      final description = candidate.description?.toLowerCase();
+      bool isChameleon = false;
+      if (candidate.manufacturer == "Proxgrind" ||
+          (description?.contains("chameleon") ?? false)) {
+        isChameleon = true;
         if ((candidate.productName ?? '').contains('ChameleonUltra')) {
+          device = ChameleonDevice.ultra;
+        } else if (description?.contains('ultra') ?? false) {
           device = ChameleonDevice.ultra;
         } else {
           device = ChameleonDevice.lite;
         }
+      } else if (setPort) {
+        isChameleon = true;
+        device = ChameleonDevice.ultra;
+      }
 
+      if (isChameleon) {
         log.d("Found Chameleon ${chameleonDeviceName(device)}!");
 
         connectionType = ConnectionType.usb;
@@ -159,9 +179,13 @@ class NativeSerial extends AbstractSerial {
         return true;
       }
 
+      candidate.close();
       return false;
     } on SerialPortError catch (e) {
       log.e(e);
+      try {
+        candidate?.close();
+      } catch (_) {}
       return false;
     } catch (e, stackTrace) {
       log.e('Serial probe failed', error: e, stackTrace: stackTrace);
@@ -183,26 +207,33 @@ class NativeSerial extends AbstractSerial {
     final activeReader = SerialPortReader(port!, timeout: 2500);
     final generation = ++_readerGeneration;
     reader = activeReader;
-    _readerSubscription = activeReader.stream.listen((data) async {
-      if (generation != _readerGeneration || !identical(reader, activeReader)) {
-        return;
-      }
-      try {
-        await messageCallback(data);
-      } catch (_) {
-        log.w("Received unexpected data: ${bytesToHex(data)}");
-      }
-    }, onDone: () async {
-      if (generation != _readerGeneration || !identical(reader, activeReader)) {
-        return;
-      }
-      await performDisconnect();
-    }, onError: (_) async {
-      if (generation != _readerGeneration || !identical(reader, activeReader)) {
-        return;
-      }
-      await performDisconnect();
-    });
+    _readerSubscription = activeReader.stream.listen(
+      (data) async {
+        if (generation != _readerGeneration ||
+            !identical(reader, activeReader)) {
+          return;
+        }
+        try {
+          await messageCallback(data);
+        } catch (_) {
+          log.w("Received unexpected data: ${bytesToHex(data)}");
+        }
+      },
+      onDone: () async {
+        if (generation != _readerGeneration ||
+            !identical(reader, activeReader)) {
+          return;
+        }
+        await performDisconnect();
+      },
+      onError: (_) async {
+        if (generation != _readerGeneration ||
+            !identical(reader, activeReader)) {
+          return;
+        }
+        await performDisconnect();
+      },
+    );
   }
 
   @override
@@ -211,14 +242,17 @@ class NativeSerial extends AbstractSerial {
   }
 
   @override
-  Future<bool> writeWithTimeout(Uint8List command,
-      {bool firmware = false,
-      Duration timeout = const Duration(seconds: 5)}) async {
+  Future<bool> writeWithTimeout(
+    Uint8List command, {
+    bool firmware = false,
+    Duration timeout = const Duration(seconds: 5),
+  }) async {
     final written = port!.write(command, timeout: timeout.inMilliseconds);
     if (written != command.length) {
       throw TimeoutException(
-          'Serial write timed out after $written of ${command.length} bytes',
-          timeout);
+        'Serial write timed out after $written of ${command.length} bytes',
+        timeout,
+      );
     }
     return true;
   }

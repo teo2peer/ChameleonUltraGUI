@@ -196,6 +196,7 @@ class HfCaptureRecord {
       rawBitLength: bitLength,
       bitLength: bitLength,
       data: Uint8List.fromList(data),
+      parityBits: Uint8List(0),
       direction: direction == HfCaptureDirection.readerToCard
           ? HfSniffDirection.readerToCard
           : HfSniffDirection.cardToReader,

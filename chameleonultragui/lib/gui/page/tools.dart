@@ -95,7 +95,6 @@ class ToolsPageState extends State<ToolsPage> {
         icon: Icons.graphic_eq,
         moduleId: ModuleId.lfSniffing,
         onPressed: const LfSniffingMenu(),
-        isDeviceRequired: true,
       ),
       ToolItem(
         name: localizations.hf_sniffing,
@@ -103,8 +102,6 @@ class ToolsPageState extends State<ToolsPage> {
         icon: Icons.radar,
         moduleId: ModuleId.hfSniffing,
         onPressed: const HfSniffingMenu(),
-        showWipBadge: true,
-        isDeviceRequired: true,
       ),
       ToolItem(
         name: localizations.mifare_classic_gen4,

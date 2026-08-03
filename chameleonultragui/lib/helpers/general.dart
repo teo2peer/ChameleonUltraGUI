@@ -444,6 +444,7 @@ Future<void> saveTag(CardSave tag, BuildContext context, bool bin) async {
           isEV1: chameleonTagSaveCheckForMifareClassicEV1(tag),
         ),
         extraData: tag.extraData,
+        folderId: tag.folderId,
         color: tag.color,
       );
     }

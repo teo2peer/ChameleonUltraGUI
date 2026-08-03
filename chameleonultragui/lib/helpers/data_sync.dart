@@ -10,8 +10,10 @@ import 'package:flutter/material.dart';
 abstract final class SyncLimits {
   static const int maxEncodedBytes = 16 * 1024 * 1024;
   static const int maxCards = 1024;
+  static const int maxCardFolders = 1024;
   static const int maxCardBlocks = 8192;
   static const int maxDictionaries = 256;
+  static const int maxDictionaryFolders = 256;
   static const int maxDictionaryKeys = 100000;
   static const int maxScripts = savedKeyboardScriptLimit;
   static const int maxSettings = 256;
@@ -49,25 +51,33 @@ class SyncState {
 }
 
 class SyncSnapshot {
-  static const int currentVersion = 3;
+  static const int currentVersion = 4;
 
   final int version;
   final List<CardSave> cards;
+  final List<CardFolder> cardFolders;
   final List<Dictionary> dictionaries;
+  final List<DictionaryFolder> dictionaryFolders;
   final List<SavedKeyboardScript> keyboardScripts;
   final Map<String, Object> settings;
 
   factory SyncSnapshot({
     int version = currentVersion,
     Iterable<CardSave> cards = const [],
+    Iterable<CardFolder> cardFolders = const [],
     Iterable<Dictionary> dictionaries = const [],
+    Iterable<DictionaryFolder> dictionaryFolders = const [],
     Iterable<SavedKeyboardScript> keyboardScripts = const [],
     Map<String, Object> settings = const {},
   }) {
     final snapshot = SyncSnapshot._(
       version: version,
       cards: List.unmodifiable(cards.map(_copyCard)),
+      cardFolders: List.unmodifiable(cardFolders.map(_copyCardFolder)),
       dictionaries: List.unmodifiable(dictionaries.map(_copyDictionary)),
+      dictionaryFolders: List.unmodifiable(
+        dictionaryFolders.map(_copyDictionaryFolder),
+      ),
       keyboardScripts: List.unmodifiable(keyboardScripts.map(_copyScript)),
       settings: Map.unmodifiable(_copySettings(settings)),
     );
@@ -78,7 +88,9 @@ class SyncSnapshot {
   const SyncSnapshot._({
     required this.version,
     required this.cards,
+    required this.cardFolders,
     required this.dictionaries,
+    required this.dictionaryFolders,
     required this.keyboardScripts,
     required this.settings,
   });
@@ -95,22 +107,30 @@ class SyncSnapshot {
       throw const FormatException('Invalid sync snapshot JSON');
     }
     final root = _stringMap(decoded, 'snapshot');
-    _requireKeys(root, const {
-      'version',
-      'cards',
-      'dictionaries',
-      'keyboardScripts',
-      'settings',
-    }, 'snapshot');
     final encodedVersion = root['version'];
     if (encodedVersion is! int ||
         encodedVersion < 1 ||
         encodedVersion > currentVersion) {
       throw const FormatException('Unsupported sync snapshot version');
     }
+    _requireKeys(root, {
+      'version',
+      'cards',
+      if (encodedVersion >= 4) 'cardFolders',
+      'dictionaries',
+      if (encodedVersion >= 4) 'dictionaryFolders',
+      'keyboardScripts',
+      'settings',
+    }, 'snapshot');
 
     final cardData = _list(root['cards'], 'cards');
+    final cardFolderData = encodedVersion >= 4
+        ? _list(root['cardFolders'], 'card folders')
+        : const <dynamic>[];
     final dictionaryData = _list(root['dictionaries'], 'dictionaries');
+    final dictionaryFolderData = encodedVersion >= 4
+        ? _list(root['dictionaryFolders'], 'dictionary folders')
+        : const <dynamic>[];
     final scriptData = _list(root['keyboardScripts'], 'keyboardScripts');
     final settingData = _stringMap(root['settings'], 'settings');
 
@@ -122,7 +142,9 @@ class SyncSnapshot {
       }
       return SyncSnapshot(
         cards: cardData.map(_decodeCard),
+        cardFolders: cardFolderData.map(_decodeCardFolder),
         dictionaries: dictionaryData.map(_decodeDictionary),
+        dictionaryFolders: dictionaryFolderData.map(_decodeDictionaryFolder),
         keyboardScripts: scriptData.map(_decodeScript),
         settings: settings,
       );
@@ -136,8 +158,14 @@ class SyncSnapshot {
   Map<String, Object> toJsonMap() => {
     'version': version,
     'cards': cards.map((card) => jsonDecode(card.toJson())).toList(),
+    'cardFolders': cardFolders
+        .map((folder) => jsonDecode(folder.toJson()))
+        .toList(),
     'dictionaries': dictionaries
         .map((dictionary) => jsonDecode(dictionary.toJson()))
+        .toList(),
+    'dictionaryFolders': dictionaryFolders
+        .map((folder) => jsonDecode(folder.toJson()))
         .toList(),
     'keyboardScripts': keyboardScripts
         .map((script) => jsonDecode(script.toJson()))
@@ -160,8 +188,16 @@ class SyncSnapshot {
     if (cards.length > SyncLimits.maxCards) {
       throw const FormatException('Too many cards in sync snapshot');
     }
+    if (cardFolders.length > SyncLimits.maxCardFolders) {
+      throw const FormatException('Too many card folders in sync snapshot');
+    }
     if (dictionaries.length > SyncLimits.maxDictionaries) {
       throw const FormatException('Too many dictionaries in sync snapshot');
+    }
+    if (dictionaryFolders.length > SyncLimits.maxDictionaryFolders) {
+      throw const FormatException(
+        'Too many dictionary folders in sync snapshot',
+      );
     }
     if (keyboardScripts.length > SyncLimits.maxScripts) {
       throw const FormatException('Too many scripts in sync snapshot');
@@ -181,9 +217,23 @@ class SyncSnapshot {
       throw const FormatException('Too many dictionary keys in sync snapshot');
     }
     _ensureUniqueIds(cards.map((card) => card.id), 'card');
+    _validateFolderTree(
+      ids: cardFolders.map((folder) => folder.id),
+      parents: cardFolders.map((folder) => folder.parentId),
+      references: cards.map((card) => card.folderId),
+      names: cardFolders.map((folder) => folder.name),
+      label: 'card folder',
+    );
     _ensureUniqueIds(
       dictionaries.map((dictionary) => dictionary.id),
       'dictionary',
+    );
+    _validateFolderTree(
+      ids: dictionaryFolders.map((folder) => folder.id),
+      parents: dictionaryFolders.map((folder) => folder.parentId),
+      references: dictionaries.map((dictionary) => dictionary.folderId),
+      names: dictionaryFolders.map((folder) => folder.name),
+      label: 'dictionary folder',
     );
     _ensureUniqueIds(keyboardScripts.map((script) => script.id), 'script');
     for (final card in cards) {
@@ -301,7 +351,9 @@ class SyncResolution {
 
 class SyncMergePlan {
   final List<CardSave> cards;
+  final List<CardFolder> cardFolders;
   final List<Dictionary> dictionaries;
+  final List<DictionaryFolder> dictionaryFolders;
   final List<SavedKeyboardScript> keyboardScripts;
   final Map<String, Object> settings;
   final List<CardConflict> cardConflicts;
@@ -310,7 +362,9 @@ class SyncMergePlan {
 
   SyncMergePlan._({
     required this.cards,
+    required this.cardFolders,
     required this.dictionaries,
+    required this.dictionaryFolders,
     required this.keyboardScripts,
     required this.settings,
     required this.cardConflicts,
@@ -405,7 +459,16 @@ class SyncMergePlan {
 
     final plan = SyncMergePlan._(
       cards: List.unmodifiable(cardResult),
+      cardFolders: List.unmodifiable(
+        _mergeCardFolders(local.cardFolders, remote.cardFolders),
+      ),
       dictionaries: List.unmodifiable(_mergeDictionaries(dictionaries)),
+      dictionaryFolders: List.unmodifiable(
+        _mergeDictionaryFolders(
+          local.dictionaryFolders,
+          remote.dictionaryFolders,
+        ),
+      ),
       keyboardScripts: List.unmodifiable(scriptResult),
       settings: Map.unmodifiable(settingResult),
       cardConflicts: cardConflicts,
@@ -475,7 +538,9 @@ class SyncMergePlan {
 
     return SyncSnapshot(
       cards: resolvedCards,
+      cardFolders: cardFolders,
       dictionaries: dictionaries,
+      dictionaryFolders: dictionaryFolders,
       keyboardScripts: resolvedScripts,
       settings: resolvedSettings,
     );
@@ -525,7 +590,7 @@ bool _isSectorTrailer(TagType tag, int block) {
 
 CardSave _decodeCard(Object? value) {
   final map = _stringMap(value, 'card');
-  _requireKeys(map, const {
+  _requireKeys(map, {
     'id',
     'uid',
     'sak',
@@ -536,6 +601,7 @@ CardSave _decodeCard(Object? value) {
     'color',
     'data',
     'extra',
+    if (map.containsKey('folderId')) 'folderId',
   }, 'card');
   if (map['id'] is! String ||
       (map['id']! as String).isEmpty ||
@@ -543,7 +609,8 @@ CardSave _decodeCard(Object? value) {
       map['sak'] is! int ||
       map['name'] is! String ||
       map['tag'] is! int ||
-      map['color'] is! String) {
+      map['color'] is! String ||
+      (map['folderId'] != null && map['folderId'] is! String)) {
     throw const FormatException('Invalid card metadata');
   }
   _byteList(map['atqa'], 'card atqa');
@@ -580,25 +647,61 @@ CardSave _decodeCard(Object? value) {
 
 Dictionary _decodeDictionary(Object? value) {
   final map = _stringMap(value, 'dictionary');
-  _requireKeys(map, const {
+  _requireKeys(map, {
     'id',
     'name',
     'color',
     'keys',
     'keyLength',
+    if (map.containsKey('folderId')) 'folderId',
   }, 'dictionary');
   if (map['id'] is! String ||
       (map['id']! as String).isEmpty ||
       map['name'] is! String ||
       map['color'] is! String ||
       map['keyLength'] is! int ||
-      (map['keyLength']! as int) < 0) {
+      (map['keyLength']! as int) < 0 ||
+      (map['folderId'] != null && map['folderId'] is! String)) {
     throw const FormatException('Invalid dictionary metadata');
   }
   for (final key in _list(map['keys'], 'dictionary keys')) {
     _byteList(key, 'dictionary key');
   }
   return Dictionary.fromJson(jsonEncode(map));
+}
+
+CardFolder _decodeCardFolder(Object? value) {
+  final map = _stringMap(value, 'card folder');
+  _requireKeys(map, {
+    'id',
+    'name',
+    'color',
+    if (map.containsKey('parentId')) 'parentId',
+  }, 'card folder');
+  if (map['id'] is! String ||
+      map['name'] is! String ||
+      map['color'] is! String ||
+      (map['parentId'] != null && map['parentId'] is! String)) {
+    throw const FormatException('Invalid card folder metadata');
+  }
+  return CardFolder.fromJson(jsonEncode(map));
+}
+
+DictionaryFolder _decodeDictionaryFolder(Object? value) {
+  final map = _stringMap(value, 'dictionary folder');
+  _requireKeys(map, {
+    'id',
+    'name',
+    'color',
+    if (map.containsKey('parentId')) 'parentId',
+  }, 'dictionary folder');
+  if (map['id'] is! String ||
+      map['name'] is! String ||
+      map['color'] is! String ||
+      (map['parentId'] != null && map['parentId'] is! String)) {
+    throw const FormatException('Invalid dictionary folder metadata');
+  }
+  return DictionaryFolder.fromJson(jsonEncode(map));
 }
 
 SavedKeyboardScript _decodeScript(Object? value) {
@@ -733,6 +836,28 @@ List<Dictionary> _mergeDictionaries(List<Dictionary> dictionaries) {
   }).toList();
 }
 
+List<CardFolder> _mergeCardFolders(
+  List<CardFolder> local,
+  List<CardFolder> remote,
+) {
+  final byId = <String, CardFolder>{
+    for (final folder in remote) folder.id: _copyCardFolder(folder),
+    for (final folder in local) folder.id: _copyCardFolder(folder),
+  };
+  return byId.values.toList();
+}
+
+List<DictionaryFolder> _mergeDictionaryFolders(
+  List<DictionaryFolder> local,
+  List<DictionaryFolder> remote,
+) {
+  final byId = <String, DictionaryFolder>{
+    for (final folder in remote) folder.id: _copyDictionaryFolder(folder),
+    for (final folder in local) folder.id: _copyDictionaryFolder(folder),
+  };
+  return byId.values.toList();
+}
+
 void _addUniqueCard(
   List<CardSave> cards,
   Set<String> fingerprints,
@@ -808,8 +933,14 @@ String _scriptFingerprint(
 
 CardSave _copyCard(CardSave card) => CardSave.fromJson(card.toJson());
 
+CardFolder _copyCardFolder(CardFolder folder) =>
+    CardFolder.fromJson(folder.toJson());
+
 Dictionary _copyDictionary(Dictionary dictionary) =>
     Dictionary.fromJson(dictionary.toJson());
+
+DictionaryFolder _copyDictionaryFolder(DictionaryFolder folder) =>
+    DictionaryFolder.fromJson(folder.toJson());
 
 SavedKeyboardScript _copyScript(SavedKeyboardScript script) =>
     SavedKeyboardScript.fromJson(script.toJson());
@@ -914,5 +1045,47 @@ void _ensureUniqueIds(Iterable<String> ids, String label) {
     if (id.isEmpty || !seen.add(id)) {
       throw FormatException('Invalid or duplicate $label ID');
     }
+  }
+}
+
+void _validateFolderTree({
+  required Iterable<String> ids,
+  required Iterable<String?> parents,
+  required Iterable<String?> references,
+  required Iterable<String> names,
+  required String label,
+}) {
+  final idList = ids.toList();
+  final parentList = parents.toList();
+  final nameList = names.toList();
+  if (idList.length != parentList.length || idList.length != nameList.length) {
+    throw FormatException('Invalid $label tree');
+  }
+  _ensureUniqueIds(idList, label);
+  if (nameList.any((name) => name.trim().isEmpty || name.length > 256)) {
+    throw FormatException('Invalid $label name');
+  }
+  final known = idList.toSet();
+  final parentById = <String, String?>{
+    for (var index = 0; index < idList.length; index++)
+      idList[index]: parentList[index],
+  };
+  for (final entry in parentById.entries) {
+    if (entry.value != null && !known.contains(entry.value)) {
+      throw FormatException('Unknown $label parent');
+    }
+    final visited = <String>{entry.key};
+    var ancestor = entry.value;
+    while (ancestor != null) {
+      if (!visited.add(ancestor)) {
+        throw FormatException('Cyclic $label tree');
+      }
+      ancestor = parentById[ancestor];
+    }
+  }
+  if (references.any(
+    (reference) => reference != null && !known.contains(reference),
+  )) {
+    throw FormatException('Unknown $label reference');
   }
 }

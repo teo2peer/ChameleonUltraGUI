@@ -41,6 +41,52 @@ void main() {
     expect(snapshot.settings, isNot(contains('ethical_hacking_ack')));
   });
 
+  test('snapshot round trips card and dictionary folder trees', () async {
+    final cardFolder = CardFolder(id: 'cards-root', name: 'Card root');
+    final cardChild = CardFolder(
+      id: 'cards-child',
+      name: 'Card child',
+      parentId: cardFolder.id,
+    );
+    final dictionaryFolder = DictionaryFolder(
+      id: 'dictionary-root',
+      name: 'Dictionary root',
+    );
+    await preferences.setCardFolders([cardFolder, cardChild]);
+    await preferences.setDictionaryFolders([dictionaryFolder]);
+    await preferences.setCards([
+      _card('folder-card', 'Folder card')..folderId = cardChild.id,
+    ]);
+    await preferences.setDictionaries([
+      Dictionary(
+        id: 'folder-dictionary',
+        name: 'Folder dictionary',
+        keyLength: 12,
+        folderId: dictionaryFolder.id,
+      ),
+    ]);
+
+    final source = await preferences.createSyncState();
+    await preferences.setCards(const []);
+    await preferences.setDictionaries(const []);
+    await preferences.setCardFolders(const []);
+    await preferences.setDictionaryFolders(const []);
+    final emptyCheckpoint = await preferences.getDataSyncCheckpoint();
+
+    await preferences.applySyncSnapshot(
+      source.snapshot,
+      expectedCheckpoint: emptyCheckpoint,
+    );
+
+    expect(preferences.getCardFolders().map((folder) => folder.id), [
+      'cards-root',
+      'cards-child',
+    ]);
+    expect(preferences.getCards().single.folderId, 'cards-child');
+    expect(preferences.getDictionaryFolders().single.id, 'dictionary-root');
+    expect(preferences.getDictionaries().single.folderId, 'dictionary-root');
+  });
+
   test(
     'apply updates allowlisted settings and rejects unknown settings',
     () async {
