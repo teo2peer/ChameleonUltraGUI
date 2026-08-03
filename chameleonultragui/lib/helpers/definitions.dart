@@ -183,6 +183,7 @@ enum ChameleonCommand {
   mf1SetRandomUidMode(4042),
   mf1GetRandomUidMode(4043),
   mf1SetReaderKeysAnim(4044),
+  mf1ReaderKeysReselect(4045),
 
   // read slot info
   mf1GetBlockData(4008),
@@ -599,6 +600,7 @@ class DetectionResult {
   int nt;
   int nr;
   int ar;
+  bool isSuccessful;
 
   DetectionResult({
     required this.block,
@@ -608,6 +610,7 @@ class DetectionResult {
     required this.nt,
     required this.nr,
     required this.ar,
+    this.isSuccessful = false,
   });
 }
 

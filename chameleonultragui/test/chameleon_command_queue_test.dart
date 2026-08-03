@@ -1361,6 +1361,25 @@ void main() {
     ]);
   });
 
+  test('requests a bounded MF1 reader-key RF reselect', () async {
+    final serial = _FakeSerial(
+      onCommand: (serial, id) async {
+        if (id == ChameleonCommand.getDeviceCapabilities.value) {
+          await serial.emitCapabilities();
+        } else if (id == ChameleonCommand.mf1ReaderKeysReselect.value) {
+          await serial.emit(id);
+        }
+      },
+    );
+
+    await _communicator(serial).reselectMf1ReaderKeys(muteMs: 150);
+
+    expect(serial.commandData[ChameleonCommand.mf1ReaderKeysReselect.value], [
+      0,
+      150,
+    ]);
+  });
+
   test('rejects malformed MF1 reader-key detection pages', () async {
     final serial = _FakeSerial(
       onCommand: (serial, id) async {

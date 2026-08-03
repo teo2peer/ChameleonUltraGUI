@@ -57,6 +57,7 @@ class ReaderKeyRecoveryResult {
   final int attemptedPairs;
   final ReaderKeyRecoveryFailure? failure;
   final String? error;
+  final bool verifiedByReader;
 
   ReaderKeyRecoveryResult({
     required this.target,
@@ -66,6 +67,7 @@ class ReaderKeyRecoveryResult {
     required this.attemptedPairs,
     this.failure,
     this.error,
+    this.verifiedByReader = false,
   });
 }
 
@@ -200,7 +202,8 @@ List<ReaderKeyTargetRecords> groupReaderKeyRecords(
 
 String readerKeyTranscriptIdentity(DetectionResult detection) =>
     '${detection.uid}:${detection.block}:${detection.type}:'
-    '${detection.isNested ? 1 : 0}:${detection.nt}:${detection.nr}:${detection.ar}';
+    '${detection.isNested ? 1 : 0}:${detection.isSuccessful ? 1 : 0}:'
+    '${detection.nt}:${detection.nr}:${detection.ar}';
 
 String readerKeyEvidenceFingerprint(Iterable<DetectionResult> detections) {
   final identities =
@@ -317,6 +320,8 @@ Future<List<ReaderKeyRecoveryResult>> recoverReaderKeys({
             ? ReaderKeyRecoveryFailure.solverError
             : ReaderKeyRecoveryFailure.noKey,
         error: solverError?.toString(),
+        verifiedByReader:
+            key != null && group.records.any((record) => record.isSuccessful),
       ),
     );
     onProgress?.call(results.length, groups.length, group.target);
@@ -441,6 +446,7 @@ ReaderKeyRecoveryResult _recoveredResult(
     blocks: group.blocks,
     transcriptCount: group.records.length,
     attemptedPairs: attemptedPairs,
+    verifiedByReader: group.records.any((record) => record.isSuccessful),
   );
 }
 

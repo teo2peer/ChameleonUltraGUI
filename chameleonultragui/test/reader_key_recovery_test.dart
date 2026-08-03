@@ -13,11 +13,13 @@ DetectionResult record({
   required int nr,
   required int ar,
   bool nested = false,
+  bool successful = false,
 }) {
   return DetectionResult(
     block: block,
     type: type,
     isNested: nested,
+    isSuccessful: successful,
     uid: uid,
     nt: nt,
     nr: nr,
@@ -107,6 +109,18 @@ void main() {
         ]),
         isTrue,
       );
+    });
+
+    test('marks a recovered key verified after reader auth succeeds', () async {
+      final results = await recoverReaderKeys(
+        detections: [
+          record(block: 4, nt: 1, nr: 2, ar: 3),
+          record(block: 5, nt: 2, nr: 4, ar: 6, successful: true),
+        ],
+        solver: (_) async => 0xA0A1A2A3A4A5,
+      );
+
+      expect(results.single.verifiedByReader, isTrue);
     });
 
     test('rejects failure sentinel and continues to a later pair', () async {

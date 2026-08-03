@@ -273,7 +273,9 @@ class ReaderKeysPageState extends State<ReaderKeysPage>
             armed: armed,
             busy: busy,
             recovering: recovering,
-            recoveredKeyCount: keys.length,
+            recoveredKeyCount: recoveryResults.values
+                .where((result) => result.verifiedByReader)
+                .length,
             lastEvidenceAt: _lastEvidenceAt,
             now: DateTime.now(),
           )) {
@@ -1004,12 +1006,19 @@ class ReaderKeysPageState extends State<ReaderKeysPage>
         await communicator.saveSlotData();
         _app.changesMade();
         if (session.automatic) {
-          // Reloading the active slot briefly removes and re-presents the tag,
-          // prompting compatible readers to select it again without a physical tap.
-          await communicator.activateSlot(workSlot);
-          await communicator.setMf1DetectionStatus(true);
-          await communicator.setMf1ReaderKeysAnim(true);
-          _deviceDetectionCursor = 0;
+          if (communicator.supportsCommandSync(
+                ChameleonCommand.mf1ReaderKeysReselect,
+              ) !=
+              false) {
+            await communicator.reselectMf1ReaderKeys();
+          } else {
+            // Legacy fallback reloads the slot and starts a fresh device log;
+            // the host ledger already retained every downloaded transcript.
+            await communicator.activateSlot(workSlot);
+            await communicator.setMf1DetectionStatus(true);
+            await communicator.setMf1ReaderKeysAnim(true);
+            _deviceDetectionCursor = 0;
+          }
         }
       }
     });
@@ -1122,7 +1131,12 @@ class ReaderKeysPageState extends State<ReaderKeysPage>
         }
       });
       try {
-        await _persistSessionKeys(results, isCurrentSession);
+        await _persistSessionKeys(
+          session.autoApply
+              ? results.where((result) => result.verifiedByReader)
+              : results,
+          isCurrentSession,
+        );
       } catch (error) {
         if (isCurrentSession()) {
           _showMessage('Recovered keys could not be saved: $error');
@@ -1553,7 +1567,12 @@ class ReaderKeysPageState extends State<ReaderKeysPage>
                 ),
                 subtitle: Text(
                   'UID $uid | sector ${result.target.sector} | key ${result.target.keyType} | '
-                  'blocks ${blockList.join(', ')} | ${result.transcriptCount} transcripts',
+                  'blocks ${blockList.join(', ')} | ${result.transcriptCount} transcripts'
+                  '${result.verifiedByReader
+                      ? ' | verified by reader'
+                      : keyHex == null
+                      ? ''
+                      : ' | awaiting reader verification'}',
                 ),
                 trailing: keyHex == null
                     ? null

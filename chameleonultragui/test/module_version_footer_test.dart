@@ -67,7 +67,7 @@ void main() {
     );
 
     expect(find.text('Reader Keys Capture'), findsOneWidget);
-    expect(find.text('Version 1.1.0 / Updated 2026-08-02'), findsOneWidget);
+    expect(find.text('Version 1.2.0 / Updated 2026-08-02'), findsOneWidget);
   });
 
   testWidgets('navigation observer restores the root module after pop', (

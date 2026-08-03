@@ -1200,6 +1200,17 @@ class ChameleonCommunicator {
     }
   }
 
+  Future<void> reselectMf1ReaderKeys({int muteMs = 150}) async {
+    if (muteMs < 50 || muteMs > 500) {
+      throw RangeError.range(muteMs, 50, 500, 'muteMs');
+    }
+    await _sendChecked(
+      ChameleonCommand.mf1ReaderKeysReselect,
+      data: Uint8List.fromList(u16ToBytes(muteMs)),
+      timeout: Duration(milliseconds: muteMs + 2000),
+    );
+  }
+
   Future<List<DetectionResult>> getMf1DetectionRecords(
     int count, {
     int startIndex = 0,
@@ -1238,6 +1249,7 @@ class ChameleonCommunicator {
             block: data[offset],
             type: 0x60 + (data[offset + 1] & 0x01),
             isNested: ((data[offset + 1] >> 1) & 0x01) == 0x01,
+            isSuccessful: (data[offset + 1] & 0x04) != 0,
             uid: bytesToU32(data.sublist(offset + 2, offset + 6)),
             nt: bytesToU32(data.sublist(offset + 6, offset + 10)),
             nr: bytesToU32(data.sublist(offset + 10, offset + 14)),

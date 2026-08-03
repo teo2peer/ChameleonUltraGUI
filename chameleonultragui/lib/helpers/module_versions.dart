@@ -151,7 +151,7 @@ const moduleVersions = <ModuleId, ModuleRelease>{
   ),
   ModuleId.readerKeysCapture: ModuleRelease(
     name: 'Reader Keys Capture',
-    version: '1.1.0',
+    version: '1.2.0',
     updatedAt: '2026-08-02',
   ),
   ModuleId.ethicalHacking: ModuleRelease(
