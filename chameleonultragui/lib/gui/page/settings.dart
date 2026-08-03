@@ -10,7 +10,6 @@ import 'package:chameleonultragui/gui/component/toggle_buttons.dart';
 import 'package:chameleonultragui/gui/menu/dialogs/qr/settings.dart';
 import 'package:chameleonultragui/helpers/general.dart';
 import 'package:chameleonultragui/helpers/github.dart';
-import 'package:chameleonultragui/helpers/definitions.dart';
 import 'package:chameleonultragui/helpers/module_versions.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -44,7 +43,8 @@ class SettingsMainPage extends StatefulWidget {
 
 class SettingsMainPageState extends State<SettingsMainPage> {
   ChameleonCommunicator? _ledCommunicator;
-  AnimationSetting? _deviceLedMode;
+  bool? _deviceLedsEnabled;
+  bool _deviceLedsSupported = false;
   bool _deviceLedBusy = false;
   String? _deviceLedError;
   bool? _pendingDeviceLedsEnabled;
@@ -55,7 +55,8 @@ class SettingsMainPageState extends State<SettingsMainPage> {
     final communicator = context.watch<ChameleonGUIState>().communicator;
     if (identical(communicator, _ledCommunicator)) return;
     _ledCommunicator = communicator;
-    _deviceLedMode = null;
+    _deviceLedsEnabled = null;
+    _deviceLedsSupported = false;
     _deviceLedBusy = false;
     _deviceLedError = null;
     _pendingDeviceLedsEnabled = null;
@@ -69,21 +70,18 @@ class SettingsMainPageState extends State<SettingsMainPage> {
   Future<void> _refreshDeviceLeds() async {
     final communicator = _ledCommunicator;
     if (communicator == null || _deviceLedBusy) return;
+    final appState = context.read<ChameleonGUIState>();
     setState(() {
       _deviceLedBusy = true;
       _deviceLedError = null;
     });
     try {
-      final mode = await communicator.getAnimationMode();
+      final enabled = appState.sharedPreferencesProvider.getDeviceLedsEnabled();
       if (!mounted || !identical(communicator, _ledCommunicator)) return;
-      if (mode != AnimationSetting.none) {
-        await context
-            .read<ChameleonGUIState>()
-            .sharedPreferencesProvider
-            .setDeviceLedAnimationMode(mode);
-      }
-      if (!mounted || !identical(communicator, _ledCommunicator)) return;
-      setState(() => _deviceLedMode = mode);
+      setState(() {
+        _deviceLedsEnabled = enabled;
+        _deviceLedsSupported = appState.canControlDeviceLeds;
+      });
     } catch (error) {
       if (mounted && identical(communicator, _ledCommunicator)) {
         setState(() => _deviceLedError = error.toString());
@@ -97,7 +95,10 @@ class SettingsMainPageState extends State<SettingsMainPage> {
 
   Future<void> _setDeviceLedsEnabled(bool enabled) async {
     final communicator = _ledCommunicator;
-    if (communicator == null || _deviceLedBusy || _deviceLedMode == null) {
+    if (communicator == null ||
+        _deviceLedBusy ||
+        _deviceLedsEnabled == null ||
+        !_deviceLedsSupported) {
       return;
     }
     final appState = context.read<ChameleonGUIState>();
@@ -107,38 +108,15 @@ class SettingsMainPageState extends State<SettingsMainPage> {
       _pendingDeviceLedsEnabled = enabled;
     });
     try {
-      if (!enabled) {
-        final currentMode = await communicator.getAnimationMode();
-        if (!mounted || !identical(communicator, _ledCommunicator)) return;
-        if (currentMode != AnimationSetting.none) {
-          await appState.sharedPreferencesProvider.setDeviceLedAnimationMode(
-            currentMode,
-          );
-        }
-      }
-      final mode = enabled
-          ? appState.sharedPreferencesProvider.getDeviceLedAnimationMode()
-          : AnimationSetting.none;
-      await communicator.setAnimationMode(mode);
-      await communicator.saveSettings();
+      await appState.setDeviceLedsEnabled(enabled);
       if (!mounted || !identical(communicator, _ledCommunicator)) return;
       setState(() {
-        _deviceLedMode = mode;
+        _deviceLedsEnabled = enabled;
         _pendingDeviceLedsEnabled = null;
       });
-      appState.changesMade();
     } catch (error) {
-      AnimationSetting? actualMode;
-      try {
-        actualMode = await communicator.getAnimationMode();
-      } catch (_) {
-        // Keep the previous UI state if the device can no longer be queried.
-      }
       if (mounted && identical(communicator, _ledCommunicator)) {
-        setState(() {
-          if (actualMode != null) _deviceLedMode = actualMode;
-          _deviceLedError = error.toString();
-        });
+        setState(() => _deviceLedError = error.toString());
       }
     } finally {
       if (mounted && identical(communicator, _ledCommunicator)) {
@@ -154,10 +132,11 @@ class SettingsMainPageState extends State<SettingsMainPage> {
     if (_deviceLedError case final error?) {
       return localizations.device_leds_update_failed(error);
     }
-    if (_deviceLedMode == null) return localizations.device_leds_loading;
-    return _deviceLedMode == AnimationSetting.none
-        ? localizations.device_leds_disabled_description
-        : localizations.device_leds_enabled_description;
+    if (_deviceLedsEnabled == null) return localizations.device_leds_loading;
+    if (!_deviceLedsSupported) return localizations.unavailable;
+    return _deviceLedsEnabled!
+        ? localizations.device_leds_enabled_description
+        : localizations.device_leds_disabled_description;
   }
 
   Future<(String, List<Map<String, String>>, PackageInfo)>
@@ -342,13 +321,12 @@ class SettingsMainPageState extends State<SettingsMainPage> {
                         secondary: const Icon(Icons.lightbulb_outline_rounded),
                         title: Text(localizations.device_leds),
                         subtitle: Text(_deviceLedSubtitle(localizations)),
-                        value:
-                            _deviceLedMode != null &&
-                            _deviceLedMode != AnimationSetting.none,
+                        value: _deviceLedsEnabled ?? true,
                         onChanged:
                             _ledCommunicator == null ||
                                 _deviceLedBusy ||
-                                _deviceLedMode == null
+                                _deviceLedsEnabled == null ||
+                                !_deviceLedsSupported
                             ? null
                             : (enabled) =>
                                   unawaited(_setDeviceLedsEnabled(enabled)),

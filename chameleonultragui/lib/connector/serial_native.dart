@@ -144,7 +144,12 @@ class NativeSerial extends AbstractSerial {
       log.d("Connected to $address");
       log.d("Manufacturer: ${candidate.manufacturer}");
       log.d("Product: ${candidate.productName}");
-      final description = candidate.description?.toLowerCase();
+      String? description;
+      try {
+        description = candidate.description?.toLowerCase();
+      } catch (_) {
+        // Optional USB metadata can be unavailable on otherwise valid ports.
+      }
       bool isChameleon = false;
       if (candidate.manufacturer == "Proxgrind" ||
           (description?.contains("chameleon") ?? false)) {

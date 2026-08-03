@@ -951,6 +951,7 @@ void main() {
             'sidebar_expanded_index': 2,
             'emulation_change_monitoring': true,
             'hf_capture_retention_days': 90,
+            'device_leds_enabled': false,
           },
         );
         final observedDuringWrites = <Map<String, Object>>[];
@@ -1552,4 +1553,5 @@ Map<String, Object> _visibleSynchronizedValues(
   'sidebar_expanded_index': preferences.getSideBarExpandedIndex(),
   'emulation_change_monitoring': preferences.getEmulationChangeMonitoring(),
   'hf_capture_retention_days': preferences.getHfCaptureRetentionDays(),
+  'device_leds_enabled': preferences.getDeviceLedsEnabled(),
 };

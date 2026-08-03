@@ -86,37 +86,37 @@ const moduleVersions = <ModuleId, ModuleRelease>{
   ),
   ModuleId.undercover: ModuleRelease(
     name: 'Undercover',
-    version: '3.2.0',
-    updatedAt: '2026-08-02',
+    version: '3.4.0',
+    updatedAt: '2026-08-03',
   ),
   ModuleId.undercoverSlots: ModuleRelease(
     name: 'Undercover Slots',
-    version: '1.2.0',
-    updatedAt: '2026-08-02',
+    version: '1.4.0',
+    updatedAt: '2026-08-03',
   ),
   ModuleId.undercoverRecovery: ModuleRelease(
     name: 'Undercover Recovery',
-    version: '1.2.0',
-    updatedAt: '2026-08-02',
+    version: '1.3.0',
+    updatedAt: '2026-08-03',
   ),
   ModuleId.undercoverCapture: ModuleRelease(
     name: 'Undercover Capture',
-    version: '1.2.0',
-    updatedAt: '2026-08-02',
+    version: '1.3.0',
+    updatedAt: '2026-08-03',
   ),
   ModuleId.undercoverEmulation: ModuleRelease(
     name: 'Undercover Emulation',
-    version: '1.2.0',
-    updatedAt: '2026-08-02',
+    version: '1.3.0',
+    updatedAt: '2026-08-03',
   ),
   ModuleId.undercoverSniff: ModuleRelease(
     name: 'Undercover HF Sniff',
-    version: '1.2.0',
-    updatedAt: '2026-08-02',
+    version: '1.3.0',
+    updatedAt: '2026-08-03',
   ),
   ModuleId.device: ModuleRelease(
     name: 'Device',
-    version: '1.2.0',
+    version: '1.3.0',
     updatedAt: '2026-08-03',
   ),
   ModuleId.library: ModuleRelease(
@@ -146,8 +146,8 @@ const moduleVersions = <ModuleId, ModuleRelease>{
   ),
   ModuleId.settings: ModuleRelease(
     name: 'Settings',
-    version: '1.2.0',
-    updatedAt: '2026-08-02',
+    version: '1.3.0',
+    updatedAt: '2026-08-03',
   ),
   ModuleId.readerKeysCapture: ModuleRelease(
     name: 'Reader Keys Capture',
@@ -156,8 +156,8 @@ const moduleVersions = <ModuleId, ModuleRelease>{
   ),
   ModuleId.ethicalHacking: ModuleRelease(
     name: 'Ethical Hacking',
-    version: '1.1.0',
-    updatedAt: '2026-08-02',
+    version: '1.2.0',
+    updatedAt: '2026-08-03',
   ),
   ModuleId.debug: ModuleRelease(
     name: 'Debug',

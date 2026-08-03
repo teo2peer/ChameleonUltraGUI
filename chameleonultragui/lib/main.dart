@@ -256,6 +256,14 @@ class ChameleonGUIState extends ChangeNotifier {
     final next = ChameleonCommunicator(log!, port: activeConnector);
     try {
       await next.initializeCapabilities();
+      final suppressLeds =
+          undercoverMode || !sharedPreferencesProvider.getDeviceLedsEnabled();
+      if (suppressLeds &&
+          next.usesBleTransport &&
+          next.supportsCommandSync(ChameleonCommand.setRuntimeUndercoverMode) ==
+              true) {
+        await next.setRuntimeUndercoverMode(true);
+      }
     } catch (error) {
       next.dispose(error);
       final previousCommunicator = communicator;
@@ -314,6 +322,40 @@ class ChameleonGUIState extends ChangeNotifier {
         !activeConnector.isDFU &&
         activeConnector.connectionType == ConnectionType.ble &&
         communicator != null;
+  }
+
+  bool get canControlDeviceLeds {
+    final activeCommunicator = communicator;
+    return !_disposed &&
+        activeCommunicator != null &&
+        activeCommunicator.usesBleTransport &&
+        activeCommunicator.supportsCommandSync(
+              ChameleonCommand.setRuntimeUndercoverMode,
+            ) ==
+            true;
+  }
+
+  Future<void> setDeviceLedsEnabled(bool enabled) async {
+    final activeCommunicator = communicator;
+    if (!canControlDeviceLeds || activeCommunicator == null) {
+      throw StateError('Device LED control is unavailable on this connection');
+    }
+    final previous = sharedPreferencesProvider.getDeviceLedsEnabled();
+    await activeCommunicator.setRuntimeUndercoverMode(
+      undercoverMode || !enabled,
+    );
+    if (_disposed || !identical(communicator, activeCommunicator)) {
+      throw StateError('Connection changed while updating device LEDs');
+    }
+    try {
+      await sharedPreferencesProvider.setDeviceLedsEnabled(enabled);
+    } catch (_) {
+      await activeCommunicator.setRuntimeUndercoverMode(
+        undercoverMode || !previous,
+      );
+      rethrow;
+    }
+    changesMade();
   }
 
   Future<void> enterUndercover() async {
@@ -411,7 +453,9 @@ class ChameleonGUIState extends ChangeNotifier {
         restoreError = StateError('BLE communicator is unavailable');
       } else {
         try {
-          await activeCommunicator.setRuntimeUndercoverMode(false);
+          await activeCommunicator.setRuntimeUndercoverMode(
+            !sharedPreferencesProvider.getDeviceLedsEnabled(),
+          );
         } catch (error) {
           restoreError = error;
         }

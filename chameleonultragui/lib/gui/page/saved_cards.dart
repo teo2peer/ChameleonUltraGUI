@@ -16,7 +16,6 @@ import 'package:chameleonultragui/helpers/card_save_converters.dart';
 import 'package:chameleonultragui/helpers/definitions.dart';
 import 'package:chameleonultragui/helpers/general.dart';
 import 'package:chameleonultragui/helpers/mifare_classic/general.dart';
-import 'package:chameleonultragui/helpers/mifare_ultralight/general.dart';
 import 'package:chameleonultragui/helpers/module_versions.dart';
 import 'package:chameleonultragui/helpers/validators.dart';
 import 'package:chameleonultragui/main.dart';
@@ -622,6 +621,7 @@ class SavedCardsPageState extends State<SavedCardsPage> {
     if (result?.path == null || !mounted) return;
     final file = File(result!.path!);
     final contents = await file.readAsBytes();
+    if (!mounted) return;
     try {
       final source = const Utf8Decoder().convert(contents);
       Object? decoded;
@@ -838,6 +838,7 @@ class SavedCardsPageState extends State<SavedCardsPage> {
     } catch (_) {
       return;
     }
+    if (!mounted) return;
     Object? decoded;
     try {
       decoded = jsonDecode(contents);

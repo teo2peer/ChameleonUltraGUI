@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'dart:math' as math;
+import 'package:chameleonultragui/gui/undercover/undercover_grid.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -31,6 +33,7 @@ class UndercoverAppEntry {
     required this.accent,
     required this.onOpen,
     this.requiresConnection = false,
+    this.opensDirectly = false,
   });
 
   final String id;
@@ -40,6 +43,7 @@ class UndercoverAppEntry {
   final Color accent;
   final VoidCallback onOpen;
   final bool requiresConnection;
+  final bool opensDirectly;
 }
 
 class UndercoverLauncher extends StatefulWidget {
@@ -60,12 +64,10 @@ class UndercoverLauncher extends StatefulWidget {
 
 class _UndercoverLauncherState extends State<UndercoverLauncher> {
   late final PageController _pageController;
-  final TextEditingController _appSearchController = TextEditingController();
   final TextEditingController _actionSearchController = TextEditingController();
   Timer? _clockTimer;
   UndercoverAppEntry? _activeApp;
   int _page = 0;
-  String _appQuery = '';
   String _actionQuery = '';
   bool _showAppInfo = false;
 
@@ -112,7 +114,6 @@ class _UndercoverLauncherState extends State<UndercoverLauncher> {
   void dispose() {
     _clockTimer?.cancel();
     _pageController.dispose();
-    _appSearchController.dispose();
     _actionSearchController.dispose();
     super.dispose();
   }
@@ -143,6 +144,10 @@ class _UndercoverLauncherState extends State<UndercoverLauncher> {
   }
 
   void _openActionBoard(UndercoverAppEntry app) {
+    if (app.opensDirectly) {
+      app.onOpen();
+      return;
+    }
     _actionSearchController.clear();
     setState(() {
       _activeApp = app;
@@ -179,12 +184,10 @@ class _UndercoverLauncherState extends State<UndercoverLauncher> {
             screens: widget.screens,
             pageController: _pageController,
             selectedIndex: _page,
-            query: _appQuery,
-            searchController: _appSearchController,
-            onQueryChanged: (value) => setState(() => _appQuery = value),
             onPageChanged: (value) => setState(() => _page = value),
             onPageSelected: _showPage,
             onAppSelected: _openActionBoard,
+            onExitRequested: widget.onExitRequested,
           )
         : _AppActionBoard(
             key: ValueKey('undercover-actions-${activeApp.id}'),
@@ -284,24 +287,20 @@ class _SpringBoard extends StatelessWidget {
     required this.screens,
     required this.pageController,
     required this.selectedIndex,
-    required this.query,
-    required this.searchController,
-    required this.onQueryChanged,
     required this.onPageChanged,
     required this.onPageSelected,
     required this.onAppSelected,
+    required this.onExitRequested,
   });
 
   final bool connected;
   final List<UndercoverMenuScreen> screens;
   final PageController pageController;
   final int selectedIndex;
-  final String query;
-  final TextEditingController searchController;
-  final ValueChanged<String> onQueryChanged;
   final ValueChanged<int> onPageChanged;
   final ValueChanged<int> onPageSelected;
   final ValueChanged<UndercoverAppEntry> onAppSelected;
+  final VoidCallback onExitRequested;
 
   @override
   Widget build(BuildContext context) {
@@ -311,23 +310,8 @@ class _SpringBoard extends StatelessWidget {
       );
     }
     final index = selectedIndex.clamp(0, screens.length - 1);
-    final screen = screens[index];
-    final usesDashboard = screen.dashboardBuilder != null;
-
     return Column(
       children: [
-        _BoardHeading(screen: screen),
-        if (!usesDashboard)
-          Padding(
-            padding: const EdgeInsets.fromLTRB(18, 8, 18, 10),
-            child: _IOSSearchField(
-              key: const Key('undercover-app-search'),
-              controller: searchController,
-              hintText: 'Search ${screen.title}',
-              query: query,
-              onChanged: onQueryChanged,
-            ),
-          ),
         Expanded(
           child: PageView.builder(
             key: const Key('undercover-page-view'),
@@ -347,81 +331,18 @@ class _SpringBoard extends StatelessWidget {
                 key: Key('undercover-screen-${page.id}'),
                 screen: page,
                 connected: connected,
-                query: query,
                 onAppSelected: onAppSelected,
               );
             },
           ),
         ),
-        _CategoryDock(
+        _PageIndicator(
           screens: screens,
           selectedIndex: index,
           onSelected: onPageSelected,
         ),
+        _IPhoneDock(onExitRequested: onExitRequested),
       ],
-    );
-  }
-}
-
-class _BoardHeading extends StatelessWidget {
-  const _BoardHeading({required this.screen});
-
-  final UndercoverMenuScreen screen;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(18, 4, 18, 6),
-      child: Row(
-        children: [
-          Container(
-            width: 42,
-            height: 42,
-            decoration: BoxDecoration(
-              color: screen.accent.withValues(alpha: 0.22),
-              borderRadius: BorderRadius.circular(13),
-              border: Border.all(color: screen.accent.withValues(alpha: 0.5)),
-            ),
-            child: Icon(screen.icon, color: Colors.white, size: 21),
-          ),
-          const SizedBox(width: 11),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Semantics(
-                  header: true,
-                  child: Text(
-                    screen.title,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 24,
-                      height: 1.05,
-                      fontWeight: FontWeight.w700,
-                      letterSpacing: -0.4,
-                      shadows: [Shadow(color: Colors.black38, blurRadius: 8)],
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 3),
-                Text(
-                  screen.subtitle,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: Colors.white70,
-                    fontSize: 12,
-                    height: 1.1,
-                    shadows: [Shadow(color: Colors.black38, blurRadius: 6)],
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
     );
   }
 }
@@ -431,77 +352,46 @@ class _AppGrid extends StatelessWidget {
     super.key,
     required this.screen,
     required this.connected,
-    required this.query,
     required this.onAppSelected,
   });
 
   final UndercoverMenuScreen screen;
   final bool connected;
-  final String query;
   final ValueChanged<UndercoverAppEntry> onAppSelected;
 
   @override
   Widget build(BuildContext context) {
-    final normalizedQuery = query.trim().toLowerCase();
-    final apps = normalizedQuery.isEmpty
-        ? screen.apps
-        : screen.apps
-              .where(
-                (app) =>
-                    app.title.toLowerCase().contains(normalizedQuery) ||
-                    app.menuPath.toLowerCase().contains(normalizedQuery),
-              )
-              .toList();
+    final apps = screen.apps;
 
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final width = constraints.maxWidth;
-        final columns = width >= 900
-            ? 7
-            : width >= 600
-            ? 6
-            : width >= 350
-            ? 4
-            : 3;
-        final textScale = MediaQuery.textScalerOf(context).scale(1);
-        final aspectRatio = (0.82 - (textScale - 1).clamp(0.0, 2.0) * 0.13)
-            .clamp(0.56, 0.82)
-            .toDouble();
-
-        if (apps.isEmpty) {
-          return Center(
-            child: _IOSWidget(
-              padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 16),
-              child: Text(
-                'No apps found on ${screen.title}',
-                textAlign: TextAlign.center,
-                style: const TextStyle(color: Colors.white70),
-              ),
-            ),
-          );
-        }
-
-        return GridView.builder(
-          key: PageStorageKey('undercover-grid-${screen.id}'),
-          physics: const BouncingScrollPhysics(),
-          padding: const EdgeInsets.fromLTRB(14, 6, 14, 14),
-          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-            crossAxisCount: columns,
-            childAspectRatio: aspectRatio,
-            mainAxisSpacing: 8,
-            crossAxisSpacing: 8,
+    if (apps.isEmpty) {
+      return Center(
+        child: _IOSWidget(
+          padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 16),
+          child: Text(
+            'No apps found on ${screen.title}',
+            textAlign: TextAlign.center,
+            style: const TextStyle(color: Colors.white70),
           ),
-          itemCount: apps.length,
-          itemBuilder: (context, index) {
-            final app = apps[index];
-            return _HomeAppIcon(
-              app: app,
-              enabled: !app.requiresConnection || connected,
-              onTap: () => onAppSelected(app),
-            );
-          },
-        );
-      },
+        ),
+      );
+    }
+
+    return UndercoverSpringGrid(
+      key: PageStorageKey('undercover-grid-${screen.id}'),
+      placements: [
+        for (var index = 0; index < apps.length && index < 24; index++)
+          UndercoverGridPlacement(
+            row: index ~/ 4,
+            column: index % 4,
+            rowSpan: 1,
+            columnSpan: 1,
+            child: _HomeAppIcon(
+              app: apps[index],
+              enabled: !apps[index].requiresConnection || connected,
+              onTap: () => onAppSelected(apps[index]),
+            ),
+          ),
+      ],
     );
   }
 }
@@ -519,126 +409,14 @@ class _HomeAppIcon extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final iconSize = constraints.maxWidth.clamp(52.0, 68.0);
-        final labelColor = enabled ? Colors.white : Colors.white54;
-        return Semantics(
-          button: true,
-          enabled: enabled,
-          label: '${app.title}, ${app.menuPath}',
-          child: Column(
-            children: [
-              SizedBox(
-                width: iconSize,
-                height: iconSize,
-                child: Stack(
-                  clipBehavior: Clip.none,
-                  children: [
-                    Positioned.fill(
-                      child: Material(
-                        color: Colors.transparent,
-                        borderRadius: BorderRadius.circular(iconSize * 0.23),
-                        child: InkWell(
-                          key: Key('undercover-app-${app.id}'),
-                          borderRadius: BorderRadius.circular(iconSize * 0.23),
-                          onTap: enabled ? onTap : null,
-                          child: Ink(
-                            decoration: BoxDecoration(
-                              gradient: LinearGradient(
-                                begin: Alignment.topLeft,
-                                end: Alignment.bottomRight,
-                                colors: enabled
-                                    ? [
-                                        Color.lerp(
-                                          app.accent,
-                                          Colors.white,
-                                          0.22,
-                                        )!,
-                                        Color.lerp(
-                                          app.accent,
-                                          Colors.black,
-                                          0.24,
-                                        )!,
-                                      ]
-                                    : const [
-                                        Color(0xFF777780),
-                                        Color(0xFF3A3A3C),
-                                      ],
-                              ),
-                              borderRadius: BorderRadius.circular(
-                                iconSize * 0.23,
-                              ),
-                              border: Border.all(color: Colors.white24),
-                              boxShadow: const [
-                                BoxShadow(
-                                  color: Color(0x55000000),
-                                  blurRadius: 12,
-                                  offset: Offset(0, 6),
-                                ),
-                              ],
-                            ),
-                            child: Icon(
-                              app.icon,
-                              color: enabled ? Colors.white : Colors.white60,
-                              size: iconSize * 0.48,
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                    if (!enabled)
-                      const Positioned(
-                        right: -5,
-                        bottom: -4,
-                        child: CircleAvatar(
-                          radius: 10,
-                          backgroundColor: Color(0xFF1C1C1E),
-                          child: Icon(
-                            Icons.lock_rounded,
-                            size: 12,
-                            color: Colors.white70,
-                          ),
-                        ),
-                      ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 6),
-              Flexible(
-                child: Text(
-                  app.title,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    color: labelColor,
-                    fontSize: 12,
-                    height: 1.05,
-                    fontWeight: FontWeight.w600,
-                    shadows: const [
-                      Shadow(color: Colors.black87, blurRadius: 6),
-                    ],
-                  ),
-                ),
-              ),
-              const SizedBox(height: 2),
-              Text(
-                app.menuPath,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  color: enabled ? Colors.white70 : Colors.white38,
-                  fontSize: 9,
-                  height: 1,
-                  shadows: const [Shadow(color: Colors.black87, blurRadius: 5)],
-                ),
-              ),
-            ],
-          ),
-        );
-      },
+    return UndercoverGridTile(
+      key: Key('undercover-app-${app.id}'),
+      label: app.title,
+      details: app.menuPath,
+      icon: app.icon,
+      color: app.accent,
+      enabled: enabled,
+      onPressed: onTap,
     );
   }
 }
@@ -921,30 +699,7 @@ class _ActionHeader extends StatelessWidget {
           icon: const Icon(Icons.chevron_left_rounded),
         ),
         const SizedBox(width: 10),
-        Container(
-          width: 58,
-          height: 58,
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-              colors: [
-                Color.lerp(app.accent, Colors.white, 0.22)!,
-                Color.lerp(app.accent, Colors.black, 0.24)!,
-              ],
-            ),
-            borderRadius: BorderRadius.circular(15),
-            border: Border.all(color: Colors.white24),
-            boxShadow: const [
-              BoxShadow(
-                color: Color(0x55000000),
-                blurRadius: 12,
-                offset: Offset(0, 6),
-              ),
-            ],
-          ),
-          child: Icon(app.icon, color: Colors.white, size: 29),
-        ),
+        UndercoverSquircleIcon(icon: app.icon, color: app.accent, size: 58),
         const SizedBox(width: 12),
         Expanded(
           child: Column(
@@ -1016,34 +771,23 @@ class _ActionIcon extends StatelessWidget {
               aspectRatio: 1,
               child: Material(
                 color: Colors.transparent,
-                borderRadius: BorderRadius.circular(22),
                 child: InkWell(
                   key: Key('undercover-action-${action.id}-$appId'),
-                  borderRadius: BorderRadius.circular(22),
+                  customBorder: const ContinuousRectangleBorder(
+                    borderRadius: BorderRadius.all(Radius.circular(36)),
+                  ),
                   onTap: action.enabled ? action.onTap : null,
-                  child: Ink(
-                    decoration: BoxDecoration(
-                      gradient: LinearGradient(
-                        begin: Alignment.topLeft,
-                        end: Alignment.bottomRight,
-                        colors: action.enabled
-                            ? action.colors
-                            : const [Color(0xFF777780), Color(0xFF3A3A3C)],
-                      ),
-                      borderRadius: BorderRadius.circular(22),
-                      border: Border.all(color: Colors.white24),
-                      boxShadow: const [
-                        BoxShadow(
-                          color: Color(0x55000000),
-                          blurRadius: 14,
-                          offset: Offset(0, 7),
+                  child: LayoutBuilder(
+                    builder: (context, constraints) => Center(
+                      child: UndercoverSquircleIcon(
+                        icon: action.icon,
+                        color: action.colors.last,
+                        size: math.min(
+                          constraints.maxWidth,
+                          constraints.maxHeight,
                         ),
-                      ],
-                    ),
-                    child: Icon(
-                      action.enabled ? action.icon : Icons.lock_rounded,
-                      color: action.enabled ? Colors.white : Colors.white60,
-                      size: 34,
+                        enabled: action.enabled,
+                      ),
                     ),
                   ),
                 ),
@@ -1197,26 +941,15 @@ class _IOSStatusBar extends StatelessWidget {
             color: Colors.white,
             size: 19,
           ),
-          const SizedBox(width: 2),
-          IconButton(
-            key: const Key('undercover-exit-button'),
-            tooltip: 'Done',
-            onPressed: onExitRequested,
-            visualDensity: VisualDensity.compact,
-            style: IconButton.styleFrom(
-              foregroundColor: Colors.white,
-              minimumSize: const Size(44, 44),
-            ),
-            icon: const Icon(Icons.check_circle_outline_rounded, size: 20),
-          ),
+          const SizedBox(width: 8),
         ],
       ),
     );
   }
 }
 
-class _CategoryDock extends StatelessWidget {
-  const _CategoryDock({
+class _PageIndicator extends StatelessWidget {
+  const _PageIndicator({
     required this.screens,
     required this.selectedIndex,
     required this.onSelected,
@@ -1229,51 +962,169 @@ class _CategoryDock extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(14, 5, 14, 10),
-      child: _IOSWidget(
-        radius: 22,
-        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 5),
-        child: LayoutBuilder(
-          builder: (context, constraints) {
-            return SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              physics: const BouncingScrollPhysics(),
-              child: ConstrainedBox(
-                constraints: BoxConstraints(minWidth: constraints.maxWidth),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                  children: [
-                    for (var index = 0; index < screens.length; index++)
-                      Tooltip(
-                        message: screens[index].title,
-                        child: Semantics(
-                          button: true,
-                          selected: index == selectedIndex,
-                          label: screens[index].title,
-                          child: IconButton(
-                            key: Key('undercover-page-${screens[index].id}'),
-                            onPressed: () => onSelected(index),
-                            style: IconButton.styleFrom(
-                              minimumSize: const Size(44, 44),
-                              foregroundColor: Colors.white,
-                              backgroundColor: index == selectedIndex
-                                  ? screens[index].accent
-                                  : Colors.white.withValues(alpha: 0.08),
-                              side: BorderSide(
-                                color: index == selectedIndex
-                                    ? Colors.white38
-                                    : Colors.white12,
-                              ),
-                            ),
-                            icon: Icon(screens[index].icon, size: 21),
-                          ),
-                        ),
-                      ),
-                  ],
+      padding: const EdgeInsets.fromLTRB(16, 2, 16, 5),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Flexible(
+            child: Text(
+              screens[selectedIndex].title,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 11,
+                fontWeight: FontWeight.w700,
+                shadows: [Shadow(color: Colors.black54, blurRadius: 4)],
+              ),
+            ),
+          ),
+          const SizedBox(width: 10),
+          for (var index = 0; index < screens.length; index++)
+            Semantics(
+              button: true,
+              selected: index == selectedIndex,
+              label: screens[index].title,
+              child: GestureDetector(
+                key: Key('undercover-page-${screens[index].id}'),
+                behavior: HitTestBehavior.opaque,
+                onTap: () => onSelected(index),
+                child: Padding(
+                  padding: const EdgeInsets.all(5),
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 180),
+                    width: index == selectedIndex ? 15 : 6,
+                    height: 6,
+                    decoration: BoxDecoration(
+                      color: index == selectedIndex
+                          ? Colors.white
+                          : Colors.white38,
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                  ),
                 ),
               ),
-            );
-          },
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _IPhoneDock extends StatelessWidget {
+  const _IPhoneDock({required this.onExitRequested});
+
+  final VoidCallback onExitRequested;
+
+  void _showUnavailable(BuildContext context, String label) {
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          duration: const Duration(seconds: 1),
+          content: Text('$label is not available.'),
+        ),
+      );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+      child: MediaQuery.withClampedTextScaling(
+        maxScaleFactor: 1.1,
+        child: _IOSWidget(
+          radius: 29,
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 7),
+          child: Row(
+            children: [
+              Expanded(
+                child: _DockIcon(
+                  key: const Key('undercover-dock-phone'),
+                  label: 'Phone',
+                  icon: Icons.phone_rounded,
+                  colors: const [Color(0xFF55E96B), Color(0xFF16B93D)],
+                  onTap: () => _showUnavailable(context, 'Phone'),
+                ),
+              ),
+              Expanded(
+                child: _DockIcon(
+                  key: const Key('undercover-dock-messages'),
+                  label: 'Messages',
+                  icon: Icons.chat_bubble_rounded,
+                  colors: const [Color(0xFF62EE7A), Color(0xFF18B943)],
+                  onTap: () => _showUnavailable(context, 'Messages'),
+                ),
+              ),
+              Expanded(
+                child: _DockIcon(
+                  key: const Key('undercover-dock-camera'),
+                  label: 'Camera',
+                  icon: Icons.camera_alt_rounded,
+                  colors: const [Color(0xFFB8BBC2), Color(0xFF62656D)],
+                  onTap: () => _showUnavailable(context, 'Camera'),
+                ),
+              ),
+              Expanded(
+                child: _DockIcon(
+                  key: const Key('undercover-dock-chrome'),
+                  label: 'Chrome',
+                  icon: Icons.public_rounded,
+                  colors: const [Color(0xFFEA4335), Color(0xFF4285F4)],
+                  onTap: onExitRequested,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _DockIcon extends StatelessWidget {
+  const _DockIcon({
+    super.key,
+    required this.label,
+    required this.icon,
+    required this.colors,
+    required this.onTap,
+  });
+
+  final String label;
+  final IconData icon;
+  final List<Color> colors;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      button: true,
+      label: label,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(16),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 1),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              UndercoverSquircleIcon(icon: icon, color: colors.last, size: 42),
+              const SizedBox(height: 2),
+              Text(
+                label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 8.5,
+                  height: 1,
+                  fontWeight: FontWeight.w600,
+                  shadows: [Shadow(color: Colors.black54, blurRadius: 4)],
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );

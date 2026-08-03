@@ -190,6 +190,22 @@ void main() {
     },
   );
 
+  test('leaving Undercover preserves a disabled LED preference', () async {
+    final fixture = await _fixture();
+    fixture.serial.connected = true;
+    fixture.serial.connectionType = ConnectionType.ble;
+    fixture.state.log = Logger(level: Level.off);
+    await fixture.state.sharedPreferencesProvider.setDeviceLedsEnabled(false);
+    final communicator = _UndercoverTestCommunicator(fixture.serial);
+    fixture.state.communicator = communicator;
+
+    await fixture.state.enterUndercover();
+    await fixture.state.exitUndercover();
+
+    expect(communicator.modes, [true, true]);
+    expect(fixture.state.undercoverMode, isFalse);
+  });
+
   test('failed LED restore disconnects before leaving undercover', () async {
     final fixture = await _fixture();
     fixture.serial.connected = true;

@@ -25,7 +25,8 @@ void main() {
       moduleReleaseFor(ModuleId.mifareClassicNonceHistory).version,
       '1.2.0',
     );
-    expect(moduleReleaseFor(ModuleId.settings).version, '1.2.0');
+    expect(moduleReleaseFor(ModuleId.settings).version, '1.3.0');
+    expect(moduleReleaseFor(ModuleId.ethicalHacking).version, '1.2.0');
   });
 
   test('capture, batching, and sync owners expose updated releases', () {
@@ -36,7 +37,7 @@ void main() {
   });
 
   test('folder and offline sniff integrations update their owners', () {
-    expect(moduleReleaseFor(ModuleId.device).version, '1.2.0');
+    expect(moduleReleaseFor(ModuleId.device).version, '1.3.0');
     expect(moduleReleaseFor(ModuleId.library).version, '1.1.0');
     expect(moduleReleaseFor(ModuleId.tools).version, '1.1.0');
     expect(moduleReleaseFor(ModuleId.dumpEditor).version, '1.1.0');
@@ -52,18 +53,18 @@ void main() {
     final release = moduleReleaseFor(ModuleId.slotManager);
     expect(release.version, '1.1.0');
     expect(release.updatedAt, '2026-08-02');
-    expect(moduleReleaseFor(ModuleId.device).version, '1.2.0');
+    expect(moduleReleaseFor(ModuleId.device).version, '1.3.0');
   });
 
   test('Undercover keeps an independent release', () {
-    expect(moduleReleaseFor(ModuleId.undercover).version, '3.2.0');
-    expect(moduleReleaseFor(ModuleId.undercover).updatedAt, '2026-08-02');
+    expect(moduleReleaseFor(ModuleId.undercover).version, '3.4.0');
+    expect(moduleReleaseFor(ModuleId.undercover).updatedAt, '2026-08-03');
     expect(moduleReleaseFor(ModuleId.appShell).version, '1.4.0');
-    expect(moduleReleaseFor(ModuleId.undercoverSlots).version, '1.2.0');
-    expect(moduleReleaseFor(ModuleId.undercoverRecovery).version, '1.2.0');
-    expect(moduleReleaseFor(ModuleId.undercoverCapture).version, '1.2.0');
-    expect(moduleReleaseFor(ModuleId.undercoverEmulation).version, '1.2.0');
-    expect(moduleReleaseFor(ModuleId.undercoverSniff).version, '1.2.0');
+    expect(moduleReleaseFor(ModuleId.undercoverSlots).version, '1.4.0');
+    expect(moduleReleaseFor(ModuleId.undercoverRecovery).version, '1.3.0');
+    expect(moduleReleaseFor(ModuleId.undercoverCapture).version, '1.3.0');
+    expect(moduleReleaseFor(ModuleId.undercoverEmulation).version, '1.3.0');
+    expect(moduleReleaseFor(ModuleId.undercoverSniff).version, '1.3.0');
   });
 
   testWidgets('footer renders the selected module release', (tester) async {

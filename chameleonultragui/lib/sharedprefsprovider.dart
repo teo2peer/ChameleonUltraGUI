@@ -68,7 +68,26 @@ const List<String> dataSyncStoredPreferenceKeys = [
   'sidebar_expanded_index',
   'emulation_change_monitoring',
   'hf_capture_retention_days',
+  'device_leds_enabled',
 ];
+const Set<String> _preDeviceLedDataSyncStoredPreferenceKeys = {
+  'cards',
+  'card_folders',
+  'dictionaries',
+  'dictionary_folders',
+  'keyboard_scripts',
+  'app_theme',
+  'app_theme_color',
+  'locale',
+  'confirm_delete',
+  'auto_scan_enabled',
+  'auto_connect_first_found',
+  'device_found_banner',
+  'sidebar_auto_expanded',
+  'sidebar_expanded_index',
+  'emulation_change_monitoring',
+  'hf_capture_retention_days',
+};
 const Set<String> _legacyDataSyncStoredPreferenceKeys = {
   'cards',
   'dictionaries',
@@ -504,6 +523,7 @@ bool _validDeferredScalar(String key, Object? value) => switch (key) {
   'auto_scan_enabled' ||
   'auto_connect_first_found' ||
   'device_found_banner' ||
+  'device_leds_enabled' ||
   'sidebar_auto_expanded' ||
   'emulation_change_monitoring' => value is bool,
   _ => false,
@@ -2424,6 +2444,8 @@ class SharedPreferencesProvider extends ChangeNotifier {
         _sharedPreferences.getBool('emulation_change_monitoring') ?? false,
     'hf_capture_retention_days':
         _sharedPreferences.getInt('hf_capture_retention_days') ?? 30,
+    'device_leds_enabled':
+        _sharedPreferences.getBool('device_leds_enabled') ?? true,
   };
 
   Future<SyncTransactionReceipt> _prepareDataSyncTransactionLocked({
@@ -3135,10 +3157,13 @@ class _DataSyncManifest {
     final hasLegacyKeys =
         entryKeys.length == _legacyDataSyncStoredPreferenceKeys.length &&
         entryKeys.containsAll(_legacyDataSyncStoredPreferenceKeys);
+    final hasPreDeviceLedKeys =
+        entryKeys.length == _preDeviceLedDataSyncStoredPreferenceKeys.length &&
+        entryKeys.containsAll(_preDeviceLedDataSyncStoredPreferenceKeys);
     if (phase == null ||
         role == null ||
         entryKeys.length != entries.length ||
-        (!hasCurrentKeys && !hasLegacyKeys) ||
+        (!hasCurrentKeys && !hasLegacyKeys && !hasPreDeviceLedKeys) ||
         entries.map((entry) => entry.stageKey).toSet().length !=
             entries.length) {
       throw const FormatException('Invalid data sync manifest');
@@ -3180,10 +3205,10 @@ class _DataSyncManifest {
 Map<String, Object> _validateDataSyncValues(Map<String, Object> values) {
   final completeValues = <String, Object>{
     ...values,
-    if (!values.containsKey('card_folders'))
-      'card_folders': const <String>[],
+    if (!values.containsKey('card_folders')) 'card_folders': const <String>[],
     if (!values.containsKey('dictionary_folders'))
       'dictionary_folders': const <String>[],
+    if (!values.containsKey('device_leds_enabled')) 'device_leds_enabled': true,
   };
   if (completeValues.length != dataSyncStoredPreferenceKeys.length ||
       !completeValues.keys.toSet().containsAll(dataSyncStoredPreferenceKeys)) {
@@ -3287,6 +3312,7 @@ Map<String, Object> _validateDataSyncValues(Map<String, Object> values) {
     'sidebar_expanded_index': integer('sidebar_expanded_index', 0, 2),
     'emulation_change_monitoring': boolean('emulation_change_monitoring'),
     'hf_capture_retention_days': integer('hf_capture_retention_days', 1, 365),
+    'device_leds_enabled': boolean('device_leds_enabled'),
   };
 }
 

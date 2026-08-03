@@ -24,7 +24,7 @@
   "write_card": "Escribir tarjeta",
   "settings": "Configuraci\u00f3n",
   "device_leds": "LED del dispositivo",
-  "device_leds_enabled_description": "Las animaciones de estado est\u00e1n activadas.",
+  "device_leds_enabled_description": "Todos los LED del dispositivo est\u00e1n activados.",
   "device_leds_disabled_description": "Todos los LED del dispositivo est\u00e1n desactivados.",
   "device_leds_disconnected_description": "Conecta un dispositivo para gestionar sus LED.",
   "device_leds_loading": "Leyendo el ajuste de los LED...",

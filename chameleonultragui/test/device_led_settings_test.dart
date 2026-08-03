@@ -1,5 +1,3 @@
-import 'dart:async';
-
 import 'package:chameleonultragui/bridge/chameleon.dart';
 import 'package:chameleonultragui/generated/i18n/app_localizations.dart';
 import 'package:chameleonultragui/gui/page/settings.dart';
@@ -15,13 +13,13 @@ import 'package:shared_preferences/shared_preferences.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  testWidgets('device LED switch disables and restores the previous mode', (
+  testWidgets('device LED switch uses the Undercover runtime LED control', (
     tester,
   ) async {
     SharedPreferences.setMockInitialValues({});
     final preferences = SharedPreferencesProvider();
     await preferences.load();
-    final communicator = _DeviceLedCommunicator(AnimationSetting.symmetric);
+    final communicator = _DeviceLedCommunicator();
     final appState = ChameleonGUIState(preferences)
       ..communicator = communicator;
     addTearDown(appState.dispose);
@@ -42,20 +40,19 @@ void main() {
     final toggle = find.byKey(const Key('device-led-toggle'));
     await tester.ensureVisible(toggle);
     await tester.pumpAndSettle();
-    expect(find.text('Status animations are enabled.'), findsOneWidget);
+    expect(find.text('All device LEDs are enabled.'), findsOneWidget);
 
     await tester.tap(toggle);
     await tester.pumpAndSettle();
-    expect(communicator.mode, AnimationSetting.none);
-    expect(communicator.savedSettingsCount, 1);
-    expect(preferences.getDeviceLedAnimationMode(), AnimationSetting.symmetric);
+    expect(communicator.runtimeModes, [true]);
+    expect(preferences.getDeviceLedsEnabled(), isFalse);
     expect(find.text('All device LEDs are disabled.'), findsOneWidget);
 
     await tester.tap(toggle);
     await tester.pumpAndSettle();
-    expect(communicator.mode, AnimationSetting.symmetric);
-    expect(communicator.savedSettingsCount, 2);
-    expect(find.text('Status animations are enabled.'), findsOneWidget);
+    expect(communicator.runtimeModes, [true, false]);
+    expect(preferences.getDeviceLedsEnabled(), isTrue);
+    expect(find.text('All device LEDs are enabled.'), findsOneWidget);
   });
 
   testWidgets('device LED switch is disabled without a connection', (
@@ -87,12 +84,12 @@ void main() {
     expect(find.text('Connect a device to manage its LEDs.'), findsOneWidget);
   });
 
-  testWidgets('failed persistence reflects runtime state and can be retried', (
+  testWidgets('failed runtime update preserves preference and can be retried', (
     tester,
   ) async {
     final fixture = await _pumpSettings(
       tester,
-      _DeviceLedCommunicator(AnimationSetting.symmetric)..saveFailures = 1,
+      _DeviceLedCommunicator()..runtimeFailures = 1,
     );
     final toggle = find.byKey(const Key('device-led-toggle'));
     await tester.ensureVisible(toggle);
@@ -101,8 +98,12 @@ void main() {
     await tester.tap(toggle);
     await tester.pumpAndSettle();
 
-    expect(fixture.communicator.mode, AnimationSetting.none);
-    expect(tester.widget<SwitchListTile>(toggle).value, isFalse);
+    expect(fixture.communicator.runtimeModes, isEmpty);
+    expect(tester.widget<SwitchListTile>(toggle).value, isTrue);
+    expect(
+      fixture.appState.sharedPreferencesProvider.getDeviceLedsEnabled(),
+      isTrue,
+    );
     expect(
       find.textContaining('Unable to update device LEDs:'),
       findsOneWidget,
@@ -111,31 +112,23 @@ void main() {
     await tester.tap(find.byKey(const Key('device-led-retry')));
     await tester.pumpAndSettle();
 
-    expect(fixture.communicator.saveAttempts, 2);
+    expect(fixture.communicator.runtimeAttempts, 2);
+    expect(fixture.communicator.runtimeModes, [true]);
     expect(find.textContaining('Unable to update device LEDs:'), findsNothing);
     expect(find.text('All device LEDs are disabled.'), findsOneWidget);
   });
 
-  testWidgets('a stale LED read cannot overwrite disconnected state', (
+  testWidgets('unsupported runtime control keeps the LED switch disabled', (
     tester,
   ) async {
-    final read = Completer<AnimationSetting>();
-    final communicator = _DeviceLedCommunicator(AnimationSetting.symmetric)
-      ..readCompleter = read;
-    final fixture = await _pumpSettings(tester, communicator, settle: false);
-    await tester.pump();
-
-    fixture.appState.communicator = null;
-    fixture.appState.changesMade();
-    await tester.pump();
-    read.complete(AnimationSetting.symmetric);
-    await tester.pumpAndSettle();
+    final communicator = _DeviceLedCommunicator()..supported = false;
+    await _pumpSettings(tester, communicator);
 
     final toggle = find.byKey(const Key('device-led-toggle'));
     await tester.ensureVisible(toggle);
     await tester.pumpAndSettle();
     expect(tester.widget<SwitchListTile>(toggle).onChanged, isNull);
-    expect(find.text('Connect a device to manage its LEDs.'), findsOneWidget);
+    expect(find.text('Unavailable'), findsOneWidget);
   });
 }
 
@@ -177,36 +170,27 @@ class _SettingsFixture {
 }
 
 class _DeviceLedCommunicator extends ChameleonCommunicator {
-  _DeviceLedCommunicator(this.mode) : super(Logger(level: Level.off));
+  _DeviceLedCommunicator() : super(Logger(level: Level.off));
 
-  AnimationSetting mode;
-  int saveAttempts = 0;
-  int saveFailures = 0;
-  Completer<AnimationSetting>? readCompleter;
-
-  int get savedSettingsCount => saveAttempts;
+  final List<bool> runtimeModes = [];
+  int runtimeAttempts = 0;
+  int runtimeFailures = 0;
+  bool supported = true;
 
   @override
-  Future<AnimationSetting> getAnimationMode() async {
-    final pendingRead = readCompleter;
-    if (pendingRead != null) {
-      readCompleter = null;
-      return pendingRead.future;
+  bool get usesBleTransport => true;
+
+  @override
+  bool? supportsCommandSync(ChameleonCommand command) =>
+      command == ChameleonCommand.setRuntimeUndercoverMode && supported;
+
+  @override
+  Future<void> setRuntimeUndercoverMode(bool enabled) async {
+    runtimeAttempts++;
+    if (runtimeFailures > 0) {
+      runtimeFailures--;
+      throw StateError('runtime update failed');
     }
-    return mode;
-  }
-
-  @override
-  Future<void> setAnimationMode(AnimationSetting animation) async {
-    mode = animation;
-  }
-
-  @override
-  Future<void> saveSettings() async {
-    saveAttempts++;
-    if (saveFailures > 0) {
-      saveFailures--;
-      throw StateError('persistence failed');
-    }
+    runtimeModes.add(enabled);
   }
 }

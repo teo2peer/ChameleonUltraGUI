@@ -54,8 +54,19 @@ class _Category {
   _Category(this.name, this.icon, this.open, {required this.count});
 }
 
+enum EthicalHackingSection {
+  pm3,
+  mifareClassic,
+  captureAndSniffing,
+  emulationAndMagic,
+  protocolDiagnostics,
+  bluetooth,
+}
+
 class EthicalHackingPage extends StatefulWidget {
-  const EthicalHackingPage({super.key});
+  const EthicalHackingPage({super.key, this.initialSection});
+
+  final EthicalHackingSection? initialSection;
 
   @override
   EthicalHackingPageState createState() => EthicalHackingPageState();
@@ -463,6 +474,35 @@ class EthicalHackingPageState extends State<EthicalHackingPage> {
         count: 4,
       ),
     ];
+
+    final initialSection = widget.initialSection;
+    if (initialSection != null) {
+      return switch (initialSection) {
+        EthicalHackingSection.pm3 => const Pm3ToolsPage(),
+        EthicalHackingSection.mifareClassic => HackingCategoryPage(
+          title: localizations.mfc_attacks,
+          attacks: mfc,
+        ),
+        EthicalHackingSection.captureAndSniffing => HackingCategoryPage(
+          title: localizations.capture_sniffing,
+          attacks: capture,
+        ),
+        EthicalHackingSection.emulationAndMagic => HackingCategoryPage(
+          title: localizations.emulation_magic,
+          attacks: emulation,
+        ),
+        EthicalHackingSection.protocolDiagnostics => HackingCategoryPage(
+          title: localizations.diagnostics,
+          attacks: diagnostics,
+        ),
+        EthicalHackingSection.bluetooth => const BleAppPage(
+          auditTab: BleAuditPage(embedded: true),
+          radioIdentityTab: BleRadioIdentityPage(embedded: true),
+          advertisingLabTab: BleAdvertisingLabPage(embedded: true),
+          stressBroadcastTab: BleStressPage(embedded: true),
+        ),
+      };
+    }
 
     return Scaffold(
       appBar: AppBar(title: Text(localizations.ethical_hacking)),
