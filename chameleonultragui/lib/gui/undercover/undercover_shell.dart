@@ -242,7 +242,7 @@ String _coverModuleLabel(ModuleId moduleId) => switch (moduleId) {
   ModuleId.undercoverRecovery => 'Progress',
   ModuleId.undercoverCapture => 'Journal',
   ModuleId.undercoverEmulation => 'Routines',
-  ModuleId.undercoverSniff => 'Activity',
+  ModuleId.undercoverSniff => 'HF 14A Sniff',
   _ => 'Details',
 };
 

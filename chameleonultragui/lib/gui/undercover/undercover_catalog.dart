@@ -58,9 +58,9 @@ List<UndercoverMenuScreen> buildUndercoverCatalog(
     ),
     UndercoverMenuScreen(
       id: 'signals',
-      title: 'HF Sniffing',
-      subtitle: 'A simple history of updates',
-      icon: Icons.history_rounded,
+      title: 'HF 14A Sniff',
+      subtitle: 'Capture packets and nonces',
+      icon: Icons.sensors_rounded,
       accent: const Color(0xFF64D2FF),
       dashboardBuilder: (_) => const UndercoverSniffDashboard(),
     ),

@@ -86,7 +86,7 @@ const moduleVersions = <ModuleId, ModuleRelease>{
   ),
   ModuleId.undercover: ModuleRelease(
     name: 'Undercover',
-    version: '3.4.0',
+    version: '3.8.0',
     updatedAt: '2026-08-03',
   ),
   ModuleId.undercoverSlots: ModuleRelease(
@@ -96,22 +96,22 @@ const moduleVersions = <ModuleId, ModuleRelease>{
   ),
   ModuleId.undercoverRecovery: ModuleRelease(
     name: 'Undercover Recovery',
-    version: '1.3.0',
+    version: '1.6.0',
     updatedAt: '2026-08-03',
   ),
   ModuleId.undercoverCapture: ModuleRelease(
     name: 'Undercover Capture',
-    version: '1.3.0',
+    version: '1.5.0',
     updatedAt: '2026-08-03',
   ),
   ModuleId.undercoverEmulation: ModuleRelease(
     name: 'Undercover Emulation',
-    version: '1.3.0',
+    version: '1.6.0',
     updatedAt: '2026-08-03',
   ),
   ModuleId.undercoverSniff: ModuleRelease(
-    name: 'Undercover HF Sniff',
-    version: '1.3.0',
+    name: 'Undercover HF 14A Sniff',
+    version: '1.6.0',
     updatedAt: '2026-08-03',
   ),
   ModuleId.device: ModuleRelease(

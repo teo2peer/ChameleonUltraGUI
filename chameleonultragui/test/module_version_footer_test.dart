@@ -57,14 +57,14 @@ void main() {
   });
 
   test('Undercover keeps an independent release', () {
-    expect(moduleReleaseFor(ModuleId.undercover).version, '3.4.0');
+    expect(moduleReleaseFor(ModuleId.undercover).version, '3.8.0');
     expect(moduleReleaseFor(ModuleId.undercover).updatedAt, '2026-08-03');
     expect(moduleReleaseFor(ModuleId.appShell).version, '1.4.0');
     expect(moduleReleaseFor(ModuleId.undercoverSlots).version, '1.4.0');
-    expect(moduleReleaseFor(ModuleId.undercoverRecovery).version, '1.3.0');
-    expect(moduleReleaseFor(ModuleId.undercoverCapture).version, '1.3.0');
-    expect(moduleReleaseFor(ModuleId.undercoverEmulation).version, '1.3.0');
-    expect(moduleReleaseFor(ModuleId.undercoverSniff).version, '1.3.0');
+    expect(moduleReleaseFor(ModuleId.undercoverRecovery).version, '1.6.0');
+    expect(moduleReleaseFor(ModuleId.undercoverCapture).version, '1.5.0');
+    expect(moduleReleaseFor(ModuleId.undercoverEmulation).version, '1.6.0');
+    expect(moduleReleaseFor(ModuleId.undercoverSniff).version, '1.6.0');
   });
 
   testWidgets('footer renders the selected module release', (tester) async {

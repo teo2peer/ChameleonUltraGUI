@@ -161,6 +161,7 @@ class UndercoverGridTile extends StatelessWidget {
           if (isAppIcon) {
             return _IOSAppIconTile(
               label: label,
+              value: value,
               icon: icon,
               color: color,
               selected: selected,
@@ -209,7 +210,9 @@ class UndercoverSquircleIcon extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final dark = Theme.of(context).brightness == Brightness.dark;
-    final accent = enabled ? color : const Color(0xFF68686F);
+    final accent = enabled
+        ? color
+        : Color.lerp(color, const Color(0xFF55555C), 0.76)!;
     final colors = [
       Color.lerp(accent, Colors.white, dark ? 0.18 : 0.34)!,
       accent,
@@ -220,7 +223,9 @@ class UndercoverSquircleIcon extends StatelessWidget {
       side: BorderSide(
         color: selected
             ? Colors.white.withValues(alpha: 0.9)
-            : Colors.white.withValues(alpha: dark ? 0.18 : 0.42),
+            : Colors.white.withValues(
+                alpha: enabled ? (dark ? 0.18 : 0.42) : (dark ? 0.08 : 0.18),
+              ),
         width: selected ? 2.2 : 0.8,
       ),
     );
@@ -237,7 +242,9 @@ class UndercoverSquircleIcon extends StatelessWidget {
           shape: shape,
           shadows: [
             BoxShadow(
-              color: Colors.black.withValues(alpha: dark ? 0.2 : 0.12),
+              color: Colors.black.withValues(
+                alpha: enabled ? (dark ? 0.2 : 0.12) : 0.06,
+              ),
               blurRadius: size * 0.18,
               offset: Offset(0, size * 0.07),
             ),
@@ -270,7 +277,7 @@ class UndercoverSquircleIcon extends StatelessWidget {
                     gradient: LinearGradient(
                       colors: [
                         Colors.transparent,
-                        Colors.white.withValues(alpha: 0.58),
+                        Colors.white.withValues(alpha: enabled ? 0.58 : 0.2),
                         Colors.transparent,
                       ],
                     ),
@@ -287,8 +294,8 @@ class UndercoverSquircleIcon extends StatelessWidget {
                         ),
                       )
                     : Icon(
-                        enabled ? icon : Icons.lock_rounded,
-                        color: enabled ? Colors.white : Colors.white60,
+                        icon,
+                        color: enabled ? Colors.white : Colors.white38,
                         size: size * 0.42,
                         shadows: const [
                           Shadow(
@@ -323,6 +330,7 @@ class UndercoverSquircleIcon extends StatelessWidget {
 class _IOSAppIconTile extends StatelessWidget {
   const _IOSAppIconTile({
     required this.label,
+    required this.value,
     required this.icon,
     required this.color,
     required this.selected,
@@ -333,6 +341,7 @@ class _IOSAppIconTile extends StatelessWidget {
   });
 
   final String label;
+  final String? value;
   final IconData icon;
   final Color color;
   final bool selected;
@@ -360,13 +369,52 @@ class _IOSAppIconTile extends StatelessWidget {
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                UndercoverSquircleIcon(
-                  icon: icon,
-                  color: color,
-                  size: iconSize,
-                  selected: selected,
-                  enabled: enabled,
-                  busy: busy,
+                Stack(
+                  alignment: Alignment.center,
+                  children: [
+                    UndercoverSquircleIcon(
+                      icon: icon,
+                      color: color,
+                      size: iconSize,
+                      selected: selected,
+                      enabled: enabled,
+                      busy: busy,
+                    ),
+                    if (value != null && !busy)
+                      Positioned(
+                        bottom: 4,
+                        child: DecoratedBox(
+                          decoration: BoxDecoration(
+                            color: Colors.black.withValues(
+                              alpha: enabled ? 0.34 : 0.2,
+                            ),
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(
+                              color: Colors.white.withValues(
+                                alpha: enabled ? 0.22 : 0.1,
+                              ),
+                            ),
+                          ),
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 5,
+                              vertical: 1,
+                            ),
+                            child: Text(
+                              value!,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: enabled ? Colors.white : Colors.white38,
+                                fontSize: 8,
+                                height: 1.15,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                  ],
                 ),
                 const SizedBox(height: 3),
                 Flexible(
@@ -424,7 +472,9 @@ class _IOSWidgetTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final dark = Theme.of(context).brightness == Brightness.dark;
-    final accent = enabled ? color : const Color(0xFF45454C);
+    final accent = enabled
+        ? color
+        : Color.lerp(color, const Color(0xFF45454C), 0.78)!;
     final shape = ContinuousRectangleBorder(
       borderRadius: BorderRadius.circular(34),
       side: BorderSide(
