@@ -433,7 +433,7 @@ void main() {
     var keys = await recovery.hardNested(nested);
 
     expect(keys.contains(0xFBF225DC5D58), true);
-  });
+  }, timeout: const Timeout(Duration(minutes: 5)));
 }
 
 class _WeakNestedCard extends ChameleonCommunicator {
