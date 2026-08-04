@@ -405,7 +405,7 @@ uint32_t lfsr_rollback_word(struct Crypto1State *s, uint32_t in, int fb)
     ret |= lfsr_rollback_bit(s, BEBIT(in, 9), fb) << (24 ^ 9);
     ret |= lfsr_rollback_bit(s, BEBIT(in, 8), fb) << (24 ^ 8);
 
-    ret |= lfsr_rollback_bit(s, BEBIT(in, 7), fb) << (24 ^ 7);
+    ret |= (uint32_t)lfsr_rollback_bit(s, BEBIT(in, 7), fb) << (24 ^ 7);
     ret |= lfsr_rollback_bit(s, BEBIT(in, 6), fb) << (24 ^ 6);
     ret |= lfsr_rollback_bit(s, BEBIT(in, 5), fb) << (24 ^ 5);
     ret |= lfsr_rollback_bit(s, BEBIT(in, 4), fb) << (24 ^ 4);

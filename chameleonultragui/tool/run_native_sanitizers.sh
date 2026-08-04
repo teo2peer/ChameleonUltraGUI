@@ -9,7 +9,9 @@ cmake -S "$project_root/src" -B "$build_dir" \
   -DRECOVERY_ENABLE_SANITIZERS=ON \
   -DCMAKE_BUILD_TYPE=Debug
 cmake --build "$build_dir" --parallel
-ctest --test-dir "$build_dir" --output-on-failure
+ASAN_OPTIONS="halt_on_error=1:strict_string_checks=1" \
+UBSAN_OPTIONS="halt_on_error=1:print_stacktrace=1" \
+  ctest --test-dir "$build_dir" --output-on-failure
 
 if (( $# == 0 )); then
   set -- test/recovery_test.dart

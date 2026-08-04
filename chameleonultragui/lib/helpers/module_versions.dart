@@ -276,8 +276,8 @@ const moduleVersions = <ModuleId, ModuleRelease>{
   ),
   ModuleId.darkside: ModuleRelease(
     name: 'Darkside',
-    version: '1.0.0',
-    updatedAt: _initialReleaseDate,
+    version: '1.0.1',
+    updatedAt: '2026-08-04',
   ),
   ModuleId.nested: ModuleRelease(
     name: 'Nested',

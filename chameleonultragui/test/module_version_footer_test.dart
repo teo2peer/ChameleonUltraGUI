@@ -21,6 +21,7 @@ void main() {
     expect(moduleReleaseFor(ModuleId.autopwn).version, '1.3.0');
     expect(moduleReleaseFor(ModuleId.autopwnPlus).version, '1.2.0');
     expect(moduleReleaseFor(ModuleId.autopwnV2).version, '1.2.0');
+    expect(moduleReleaseFor(ModuleId.darkside).version, '1.0.1');
     expect(moduleReleaseFor(ModuleId.hardnested).version, '1.0.1');
     expect(
       moduleReleaseFor(ModuleId.mifareClassicNonceHistory).version,
