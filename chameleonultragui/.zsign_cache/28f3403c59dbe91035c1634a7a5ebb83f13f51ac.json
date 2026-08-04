@@ -1,0 +1,189 @@
+{
+	"path": "/",
+	"root": "/Users/teo/projects/Chamaleon/ChameleonUltraGUI/chameleonultragui/build/ios/iphoneos/Runner.app",
+	"bundle_id": "app.ursaminor7619.otter1161",
+	"bundle_version": "0",
+	"bundle_executable": "Runner",
+	"sha1": "GAhDj590mj2bkGwi2OtGOdWsDX0=",
+	"sha256": "9uu+LeYQKskghALbb3xZU2cNUD+jfHDN65LQ7sYcIQk=",
+	"name": "CU GUI",
+	"folders": [
+		{
+			"bundle_id": "org.cocoapods.wakelock-plus",
+			"bundle_version": "1",
+			"bundle_executable": "wakelock_plus",
+			"sha1": "O/4+hSMpsDutUz169CMMAdJ2NPE=",
+			"sha256": "E+lH2PxEvMKp6eOCs2ZRAVE2SvpdTKFerMyK2jQuqpg=",
+			"path": "Frameworks/wakelock_plus.framework"
+		},
+		{
+			"bundle_id": "io.flutter.flutter.native-assets.objective-c",
+			"bundle_version": "1.0",
+			"bundle_executable": "objective_c",
+			"sha1": "TE+E1mxiYaEUCJN+bms96LlMOqs=",
+			"sha256": "Ieq7oc4JBoBJbhQ2cAj3lSMF0hTTgor4XjlXYThOKLA=",
+			"path": "Frameworks/objective_c.framework"
+		},
+		{
+			"bundle_id": "org.cocoapods.Protobuf",
+			"bundle_version": "1",
+			"bundle_executable": "Protobuf",
+			"sha1": "WaVfD+gOxsipmEXrXzM0ulk92+Q=",
+			"sha256": "nclfZ71p4JY3BRi9mMPDez0n4zVXwKSQy/D2xp9Gd30=",
+			"path": "Frameworks/Protobuf.framework"
+		},
+		{
+			"bundle_id": "io.flutter.flutter",
+			"bundle_version": "1.0",
+			"bundle_executable": "Flutter",
+			"sha1": "zDETGBDUIfgh//+nKqsBFvK36sE=",
+			"sha256": "5oPQvvRp3KuB2bEkWhCzsluIEAB8XmnltJKQRsxR4s0=",
+			"path": "Frameworks/Flutter.framework"
+		},
+		{
+			"bundle_id": "org.cocoapods.reactive-ble-mobile",
+			"bundle_version": "1",
+			"bundle_executable": "reactive_ble_mobile",
+			"sha1": "JUSZenbNXmlGdoTxlhU98vv76QQ=",
+			"sha256": "tWRt9SGUhfOfQZQoqf0xqx7+XRHbciL32LuJOKmzQSk=",
+			"path": "Frameworks/reactive_ble_mobile.framework"
+		},
+		{
+			"bundle_id": "io.flutter.flutter.app",
+			"bundle_version": "1.0",
+			"bundle_executable": "App",
+			"sha1": "nHsEkmlVCwRZHdUPhDWVtuHob3A=",
+			"sha256": "Ejvt7+WRwFcnlzaDpfLTAcs3EP3PyoxZFFKd1HMpvqw=",
+			"path": "Frameworks/App.framework"
+		},
+		{
+			"bundle_id": "org.cocoapods.mobile-scanner",
+			"bundle_version": "1",
+			"bundle_executable": "mobile_scanner",
+			"sha1": "riZjHrRUIamp32iqw+CvF+XUsvY=",
+			"sha256": "zmVrycAt5pwfVS/sIOPLZJlDu8L/6JLiwzhtEV05uOk=",
+			"path": "Frameworks/mobile_scanner.framework"
+		},
+		{
+			"bundle_id": "org.cocoapods.url-launcher-ios",
+			"bundle_version": "1",
+			"bundle_executable": "url_launcher_ios",
+			"sha1": "2hhiwoyIVIQtnfWd9bH3+0RKBO4=",
+			"sha256": "WCgmSi6OGAk+yPk8DcK4R63Pb0MXpaxj2vWFmSsZw2Q=",
+			"path": "Frameworks/url_launcher_ios.framework"
+		},
+		{
+			"bundle_id": "org.cocoapods.recovery",
+			"bundle_version": "1",
+			"bundle_executable": "recovery",
+			"sha1": "PgxQe7yautEJoSpKBHyIRaU6YJM=",
+			"sha256": "gp/ag9eNrH+TOvXlZW/vOoySvmt1VcZRDPMXSHrLZKA=",
+			"path": "Frameworks/recovery.framework"
+		},
+		{
+			"bundle_id": "org.cocoapods.share-plus",
+			"bundle_version": "1",
+			"bundle_executable": "share_plus",
+			"sha1": "aYFFyj5ZRes21iXD0c4AXkJ5ZRQ=",
+			"sha256": "ivYSAMfsns+ZsF3Jjd/S8pSp3SduFXkbfg2IvLh8z4w=",
+			"path": "Frameworks/share_plus.framework"
+		},
+		{
+			"bundle_id": "org.cocoapods.package-info-plus",
+			"bundle_version": "1",
+			"bundle_executable": "package_info_plus",
+			"sha1": "RhDV+XGQfkvjYc5iHbc5qZ9yaRQ=",
+			"sha256": "ROg4sx1ndpvwAvAdCwDXiutxWPWOHBHf748uxCMhZZU=",
+			"path": "Frameworks/package_info_plus.framework"
+		},
+		{
+			"bundle_id": "org.cocoapods.SwiftProtobuf",
+			"bundle_version": "1",
+			"bundle_executable": "SwiftProtobuf",
+			"sha1": "nay9SQ3DSE+29794h15ja7ti9Vw=",
+			"sha256": "B7nP2O6tWsl/HdJm0LFKg6NqtpPmSmIMeqCXMy8F3dk=",
+			"path": "Frameworks/SwiftProtobuf.framework"
+		},
+		{
+			"bundle_id": "org.cocoapods.shared-preferences-foundation",
+			"bundle_version": "1",
+			"bundle_executable": "shared_preferences_foundation",
+			"sha1": "GrSzN9VFAX5u30bMG8C24GbVCs8=",
+			"sha256": "cYmHfimePX0DexBYnkoVwKiUU7vp4MbMstYLdsuorvU=",
+			"path": "Frameworks/shared_preferences_foundation.framework"
+		},
+		{
+			"bundle_id": "org.cocoapods.file-picker",
+			"bundle_version": "1",
+			"bundle_executable": "file_picker",
+			"sha1": "EGcQZ1mIBepgcLGnCsSzJOdhZ74=",
+			"sha256": "63BTLj3sougmqUzqiosmNr7Ypv6rvdGYGhH9n+QnkTo=",
+			"path": "Frameworks/file_picker.framework"
+		}
+	],
+	"files": [
+		"Runner",
+		"Frameworks/wakelock_plus.framework/wakelock_plus",
+		"Frameworks/objective_c.framework/objective_c",
+		"Frameworks/Protobuf.framework/Protobuf",
+		"Frameworks/libswift_Concurrency.dylib",
+		"Frameworks/Flutter.framework/Flutter",
+		"Frameworks/reactive_ble_mobile.framework/reactive_ble_mobile",
+		"Frameworks/App.framework/App",
+		"Frameworks/mobile_scanner.framework/mobile_scanner",
+		"Frameworks/url_launcher_ios.framework/url_launcher_ios",
+		"Frameworks/recovery.framework/recovery",
+		"Frameworks/share_plus.framework/share_plus",
+		"Frameworks/package_info_plus.framework/package_info_plus",
+		"Frameworks/SwiftProtobuf.framework/SwiftProtobuf",
+		"Frameworks/shared_preferences_foundation.framework/shared_preferences_foundation",
+		"Frameworks/file_picker.framework/file_picker"
+	],
+	"changed": [
+		"Runner",
+		"Frameworks/wakelock_plus.framework/wakelock_plus",
+		"Frameworks/objective_c.framework/objective_c",
+		"Frameworks/Protobuf.framework/Protobuf",
+		"Frameworks/libswift_Concurrency.dylib",
+		"Frameworks/Flutter.framework/Flutter",
+		"Frameworks/reactive_ble_mobile.framework/reactive_ble_mobile",
+		"Frameworks/App.framework/App",
+		"Frameworks/mobile_scanner.framework/mobile_scanner",
+		"Frameworks/url_launcher_ios.framework/url_launcher_ios",
+		"Frameworks/recovery.framework/recovery",
+		"Frameworks/share_plus.framework/share_plus",
+		"Frameworks/package_info_plus.framework/package_info_plus",
+		"Frameworks/SwiftProtobuf.framework/SwiftProtobuf",
+		"Frameworks/shared_preferences_foundation.framework/shared_preferences_foundation",
+		"Frameworks/file_picker.framework/file_picker",
+		"Frameworks/wakelock_plus.framework/_CodeSignature/CodeResources",
+		"Frameworks/wakelock_plus.framework/wakelock_plus",
+		"Frameworks/objective_c.framework/_CodeSignature/CodeResources",
+		"Frameworks/objective_c.framework/objective_c",
+		"Frameworks/Protobuf.framework/_CodeSignature/CodeResources",
+		"Frameworks/Protobuf.framework/Protobuf",
+		"Frameworks/Flutter.framework/_CodeSignature/CodeResources",
+		"Frameworks/Flutter.framework/Flutter",
+		"Frameworks/reactive_ble_mobile.framework/_CodeSignature/CodeResources",
+		"Frameworks/reactive_ble_mobile.framework/reactive_ble_mobile",
+		"Frameworks/App.framework/_CodeSignature/CodeResources",
+		"Frameworks/App.framework/App",
+		"Frameworks/mobile_scanner.framework/_CodeSignature/CodeResources",
+		"Frameworks/mobile_scanner.framework/mobile_scanner",
+		"Frameworks/url_launcher_ios.framework/_CodeSignature/CodeResources",
+		"Frameworks/url_launcher_ios.framework/url_launcher_ios",
+		"Frameworks/recovery.framework/_CodeSignature/CodeResources",
+		"Frameworks/recovery.framework/recovery",
+		"Frameworks/share_plus.framework/_CodeSignature/CodeResources",
+		"Frameworks/share_plus.framework/share_plus",
+		"Frameworks/package_info_plus.framework/_CodeSignature/CodeResources",
+		"Frameworks/package_info_plus.framework/package_info_plus",
+		"Frameworks/SwiftProtobuf.framework/_CodeSignature/CodeResources",
+		"Frameworks/SwiftProtobuf.framework/SwiftProtobuf",
+		"Frameworks/shared_preferences_foundation.framework/_CodeSignature/CodeResources",
+		"Frameworks/shared_preferences_foundation.framework/shared_preferences_foundation",
+		"Frameworks/file_picker.framework/_CodeSignature/CodeResources",
+		"Frameworks/file_picker.framework/file_picker",
+		"embedded.mobileprovision"
+	]
+}
