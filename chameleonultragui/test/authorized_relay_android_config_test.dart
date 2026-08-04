@@ -2,29 +2,28 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 
+String _readSource(String path) =>
+    File(path).readAsStringSync().replaceAll('\r\n', '\n');
+
 void main() {
   test(
     'authorized relay payment service remains discoverable while disarmed',
     () {
-      final manifest = File(
-        'android/app/src/main/AndroidManifest.xml',
-      ).readAsStringSync();
-      final serviceMetadata = File(
+      final manifest = _readSource('android/app/src/main/AndroidManifest.xml');
+      final serviceMetadata = _readSource(
         'android/app/src/main/res/xml/authorized_relay_apdu_service.xml',
-      ).readAsStringSync();
-      final activity = File(
+      );
+      final activity = _readSource(
         'android/app/src/main/kotlin/io/chameleon/ultra/MainActivity.kt',
-      ).readAsStringSync();
-      final service = File(
+      );
+      final service = _readSource(
         'android/app/src/main/kotlin/io/chameleon/ultra/'
         'AuthorizedRelayHostApduService.kt',
-      ).readAsStringSync();
-      final relayPage = File(
+      );
+      final relayPage = _readSource(
         'lib/gui/menu/hacking/authorized_relay_lab.dart',
-      ).readAsStringSync();
-      final hackingMenu = File(
-        'lib/gui/page/ethical_hacking.dart',
-      ).readAsStringSync();
+      );
+      final hackingMenu = _readSource('lib/gui/page/ethical_hacking.dart');
 
       expect(
         manifest,
