@@ -291,8 +291,8 @@ const moduleVersions = <ModuleId, ModuleRelease>{
   ),
   ModuleId.hardnested: ModuleRelease(
     name: 'Hardnested',
-    version: '1.0.0',
-    updatedAt: _initialReleaseDate,
+    version: '1.0.1',
+    updatedAt: '2026-08-04',
   ),
   ModuleId.backdoorRf08s: ModuleRelease(
     name: 'RF08S Backdoor',

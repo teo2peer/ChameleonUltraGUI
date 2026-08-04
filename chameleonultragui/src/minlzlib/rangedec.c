@@ -302,7 +302,7 @@ RcGetReverseBitTree(
     {
         bit = RcIsBitSet(&BitModel[symbol]);
         symbol = (uint16_t)(symbol << 1) | bit;
-        result |= bit << i;
+        result = (uint8_t)(result | (uint8_t)(bit << i));
     }
     return result;
 }
@@ -328,7 +328,9 @@ RcDecodeMatchedBitTree(
     // the match bits are no longer in play, which we parse for the remainder
     // of the symbol.
     //
-    for (bytePos = MatchByte, symbol = 1; symbol < 0x100; bytePos <<= 1)
+    for (bytePos = MatchByte, symbol = 1;
+         symbol < 0x100;
+         bytePos = (uint16_t)(bytePos << 1))
     {
         matchBit = (bytePos >> 7) & 1;
 
